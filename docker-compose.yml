@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  grc-mcp-server:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENPAGES_BASE_URL=${OPENPAGES_BASE_URL:-https://openpages-server.example.com}
+      - OPENPAGES_USERNAME=${OPENPAGES_USERNAME:-admin}
+      - OPENPAGES_PASSWORD=${OPENPAGES_PASSWORD:-password}
+      - DEBUG=${DEBUG:-False}
+      - SSL_VERIFY=${SSL_VERIFY:-True}
+    restart: unless-stopped
+    # Comment out volume mount if using podman and having path issues
+    # volumes:
+    #   - .:/app
+    command: ["python", "/app/main.py"]
+    networks:
+      - mcp-network
+
+  # Optional: Add nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - grc-mcp-server
+    networks:
+      - mcp-network
+    profiles:
+      - with-proxy
+
+networks:
+  mcp-network:
+    driver: bridge
+
+# Made with Bob
