@@ -175,9 +175,24 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
 This server implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/specification/2025-03-26/basic/lifecycle) with streamable HTTP transport. It follows the complete MCP lifecycle:
 
 1. **Initialization**: The server supports the `initialize` method, which returns server capabilities and metadata.
+   - Complies with the MCP specification by including required fields: `protocolVersion` and `serverInfo`
+   - Returns server capabilities for feature negotiation (sampling, elicitation, roots)
+
 2. **Tool Discovery**: The server supports the `list_tools` method to discover available tools.
+   - Returns a list of available tools with their descriptions and parameters
+
 3. **Tool Execution**: The server supports the `call_tool` method to execute specific tools.
-4. **Shutdown**: The server supports the `shutdown` method for graceful termination.
+   - Accepts tool name and parameters
+   - Returns results in the specified format
+
+4. **Notifications**: The server supports the `notifications/initialized` method.
+   - Handles client notifications about initialization completion
+
+5. **Ping/Pong**: The server supports the `ping` method for connection health checks.
+   - Returns a `pong` response to confirm the server is responsive
+
+6. **Shutdown**: The server supports the `shutdown` method for graceful termination.
+   - Allows clients to signal they're done with the session
 
 ### Streamable HTTP Transport
 
@@ -270,6 +285,57 @@ If you're still experiencing issues, try using the test script to verify the ser
 ```bash
 python test_mcp_client.py
 ```
+
+#### MCP Protocol Compliance Issues
+
+If you see errors like these in the MCP Inspector client:
+
+```
+[
+  {
+    "code": "invalid_type",
+    "expected": "string",
+    "received": "undefined",
+    "path": [
+      "protocolVersion"
+    ],
+    "message": "Required"
+  },
+  {
+    "code": "invalid_type",
+    "expected": "object",
+    "received": "undefined",
+    "path": [
+      "serverInfo"
+    ],
+    "message": "Required"
+  }
+]
+```
+
+This indicates that the server's initialize response is missing required fields according to the MCP specification. The server should return:
+
+1. `protocolVersion`: A string indicating the MCP protocol version
+2. `serverInfo`: An object containing server metadata
+
+The server has been updated to include these fields in the initialize response.
+
+#### MCP Capabilities Support
+
+If you see a message in the MCP Inspector that "The connected server does not support any MCP capabilities", this indicates that the server's initialize response is missing the required capabilities. The server now supports:
+
+- `sampling`: For sampling capabilities
+- `elicitation`: For elicitation capabilities
+- `roots`: For root capabilities with `listChanged` support
+- `streaming`: For streaming responses (currently set to false)
+- `schema_validation`: For schema validation support
+
+#### MCP Notifications and Ping Support
+
+The server now supports:
+
+1. `notifications/initialized`: Handles client notifications about initialization completion
+2. `ping`: Responds to ping requests with a pong response for connection health checks
 
 #### Testing the MCP Lifecycle
 

@@ -27,7 +27,18 @@ def test_initialize():
     request_data = {
         "jsonrpc": "2.0",
         "method": "initialize",
-        "params": {},
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {
+                "sampling": {},
+                "elicitation": {},
+                "roots": {"listChanged": True}
+            },
+            "clientInfo": {
+                "name": "test-client",
+                "version": "1.0.0"
+            }
+        },
         "id": "init-request"
     }
     
@@ -39,6 +50,14 @@ def test_initialize():
     
     print("Initialize response:", response.status_code)
     print(json.dumps(response.json(), indent=2))
+    print()
+    
+    # Verify the response contains required fields
+    result = response.json().get("result", {})
+    if "protocolVersion" in result and "serverInfo" in result:
+        print("✅ Initialize response contains required fields")
+    else:
+        print("❌ Initialize response missing required fields")
     print()
 
 def test_list_tools():
@@ -83,6 +102,51 @@ def test_streamable_http():
     
     print("Streamable HTTP response:", response.status_code)
     print(json.dumps(response.json(), indent=2))
+    print()
+
+def test_notifications_initialized():
+    """Test the notifications/initialized method"""
+    request_data = {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized",
+        "id": "notification-request"
+    }
+    
+    response = requests.post(
+        "http://localhost:8000/api/streamable",
+        json=request_data,
+        headers={"Content-Type": "application/json"}
+    )
+    
+    print("Notifications/initialized response:", response.status_code)
+    print(json.dumps(response.json(), indent=2))
+    print()
+
+def test_ping():
+    """Test the ping method"""
+    request_data = {
+        "jsonrpc": "2.0",
+        "method": "ping",
+        "params": {"_meta": {"progressToken": 1}},
+        "id": "ping-request"
+    }
+    
+    response = requests.post(
+        "http://localhost:8000/api/streamable",
+        json=request_data,
+        headers={"Content-Type": "application/json"}
+    )
+    
+    print("Ping response:", response.status_code)
+    print(json.dumps(response.json(), indent=2))
+    print()
+    
+    # Verify the response contains pong
+    result = response.json().get("result", {})
+    if result.get("pong") is True:
+        print("✅ Ping response contains pong")
+    else:
+        print("❌ Ping response missing pong")
     print()
 
 def test_shutdown():
@@ -135,6 +199,8 @@ if __name__ == "__main__":
         test_initialize()
         test_list_tools()
         test_streamable_http()
+        test_notifications_initialized()
+        test_ping()
         test_call_tool()
         test_shutdown()
     else:
@@ -150,13 +216,17 @@ if __name__ == "__main__":
                 test_list_tools()
             elif arg == "streamable":
                 test_streamable_http()
+            elif arg == "notifications":
+                test_notifications_initialized()
+            elif arg == "ping":
+                test_ping()
             elif arg == "call":
                 test_call_tool()
             elif arg == "shutdown":
                 test_shutdown()
             else:
                 print(f"Unknown test: {arg}")
-                print("Available tests: health, tools_endpoint, initialize, list_tools, streamable, call, shutdown")
+                print("Available tests: health, tools_endpoint, initialize, list_tools, streamable, notifications, ping, call, shutdown")
                 sys.exit(1)
 
 # Made with Bob

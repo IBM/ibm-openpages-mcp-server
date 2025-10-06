@@ -158,13 +158,21 @@ class OpenPagesMCPServer:
         Initialize the MCP server and return initialization options
         
         Returns:
-            Initialization options
+            Initialization options according to MCP specification
         """
         return {
-            "name": "OpenPages MCP Server",
-            "version": "1.0.0",
-            "vendor": "IBM",
+            "protocolVersion": "2025-06-18",
+            "serverInfo": {
+                "name": "OpenPages MCP Server",
+                "version": "1.0.0",
+                "vendor": "IBM"
+            },
             "capabilities": {
+                "sampling": {},
+                "elicitation": {},
+                "roots": {
+                    "listChanged": True
+                },
                 "streaming": False,  # We don't support streaming responses yet
                 "schema_validation": True
             }
@@ -189,6 +197,9 @@ class OpenPagesMCPServer:
             # Handle initialization request
             if method == "initialize":
                 initialization_options = await self.initialize()
+                # Log the initialization request and response for debugging
+                logger.info(f"Initialize request: {params}")
+                logger.info(f"Initialize response: {initialization_options}")
                 return {
                     "jsonrpc": "2.0",
                     "result": initialization_options,
@@ -280,7 +291,28 @@ class OpenPagesMCPServer:
                     "id": request_id
                 }
             
+            # Handle notifications/initialized method
+            elif method == "notifications/initialized":
+                logger.info("Received notifications/initialized notification")
+                # This is a notification, so no response is needed
+                return {
+                    "jsonrpc": "2.0",
+                    "result": None,
+                    "id": request_id
+                }
+            
+            # Handle ping method
+            elif method == "ping":
+                logger.info("Received ping request")
+                # Return a simple pong response
+                return {
+                    "jsonrpc": "2.0",
+                    "result": {"pong": True},
+                    "id": request_id
+                }
+            
             else:
+                logger.warning(f"Method not found: {method}")
                 return {
                     "jsonrpc": "2.0",
                     "error": {

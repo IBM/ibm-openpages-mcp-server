@@ -14,6 +14,13 @@ The core of the application is the MCP server implementation in `src/app/core/mc
 - Uses the streamable HTTP transport protocol
 - Handles JSON-RPC 2.0 formatted requests and responses
 - Provides proper error handling and logging
+- Complies with the MCP specification for all lifecycle methods
+  - `initialize`: Returns required fields (protocolVersion, serverInfo) and capabilities (sampling, elicitation, roots)
+  - `list_tools`: Returns a list of available tools with descriptions and parameters
+  - `call_tool`: Executes tools and returns results in the specified format
+  - `notifications/initialized`: Handles client notifications about initialization completion
+  - `ping`: Responds to ping requests with a pong response for connection health checks
+  - `shutdown`: Handles graceful termination
 
 ### 2. OpenPages API Client
 
