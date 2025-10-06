@@ -153,6 +153,23 @@ class OpenPagesMCPServer:
                     data={"tool": name, "error": str(e)}
                 )
     
+    async def initialize(self) -> Dict[str, Any]:
+        """
+        Initialize the MCP server and return initialization options
+        
+        Returns:
+            Initialization options
+        """
+        return {
+            "name": "OpenPages MCP Server",
+            "version": "1.0.0",
+            "vendor": "IBM",
+            "capabilities": {
+                "streaming": False,  # We don't support streaming responses yet
+                "schema_validation": True
+            }
+        }
+    
     async def run_streamable_http(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process a streamable HTTP request
@@ -169,7 +186,17 @@ class OpenPagesMCPServer:
             params = request_data.get("params", {})
             request_id = request_data.get("id")
             
-            if method == "list_tools":
+            # Handle initialization request
+            if method == "initialize":
+                initialization_options = await self.initialize()
+                return {
+                    "jsonrpc": "2.0",
+                    "result": initialization_options,
+                    "id": request_id
+                }
+            
+            # Handle list_tools request
+            elif method == "list_tools":
                 # Get the list of tools
                 tools = []
                 
@@ -206,6 +233,15 @@ class OpenPagesMCPServer:
                 return {
                     "jsonrpc": "2.0",
                     "result": tools,
+                    "id": request_id
+                }
+            
+            # Handle shutdown request
+            elif method == "shutdown":
+                logger.info("Received shutdown request")
+                return {
+                    "jsonrpc": "2.0",
+                    "result": None,
                     "id": request_id
                 }
             

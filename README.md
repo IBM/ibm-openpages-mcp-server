@@ -89,11 +89,17 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
    # List available tools
    curl http://localhost:8000/api/tools
    
-   # Use the provided test script
+   # Use the provided test script to test all endpoints
    python test_mcp_client.py
    
    # Run specific tests
-   python test_mcp_client.py health tools streamable call
+   python test_mcp_client.py health tools_endpoint initialize list_tools streamable call shutdown
+   
+   # The test script includes tests for the complete MCP lifecycle:
+   # - initialize: Tests the MCP server initialization
+   # - list_tools: Tests the MCP tool discovery
+   # - call_tool: Tests the MCP tool execution
+   # - shutdown: Tests the MCP server shutdown
    ```
 
 > **Note:** Environment variables are configured in the following order of precedence:
@@ -163,6 +169,24 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
 - `GET /api/tools`: List available tools
 - `POST /api/tools/call`: Call a specific tool
 - `POST /api/streamable`: Raw streamable HTTP endpoint for MCP communication
+
+## MCP Protocol Implementation
+
+This server implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/specification/2025-03-26/basic/lifecycle) with streamable HTTP transport. It follows the complete MCP lifecycle:
+
+1. **Initialization**: The server supports the `initialize` method, which returns server capabilities and metadata.
+2. **Tool Discovery**: The server supports the `list_tools` method to discover available tools.
+3. **Tool Execution**: The server supports the `call_tool` method to execute specific tools.
+4. **Shutdown**: The server supports the `shutdown` method for graceful termination.
+
+### Streamable HTTP Transport
+
+The server uses the streamable HTTP transport protocol as defined in the MCP specification. This allows for:
+
+- JSON-RPC 2.0 formatted requests and responses
+- Stateless communication
+- Compatibility with HTTP clients and proxies
+- Support for both synchronous and asynchronous operations
 
 ## Using with AI Agents
 
@@ -246,6 +270,26 @@ If you're still experiencing issues, try using the test script to verify the ser
 ```bash
 python test_mcp_client.py
 ```
+
+#### Testing the MCP Lifecycle
+
+To specifically test the MCP lifecycle implementation:
+
+```bash
+# Test initialization
+python test_mcp_client.py initialize
+
+# Test tool discovery
+python test_mcp_client.py list_tools
+
+# Test tool execution via streamable HTTP
+python test_mcp_client.py streamable
+
+# Test shutdown
+python test_mcp_client.py shutdown
+```
+
+These tests will help verify that each stage of the MCP lifecycle is working correctly. If any stage fails, check the server logs for detailed error messages.
 
 To troubleshoot:
 
