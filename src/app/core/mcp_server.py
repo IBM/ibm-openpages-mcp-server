@@ -163,19 +163,100 @@ class OpenPagesMCPServer:
         return {
             "protocolVersion": "2025-06-18",
             "serverInfo": {
-                "name": "OpenPages MCP Server",
+                "name": "grc-mcp-server",
                 "version": "1.0.0",
-                "vendor": "IBM"
+                "description": "A remote MCP server providing OpenPages GRC data analysis and automation tools."
             },
             "capabilities": {
-                "sampling": {},
-                "elicitation": {},
-                "roots": {
-                    "listChanged": True
+                "tools": {
+                    "list": {
+                        "enabled": True
+                    },
+                    "call": {
+                        "enabled": True
+                    },
+                    "invoke": {
+                        "enabled": True
+                    }
                 },
-                "streaming": False,  # We don't support streaming responses yet
-                "schema_validation": True
-            }
+                "resources": {
+                    "list": {
+                        "enabled": True
+                    },
+                    "read": {
+                        "enabled": True
+                    }
+                },
+                "prompts": {
+                    "list": {
+                        "enabled": False
+                    }
+                },
+                "completion": {
+                    "enabled": True
+                }
+            },
+            "tools": [
+                {
+                    "name": "query_recent_risks",
+                    "description": "Query corporate risks that were opened in the last few days",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "days": {
+                                "type": "integer",
+                                "description": "Number of days to look back (default: 7)"
+                            },
+                            "risk_type": {
+                                "type": "string",
+                                "description": "Type of risk to query (e.g., 'CorpRisk', 'SOXRisk')"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "find_ineffective_controls",
+                    "description": "Find ineffective controls owned by the current user",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "control_type": {
+                                "type": "string",
+                                "description": "Type of control (e.g., 'SOXControl')"
+                            },
+                            "owner_filter": {
+                                "type": "boolean",
+                                "description": "Filter by current user ownership"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "custom_query",
+                    "description": "Execute a custom OpenPages query",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "SQL-like query statement for OpenPages"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results"
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            ],
+            "resources": [
+                {
+                    "uri": "file:///schemas/openpages-schema.json",
+                    "mime_type": "application/json",
+                    "description": "Schema for OpenPages data model"
+                }
+            ]
         }
     
     async def run_streamable_http(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -206,8 +287,8 @@ class OpenPagesMCPServer:
                     "id": request_id
                 }
             
-            # Handle list_tools request
-            elif method == "list_tools":
+            # Handle list_tools or tools/list request
+            elif method == "list_tools" or method == "tools/list":
                 # Get the list of tools
                 tools = []
                 
@@ -215,9 +296,18 @@ class OpenPagesMCPServer:
                 tools.append({
                     "name": "query_recent_risks",
                     "description": "Query corporate risks that were opened in the last few days",
-                    "parameters": {
-                        "days": {"type": "integer", "description": "Number of days to look back"},
-                        "risk_type": {"type": "string", "description": "Type of risk to query"}
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "days": {
+                                "type": "integer",
+                                "description": "Number of days to look back (default: 7)"
+                            },
+                            "risk_type": {
+                                "type": "string",
+                                "description": "Type of risk to query (e.g., 'CorpRisk', 'SOXRisk')"
+                            }
+                        }
                     }
                 })
                 
@@ -225,9 +315,18 @@ class OpenPagesMCPServer:
                 tools.append({
                     "name": "find_ineffective_controls",
                     "description": "Find ineffective controls owned by the current user",
-                    "parameters": {
-                        "control_type": {"type": "string", "description": "Type of control"},
-                        "owner_filter": {"type": "boolean", "description": "Filter by current user"}
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "control_type": {
+                                "type": "string",
+                                "description": "Type of control (e.g., 'SOXControl')"
+                            },
+                            "owner_filter": {
+                                "type": "boolean",
+                                "description": "Filter by current user ownership"
+                            }
+                        }
                     }
                 })
                 
@@ -235,15 +334,29 @@ class OpenPagesMCPServer:
                 tools.append({
                     "name": "custom_query",
                     "description": "Execute a custom OpenPages query",
-                    "parameters": {
-                        "query": {"type": "string", "description": "SQL-like query statement"},
-                        "limit": {"type": "integer", "description": "Maximum number of results"}
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "SQL-like query statement for OpenPages"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results"
+                            }
+                        },
+                        "required": ["query"]
                     }
                 })
                 
+                # Format the response according to MCP specification
+                # The tools/list method should return an object with a tools property
                 return {
                     "jsonrpc": "2.0",
-                    "result": tools,
+                    "result": {
+                        "tools": tools
+                    },
                     "id": request_id
                 }
             
@@ -256,7 +369,8 @@ class OpenPagesMCPServer:
                     "id": request_id
                 }
             
-            elif method == "call_tool":
+            # Handle call_tool, tools/invoke, or tools/call request
+            elif method == "call_tool" or method == "tools/invoke" or method == "tools/call":
                 tool_name = params.get("name")
                 arguments = params.get("arguments", {})
                 
@@ -291,23 +405,111 @@ class OpenPagesMCPServer:
                     "id": request_id
                 }
             
+            # This code block is no longer needed since we're handling both list_tools and tools/list in the same condition above
+            # The elif condition for list_tools will never be reached
+                
+                # Format the response according to MCP specification
+                return {
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "tools": tools
+                    },
+                    "id": request_id
+                }
+            
+            # Handle resources/list request
+            elif method == "resources/list":
+                resources = [
+                    {
+                        "uri": "file:///schemas/openpages-schema.json",
+                        "mime_type": "application/json",
+                        "description": "Schema for OpenPages data model"
+                    }
+                ]
+                
+                # Format the response according to MCP specification
+                # The resources/list method should return an object with a resources property
+                return {
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "resources": resources
+                    },
+                    "id": request_id
+                }
+            
+            # Handle resources/read request
+            elif method == "resources/read":
+                resource_uri = params.get("uri")
+                
+                if resource_uri == "file:///schemas/openpages-schema.json":
+                    # Return a simple schema for demonstration
+                    schema = {
+                        "title": "OpenPages Data Model",
+                        "description": "Schema for OpenPages GRC platform data model",
+                        "version": "1.0.0",
+                        "entities": {
+                            "Risk": {
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "name": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "status": {"type": "string", "enum": ["Open", "Closed", "In Progress"]}
+                                }
+                            },
+                            "Control": {
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "name": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "status": {"type": "string", "enum": ["Effective", "Ineffective", "Not Tested"]}
+                                }
+                            }
+                        }
+                    }
+                    
+                    return {
+                        "jsonrpc": "2.0",
+                        "result": schema,
+                        "id": request_id
+                    }
+                else:
+                    return {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32601,
+                            "message": f"Resource not found: {resource_uri}"
+                        },
+                        "id": request_id
+                    }
+            
             # Handle notifications/initialized method
             elif method == "notifications/initialized":
                 logger.info("Received notifications/initialized notification")
-                # This is a notification, so no response is needed
+                # For notifications, we don't need to return anything
+                # The MCP Inspector doesn't expect a response for notifications
+                # But FastAPI requires us to return something, so we'll return an empty dict
+                return {}
+            
+            # Handle notifications/subscribe method
+            elif method == "notifications/subscribe":
+                logger.info(f"Received notifications/subscribe request: {params}")
+                # Return a subscription ID
                 return {
                     "jsonrpc": "2.0",
-                    "result": None,
+                    "result": {
+                        "subscription_id": "sub_" + str(hash(str(params)))[:8]
+                    },
                     "id": request_id
                 }
             
             # Handle ping method
             elif method == "ping":
                 logger.info("Received ping request")
-                # Return a simple pong response
+                # Return an empty response for ping
+                # The MCP Inspector expects an empty object, not a pong field
                 return {
                     "jsonrpc": "2.0",
-                    "result": {"pong": True},
+                    "result": {},
                     "id": request_id
                 }
             

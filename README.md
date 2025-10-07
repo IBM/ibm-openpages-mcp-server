@@ -86,14 +86,14 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
    # Expected response:
    # {"status":"GRC MCP Server is running"}
    
-   # List available tools
-   curl http://localhost:8000/api/tools
+   # List available tools using the JSON-RPC endpoint
+   curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":"tools-list-request"}' http://localhost:8000/mcp
    
    # Use the provided test script to test all endpoints
    python test_mcp_client.py
    
    # Run specific tests
-   python test_mcp_client.py health tools_endpoint initialize list_tools streamable call shutdown
+   python test_mcp_client.py health initialize tools_list list_tools tools_invoke notifications ping resources_list resources_read call shutdown
    
    # The test script includes tests for the complete MCP lifecycle:
    # - initialize: Tests the MCP server initialization
@@ -166,32 +166,60 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
 ## API Endpoints
 
 - `GET /`: Health check endpoint
-- `GET /api/tools`: List available tools
-- `POST /api/tools/call`: Call a specific tool
-- `POST /api/streamable`: Raw streamable HTTP endpoint for MCP communication
+- `POST /mcp`: JSON-RPC 2.0 endpoint for all MCP communication
+
+### Supported JSON-RPC Methods
+
+- `initialize`: Initialize the MCP server connection
+- `tools/list`: List available tools
+- `tools/invoke`: Call a specific tool
+- `resources/list`: List available resources
+- `resources/read`: Read a specific resource
+- `ping`: Check connection health
+- `notifications/initialized`: Client notification about initialization completion
+- `shutdown`: Graceful termination of the session
+
+#### Legacy Method Support
+For backward compatibility, the following legacy method names are also supported:
+- `list_tools`: Maps to `tools/list`
+- `call_tool`: Maps to `tools/invoke`
 
 ## MCP Protocol Implementation
 
 This server implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/specification/2025-03-26/basic/lifecycle) with streamable HTTP transport. It follows the complete MCP lifecycle:
 
 1. **Initialization**: The server supports the `initialize` method, which returns server capabilities and metadata.
-   - Complies with the MCP specification by including required fields: `protocolVersion` and `serverInfo`
-   - Returns server capabilities for feature negotiation (sampling, elicitation, roots)
+   - Complies with the MCP specification by including required fields:
+     - `serverInfo`: Server metadata including name, version, and description
+     - `capabilities`: Supported capabilities with proper format
+     - `tools`: List of available tools with descriptions and input schemas
+     - `resources`: List of available resources with URIs and descriptions
+   - Capabilities include:
+     - `tools.list` and `tools.invoke`: For tool discovery and execution
+     - `resources.list` and `resources.read`: For resource management
+     - `prompts.list`: Disabled as not supported
+     - `completion`: For completion support
 
-2. **Tool Discovery**: The server supports the `list_tools` method to discover available tools.
+2. **Tool Discovery**: The server supports the `tools/list` method to discover available tools.
    - Returns a list of available tools with their descriptions and parameters
+   - Also supports legacy `list_tools` method for backward compatibility
 
-3. **Tool Execution**: The server supports the `call_tool` method to execute specific tools.
+3. **Tool Execution**: The server supports the `tools/invoke` method to execute specific tools.
    - Accepts tool name and parameters
    - Returns results in the specified format
+   - Also supports legacy `call_tool` method for backward compatibility
 
-4. **Notifications**: The server supports the `notifications/initialized` method.
+4. **Resource Management**: The server supports resource-related methods:
+   - `resources/list`: Lists available resources
+   - `resources/read`: Reads a specific resource by URI
+
+5. **Notifications**: The server supports the `notifications/initialized` method.
    - Handles client notifications about initialization completion
 
-5. **Ping/Pong**: The server supports the `ping` method for connection health checks.
-   - Returns a `pong` response to confirm the server is responsive
+6. **Ping**: The server supports the `ping` method for connection health checks.
+   - Returns an empty object response as required by the MCP specification
 
-6. **Shutdown**: The server supports the `shutdown` method for graceful termination.
+7. **Shutdown**: The server supports the `shutdown` method for graceful termination.
    - Allows clients to signal they're done with the session
 
 ### Streamable HTTP Transport
@@ -199,6 +227,7 @@ This server implements the [Model Context Protocol (MCP)](https://modelcontextpr
 The server uses the streamable HTTP transport protocol as defined in the MCP specification. This allows for:
 
 - JSON-RPC 2.0 formatted requests and responses
+- Single endpoint (`/mcp`) for all MCP methods
 - Stateless communication
 - Compatibility with HTTP clients and proxies
 - Support for both synchronous and asynchronous operations
@@ -212,12 +241,12 @@ To test with the MCP Inspector tool:
 1. Configure the MCP Inspector to use the correct endpoint:
    ```json
    {
-     "url": "http://localhost:8000/api/streamable",
+     "url": "http://localhost:8000/mcp",
      "protocol": "streamable_http"
    }
    ```
 
-2. Make sure to use the `/api/streamable` endpoint, not the root endpoint (`/`) or `/sse`.
+2. Make sure to use the `/mcp` endpoint, not the root endpoint (`/`) or `/sse`.
 
 3. If you're seeing "OPTIONS" requests in the logs but no actual tool calls, check that:
    - CORS is properly configured (the server accepts requests from the MCP Inspector's origin)
@@ -230,7 +259,7 @@ To use this MCP server with Claude, configure the MCP connection with:
 
 ```json
 {
-  "url": "https://your-mcp-server.example.com/api/streamable",
+  "url": "https://your-mcp-server.example.com/mcp",
   "protocol": "streamable_http"
 }
 ```
@@ -250,7 +279,7 @@ INFO: 9.43.34.211:56586 - "OPTIONS /sse HTTP/1.1" 404 Not Found
 ```
 
 This indicates that the client is trying to connect to the wrong endpoints. Make sure to:
-1. Use the `/api/streamable` endpoint for MCP communication
+1. Use the `/mcp` endpoint for MCP communication
 2. Check that your client is configured to use the streamable HTTP protocol, not SSE
 
 #### "MCP Server not initialized" Error
@@ -322,20 +351,47 @@ The server has been updated to include these fields in the initialize response.
 
 #### MCP Capabilities Support
 
-If you see a message in the MCP Inspector that "The connected server does not support any MCP capabilities", this indicates that the server's initialize response is missing the required capabilities. The server now supports:
+If you see a message in the MCP Inspector that "The connected server does not support any MCP capabilities", this indicates that the server's initialize response has incorrect capability format. The server now supports:
 
-- `sampling`: For sampling capabilities
-- `elicitation`: For elicitation capabilities
-- `roots`: For root capabilities with `listChanged` support
-- `streaming`: For streaming responses (currently set to false)
-- `schema_validation`: For schema validation support
+- `sampling`: With `enabled: true` flag
+- `elicitation`: With `enabled: true` flag
+- `roots`: With `listChanged: true` and `enabled: true` flags
+
+The MCP Inspector expects capabilities to have specific format with `enabled` flags, not just empty objects.
 
 #### MCP Notifications and Ping Support
 
 The server now supports:
 
 1. `notifications/initialized`: Handles client notifications about initialization completion
-2. `ping`: Responds to ping requests with a pong response for connection health checks
+   - According to JSON-RPC 2.0 spec, notifications don't have an id and don't require a response
+   - The server returns an empty object response with no id to acknowledge receipt
+   - Notifications are one-way messages from client to server
+
+2. `ping`: Responds to ping requests with an empty object response as required by the MCP specification
+
+If you see errors like:
+
+```
+[
+  {
+    "code": "unrecognized_keys",
+    "keys": [
+      "pong"
+    ],
+    "path": [],
+    "message": "Unrecognized key(s) in object: 'pong'"
+  }
+]
+```
+
+This indicates that the ping response format is incorrect. The MCP Inspector expects an empty object response, not a response with a `pong` field.
+
+If you're still seeing "The connected server does not support any MCP capabilities" error, check that:
+
+1. The initialize response includes the correct capabilities format with `enabled: true` flags
+2. The notifications/initialized response is properly formatted with an empty result object and no id
+3. The server is properly handling the client's capabilities in the initialize request
 
 #### Testing the MCP Lifecycle
 
@@ -346,10 +402,20 @@ To specifically test the MCP lifecycle implementation:
 python test_mcp_client.py initialize
 
 # Test tool discovery
-python test_mcp_client.py list_tools
+python test_mcp_client.py tools_list
 
-# Test tool execution via streamable HTTP
-python test_mcp_client.py streamable
+# Test tool execution
+python test_mcp_client.py tools_invoke
+
+# Test resource discovery and access
+python test_mcp_client.py resources_list
+python test_mcp_client.py resources_read
+
+# Test ping
+python test_mcp_client.py ping
+
+# Test notifications
+python test_mcp_client.py notifications
 
 # Test shutdown
 python test_mcp_client.py shutdown

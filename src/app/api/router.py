@@ -12,106 +12,40 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 # Create router
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/mcp")
 
 # Models
-class ToolRequest(BaseModel):
-    """Tool request model"""
-    tool_name: str
-    arguments: Dict[str, Any] = {}
-
-class ToolResponse(BaseModel):
-    """Tool response model"""
-    success: bool
-    result: Optional[Any] = None
-    error: Optional[str] = None
-
-class StreamableRequest(BaseModel):
-    """Streamable HTTP request model"""
-    jsonrpc: str
+class JsonRpcRequest(BaseModel):
+    """JSON-RPC request model"""
+    jsonrpc: str = "2.0"
     method: str
-    params: Dict[str, Any]
-    id: str
+    params: Optional[Dict[str, Any]] = {}
+    id: Optional[str] = None
 
-# Endpoints
-@router.get("/tools")
-async def list_tools():
-    """List available tools"""
-    from src.app.core.server_instance import get_server
-    
-    mcp_server = get_server()
-    if not mcp_server:
-        logger.error("MCP Server not initialized - this may be due to connection issues with OpenPages")
-        raise HTTPException(
-            status_code=500,
-            detail="MCP Server not initialized. This may be due to connection issues with the OpenPages server. Check server logs for details."
-        )
-    
-    try:
-        # Get tools from the server
-        request_data = {
-            "jsonrpc": "2.0",
-            "method": "list_tools",
-            "params": {},
-            "id": "list-tools-request"
-        }
-        
-        response = await mcp_server.run_streamable_http(request_data)
-        return response
-    except Exception as e:
-        logger.error(f"Error listing tools: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+class JsonRpcResponse(BaseModel):
+    """JSON-RPC response model"""
+    jsonrpc: str = "2.0"
+    result: Optional[Any] = None
+    error: Optional[Dict[str, Any]] = None
+    id: Optional[str] = None
 
-@router.post("/tools/call", response_model=ToolResponse)
-async def call_tool(request: ToolRequest):
-    """Call a specific tool"""
-    from src.app.core.server_instance import get_server
+# Single JSON-RPC endpoint
+@router.post("")
+async def jsonrpc_endpoint(request: Request):
+    """
+    JSON-RPC endpoint for MCP server
     
-    mcp_server = get_server()
-    if not mcp_server:
-        logger.error("MCP Server not initialized - this may be due to connection issues with OpenPages")
-        raise HTTPException(
-            status_code=500,
-            detail="MCP Server not initialized. This may be due to connection issues with the OpenPages server. Check server logs for details."
-        )
-    
-    try:
-        # Call the tool using streamable HTTP
-        request_data = {
-            "jsonrpc": "2.0",
-            "method": "call_tool",
-            "params": {
-                "name": request.tool_name,
-                "arguments": request.arguments
-            },
-            "id": "call-tool-request"
-        }
-        
-        response = await mcp_server.run_streamable_http(request_data)
-        
-        if "error" in response:
-            return ToolResponse(
-                success=False,
-                error=response["error"].get("message", "Unknown error")
-            )
-        
-        # Extract result from response
-        result = response.get("result", [])
-        text_content = ""
-        
-        if result and isinstance(result, list) and len(result) > 0:
-            for item in result:
-                if isinstance(item, dict) and "text" in item:
-                    text_content += item["text"]
-        
-        return ToolResponse(success=True, result=text_content)
-    except Exception as e:
-        logger.error(f"Error calling tool {request.tool_name}: {e}")
-        return ToolResponse(success=False, error=str(e))
-
-@router.post("/streamable")
-async def streamable_http(request: Request):
-    """Raw streamable HTTP endpoint"""
+    Supports methods:
+    - initialize
+    - tools/list
+    - tools/invoke
+    - resources/list
+    - resources/read
+    - ping
+    - notifications/initialized
+    - notifications/subscribe (optional)
+    - shutdown
+    """
     from src.app.core.server_instance import get_server
     
     mcp_server = get_server()
@@ -127,12 +61,19 @@ async def streamable_http(request: Request):
         # Get request data
         request_data = await request.json()
         request_id = request_data.get("id")
+        method = request_data.get("method", "")
+        
+        # Map new method names to old method names if needed
+        if method == "tools/list":
+            request_data["method"] = "list_tools"
+        elif method == "tools/invoke":
+            request_data["method"] = "call_tool"
         
         # Process request
         response = await mcp_server.run_streamable_http(request_data)
         return response
     except Exception as e:
-        logger.error(f"Error processing streamable request: {e}")
+        logger.error(f"Error processing JSON-RPC request: {e}")
         return {
             "jsonrpc": "2.0",
             "error": {

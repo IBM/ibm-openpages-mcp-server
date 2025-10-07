@@ -15,11 +15,33 @@ def test_health():
     print(response.json())
     print()
 
-def test_list_tools_endpoint():
-    """Test the list tools endpoint"""
-    response = requests.get("http://localhost:8000/api/tools")
-    print("List tools endpoint response:", response.status_code)
+def test_tools_list():
+    """Test the tools/list method"""
+    request_data = {
+        "jsonrpc": "2.0",
+        "method": "tools/list",
+        "params": {},
+        "id": "tools-list-request"
+    }
+    
+    response = requests.post(
+        "http://localhost:8000/mcp",
+        json=request_data,
+        headers={"Content-Type": "application/json"}
+    )
+    
+    print("Tools list response:", response.status_code)
     print(json.dumps(response.json(), indent=2))
+    print()
+    
+    # Verify the response has the correct format
+    result = response.json().get("result", {})
+    if "tools" in result and isinstance(result["tools"], list):
+        print("✅ Tools list response has correct format with 'tools' array")
+        print(f"✅ Number of tools: {len(result['tools'])}")
+    else:
+        print("❌ Tools list response has incorrect format")
+        print(f"Expected 'tools' array in result, got: {list(result.keys())}")
     print()
 
 def test_initialize():
@@ -43,7 +65,7 @@ def test_initialize():
     }
     
     response = requests.post(
-        "http://localhost:8000/api/streamable",
+        "http://localhost:8000/mcp",
         json=request_data,
         headers={"Content-Type": "application/json"}
     )
@@ -54,14 +76,17 @@ def test_initialize():
     
     # Verify the response contains required fields
     result = response.json().get("result", {})
-    if "protocolVersion" in result and "serverInfo" in result:
+    if "serverInfo" in result and "capabilities" in result and "tools" in result:
         print("✅ Initialize response contains required fields")
+        print("✅ Server info:", result["serverInfo"]["name"], result["serverInfo"]["version"])
+        print("✅ Number of tools:", len(result["tools"]))
+        print("✅ Capabilities:", ", ".join(result["capabilities"].keys()))
     else:
         print("❌ Initialize response missing required fields")
     print()
 
 def test_list_tools():
-    """Test the list_tools method"""
+    """Test the list_tools method (legacy)"""
     request_data = {
         "jsonrpc": "2.0",
         "method": "list_tools",
@@ -70,7 +95,7 @@ def test_list_tools():
     }
     
     response = requests.post(
-        "http://localhost:8000/api/streamable",
+        "http://localhost:8000/mcp",
         json=request_data,
         headers={"Content-Type": "application/json"}
     )
@@ -78,29 +103,39 @@ def test_list_tools():
     print("List tools response:", response.status_code)
     print(json.dumps(response.json(), indent=2))
     print()
+    
+    # Verify the response has the correct format
+    result = response.json().get("result", {})
+    if "tools" in result and isinstance(result["tools"], list):
+        print("✅ Legacy list_tools response has correct format with 'tools' array")
+        print(f"✅ Number of tools: {len(result['tools'])}")
+    else:
+        print("❌ Legacy list_tools response has incorrect format")
+        print(f"Expected 'tools' array in result, got: {list(result.keys())}")
+    print()
 
-def test_streamable_http():
-    """Test the streamable HTTP endpoint with a call_tool request"""
+def test_tools_invoke():
+    """Test the tools/invoke method"""
     request_data = {
         "jsonrpc": "2.0",
-        "method": "call_tool",
+        "method": "tools/invoke",
         "params": {
             "name": "custom_query",
-            "parameters": {
+            "arguments": {
                 "query": "SELECT [Name] FROM [User] WHERE [Name] IS NOT NULL LIMIT 1",
                 "limit": 10
             }
         },
-        "id": "call-tool-request"
+        "id": "tools-invoke-request"
     }
     
     response = requests.post(
-        "http://localhost:8000/api/streamable",
+        "http://localhost:8000/mcp",
         json=request_data,
         headers={"Content-Type": "application/json"}
     )
     
-    print("Streamable HTTP response:", response.status_code)
+    print("Tools invoke response:", response.status_code)
     print(json.dumps(response.json(), indent=2))
     print()
 
@@ -108,18 +143,28 @@ def test_notifications_initialized():
     """Test the notifications/initialized method"""
     request_data = {
         "jsonrpc": "2.0",
-        "method": "notifications/initialized",
-        "id": "notification-request"
+        "method": "notifications/initialized"
+        # No id for notifications according to JSON-RPC 2.0 spec
     }
     
     response = requests.post(
-        "http://localhost:8000/api/streamable",
+        "http://localhost:8000/mcp",
         json=request_data,
         headers={"Content-Type": "application/json"}
     )
     
     print("Notifications/initialized response:", response.status_code)
-    print(json.dumps(response.json(), indent=2))
+    try:
+        print(json.dumps(response.json(), indent=2))
+    except:
+        print("No JSON response (expected for notifications)")
+    print()
+    
+    # For notifications, we expect either an empty response or no response at all
+    if response.status_code == 200:
+        print("✅ Notifications/initialized request was accepted")
+    else:
+        print("❌ Notifications/initialized request failed")
     print()
 
 def test_ping():
@@ -132,7 +177,7 @@ def test_ping():
     }
     
     response = requests.post(
-        "http://localhost:8000/api/streamable",
+        "http://localhost:8000/mcp",
         json=request_data,
         headers={"Content-Type": "application/json"}
     )
@@ -141,12 +186,12 @@ def test_ping():
     print(json.dumps(response.json(), indent=2))
     print()
     
-    # Verify the response contains pong
-    result = response.json().get("result", {})
-    if result.get("pong") is True:
-        print("✅ Ping response contains pong")
+    # Verify the response is an empty object
+    result = response.json().get("result", None)
+    if result == {}:
+        print("✅ Ping response is an empty object (correct format)")
     else:
-        print("❌ Ping response missing pong")
+        print("❌ Ping response is not an empty object")
     print()
 
 def test_shutdown():
@@ -159,7 +204,7 @@ def test_shutdown():
     }
     
     response = requests.post(
-        "http://localhost:8000/api/streamable",
+        "http://localhost:8000/mcp",
         json=request_data,
         headers={"Content-Type": "application/json"}
     )
@@ -181,8 +226,19 @@ def test_call_tool():
         "arguments": arguments
     }
     
+    # Convert to JSON-RPC format
+    request_data = {
+        "jsonrpc": "2.0",
+        "method": "tools/invoke",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments
+        },
+        "id": "tool-invoke-request"
+    }
+    
     response = requests.post(
-        "http://localhost:8000/api/tools/call",
+        "http://localhost:8000/mcp",
         json=request_data,
         headers={"Content-Type": "application/json"}
     )
@@ -191,16 +247,94 @@ def test_call_tool():
     print(json.dumps(response.json(), indent=2))
     print()
 
+def test_tools_call():
+    """Test the tools/call method"""
+    request_data = {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+            "name": "custom_query",
+            "arguments": {
+                "query": "SELECT [Name] FROM [User] WHERE [Name] IS NOT NULL LIMIT 1",
+                "limit": 10
+            }
+        },
+        "id": "tools-call-request"
+    }
+    
+    response = requests.post(
+        "http://localhost:8000/mcp",
+        json=request_data,
+        headers={"Content-Type": "application/json"}
+    )
+    
+    print("Tools call response:", response.status_code)
+    print(json.dumps(response.json(), indent=2))
+    print()
+
 if __name__ == "__main__":
+    def test_resources_list():
+        """Test the resources/list method"""
+        request_data = {
+            "jsonrpc": "2.0",
+            "method": "resources/list",
+            "params": {},
+            "id": "resources-list-request"
+        }
+        
+        response = requests.post(
+            "http://localhost:8000/mcp",
+            json=request_data,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        print("Resources list response:", response.status_code)
+        print(json.dumps(response.json(), indent=2))
+        print()
+        
+        # Verify the response has the correct format
+        result = response.json().get("result", {})
+        if "resources" in result and isinstance(result["resources"], list):
+            print("✅ Resources list response has correct format with 'resources' array")
+            print(f"✅ Number of resources: {len(result['resources'])}")
+        else:
+            print("❌ Resources list response has incorrect format")
+            print(f"Expected 'resources' array in result, got: {list(result.keys())}")
+        print()
+    
+    def test_resources_read():
+        """Test the resources/read method"""
+        request_data = {
+            "jsonrpc": "2.0",
+            "method": "resources/read",
+            "params": {
+                "uri": "openpages://schema"
+            },
+            "id": "resources-read-request"
+        }
+        
+        response = requests.post(
+            "http://localhost:8000/mcp",
+            json=request_data,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        print("Resources read response:", response.status_code)
+        print(json.dumps(response.json(), indent=2))
+        print()
+    
     # Run all tests by default
     if len(sys.argv) == 1:
         test_health()
-        test_list_tools_endpoint()
         test_initialize()
+        test_tools_list()
         test_list_tools()
-        test_streamable_http()
+        test_tools_invoke()
+        test_tools_call()
         test_notifications_initialized()
         test_ping()
+        test_resources_list()
+        test_resources_read()
         test_call_tool()
         test_shutdown()
     else:
@@ -208,25 +342,31 @@ if __name__ == "__main__":
         for arg in sys.argv[1:]:
             if arg == "health":
                 test_health()
-            elif arg == "tools_endpoint":
-                test_list_tools_endpoint()
             elif arg == "initialize":
                 test_initialize()
+            elif arg == "tools_list":
+                test_tools_list()
             elif arg == "list_tools":
                 test_list_tools()
-            elif arg == "streamable":
-                test_streamable_http()
+            elif arg == "tools_invoke":
+                test_tools_invoke()
+            elif arg == "tools_call":
+                test_tools_call()
             elif arg == "notifications":
                 test_notifications_initialized()
             elif arg == "ping":
                 test_ping()
+            elif arg == "resources_list":
+                test_resources_list()
+            elif arg == "resources_read":
+                test_resources_read()
             elif arg == "call":
                 test_call_tool()
             elif arg == "shutdown":
                 test_shutdown()
             else:
                 print(f"Unknown test: {arg}")
-                print("Available tests: health, tools_endpoint, initialize, list_tools, streamable, notifications, ping, call, shutdown")
+                print("Available tests: health, initialize, tools_list, list_tools, tools_invoke, tools_call, notifications, ping, resources_list, resources_read, call, shutdown")
                 sys.exit(1)
 
 # Made with Bob
