@@ -59,25 +59,44 @@ class OpenPagesClient:
         Returns:
             Query results
         """
+        request_body = {
+            "statement": statement,
+            "offset": offset,
+            "max_rows": 500,
+            "limit": limit,
+            "case_insensitive": False,
+            "honor_primary": False
+        }
+        
+        logger.info(f"OpenPages API Query Request: {self.base_url}/opgrc/api/v2/query")
+        logger.info(f"Request Body: {request_body}")
+        
         async with httpx.AsyncClient(verify=False) as client:  # Disable SSL verification for self-signed certificates
             try:
                 response = await client.post(
                     f"{self.base_url}/opgrc/api/v2/query",
                     headers=self.headers,
-                    json={
-                        "statement": statement,
-                        "offset": offset,
-                        "max_rows": 500,
-                        "limit": limit,
-                        "case_insensitive": False,
-                        "honor_primary": False
-                    },
+                    json=request_body,
                     timeout=30.0
                 )
                 response.raise_for_status()
-                return response.json()
+                response_json = response.json()
+                
+                # Log the response, but truncate if too large
+                if settings.DEBUG:
+                    logger.info(f"OpenPages API Query Response Status: {response.status_code}")
+                    response_str = str(response_json)
+                    if len(response_str) > 1000:
+                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                    else:
+                        logger.info(f"Response Body: {response_json}")
+                
+                return response_json
             except httpx.HTTPError as e:
                 logger.error(f"HTTP error during query: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    logger.error(f"Response status: {e.response.status_code}")
+                    logger.error(f"Response body: {e.response.text}")
                 raise
     
     async def get_content(self, resource_id: str) -> Dict[str, Any]:
@@ -90,17 +109,34 @@ class OpenPagesClient:
         Returns:
             Content data
         """
+        url = f"{self.base_url}/opgrc/api/v2/contents/{resource_id}"
+        logger.info(f"OpenPages API Get Content Request: {url}")
+        
         async with httpx.AsyncClient(verify=False) as client:  # Disable SSL verification for self-signed certificates
             try:
                 response = await client.get(
-                    f"{self.base_url}/opgrc/api/v2/contents/{resource_id}",
+                    url,
                     headers=self.headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
-                return response.json()
+                response_json = response.json()
+                
+                # Log the response, but truncate if too large
+                if settings.DEBUG:
+                    logger.info(f"OpenPages API Get Content Response Status: {response.status_code}")
+                    response_str = str(response_json)
+                    if len(response_str) > 1000:
+                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                    else:
+                        logger.info(f"Response Body: {response_json}")
+                
+                return response_json
             except httpx.HTTPError as e:
                 logger.error(f"HTTP error getting content: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    logger.error(f"Response status: {e.response.status_code}")
+                    logger.error(f"Response body: {e.response.text}")
                 raise
     
     async def create_content(self, content_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -113,18 +149,36 @@ class OpenPagesClient:
         Returns:
             Created content data
         """
+        url = f"{self.base_url}/opgrc/api/v2/contents"
+        logger.info(f"OpenPages API Create Content Request: {url}")
+        logger.info(f"Request Body: {content_data}")
+        
         async with httpx.AsyncClient(verify=False) as client:  # Disable SSL verification for self-signed certificates
             try:
                 response = await client.post(
-                    f"{self.base_url}/opgrc/api/v2/contents",
+                    url,
                     headers=self.headers,
                     json=content_data,
                     timeout=30.0
                 )
                 response.raise_for_status()
-                return response.json()
+                response_json = response.json()
+                
+                # Log the response, but truncate if too large
+                if settings.DEBUG:
+                    logger.info(f"OpenPages API Create Content Response Status: {response.status_code}")
+                    response_str = str(response_json)
+                    if len(response_str) > 1000:
+                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                    else:
+                        logger.info(f"Response Body: {response_json}")
+                
+                return response_json
             except httpx.HTTPError as e:
                 logger.error(f"HTTP error creating content: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    logger.error(f"Response status: {e.response.status_code}")
+                    logger.error(f"Response body: {e.response.text}")
                 raise
     
     async def update_content(self, resource_id: str, content_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -138,18 +192,36 @@ class OpenPagesClient:
         Returns:
             Updated content data
         """
+        url = f"{self.base_url}/opgrc/api/v2/contents/{resource_id}"
+        logger.info(f"OpenPages API Update Content Request: {url}")
+        logger.info(f"Request Body: {content_data}")
+        
         async with httpx.AsyncClient(verify=False) as client:  # Disable SSL verification for self-signed certificates
             try:
                 response = await client.put(
-                    f"{self.base_url}/opgrc/api/v2/contents/{resource_id}",
+                    url,
                     headers=self.headers,
                     json=content_data,
                     timeout=30.0
                 )
                 response.raise_for_status()
-                return response.json()
+                response_json = response.json()
+                
+                # Log the response, but truncate if too large
+                if settings.DEBUG:
+                    logger.info(f"OpenPages API Update Content Response Status: {response.status_code}")
+                    response_str = str(response_json)
+                    if len(response_str) > 1000:
+                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                    else:
+                        logger.info(f"Response Body: {response_json}")
+                
+                return response_json
             except httpx.HTTPError as e:
                 logger.error(f"HTTP error updating content: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    logger.error(f"Response status: {e.response.status_code}")
+                    logger.error(f"Response body: {e.response.text}")
                 raise
     
     async def get_current_user(self) -> Optional[str]:
@@ -159,13 +231,25 @@ class OpenPagesClient:
         Returns:
             Username of the current user
         """
+        logger.info("Getting current user from OpenPages")
         try:
             # Query for current user
-            result = await self.query("SELECT [Name] FROM [User] WHERE [Name] IS NOT NULL LIMIT 1")
+            query = "SELECT [Name] FROM [User] WHERE [Name] IS NOT NULL LIMIT 1"
+            logger.info(f"Current user query: {query}")
+            
+            result = await self.query(query)
+            
             if result.get('rows'):
-                return result['rows'][0]['fields'][0]['value']
+                username = result['rows'][0]['fields'][0]['value']
+                logger.info(f"Current user: {username}")
+                return username
+            else:
+                logger.warning("No user found in query result")
         except Exception as e:
             logger.error(f"Failed to get current user: {e}")
+            if hasattr(e, '__traceback__'):
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 # Made with Bob
