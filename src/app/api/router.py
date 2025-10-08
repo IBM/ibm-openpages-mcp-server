@@ -4,8 +4,10 @@ Defines HTTP endpoints for the MCP server
 """
 
 import logging
+import asyncio
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 # Configure logging
@@ -82,5 +84,35 @@ async def jsonrpc_endpoint(request: Request):
             },
             "id": request_id
         }
+
+# Helper function for SSE streaming
+async def sse_stream():
+    """Generate SSE events for mcp-proxy connection"""
+    # Send initial connection message
+    yield "event: connection\ndata: {\"status\":\"ok\",\"protocol\":\"mcp\",\"version\":\"2025-03-26\"}\n\n"
+    
+    # Keep the connection alive with heartbeat messages
+    while True:
+        await asyncio.sleep(30)  # Send heartbeat every 30 seconds
+        yield "event: heartbeat\ndata: {\"time\":\"" + str(asyncio.get_event_loop().time()) + "\"}\n\n"
+
+# GET endpoint for mcp-proxy connection with SSE support
+@router.get("")
+async def mcp_proxy_connection():
+    """
+    GET endpoint for mcp-proxy connection with SSE support
+    
+    This endpoint is used by the mcp-proxy to connect to the MCP server
+    using the "uvx mcp-proxy apiurl" command, which expects an SSE stream.
+    """
+    return StreamingResponse(
+        sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable buffering in nginx
+        }
+    )
 
 # Made with Bob

@@ -161,7 +161,7 @@ class OpenPagesMCPServer:
             Initialization options according to MCP specification
         """
         return {
-            "protocolVersion": "2025-06-18",
+            "protocolVersion": "2025-03-26",
             "serverInfo": {
                 "name": "grc-mcp-server",
                 "version": "1.0.0",
@@ -399,9 +399,13 @@ class OpenPagesMCPServer:
                     else:
                         result_list.append({"type": "text", "text": str(item)})
                 
+                # Format the response according to MCP specification
+                # The tools/call and tools/invoke methods should return an object with a result property
                 return {
                     "jsonrpc": "2.0",
-                    "result": result_list,
+                    "result": {
+                        "result": result_list
+                    },
                     "id": request_id
                 }
             

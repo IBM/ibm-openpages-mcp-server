@@ -15,6 +15,39 @@ def test_health():
     print(response.json())
     print()
 
+def test_mcp_proxy_connection():
+    """Test the GET endpoint for mcp-proxy connection with SSE support"""
+    response = requests.get(
+        "http://localhost:8000/mcp",
+        stream=True,
+        headers={"Accept": "text/event-stream"}
+    )
+    print("MCP proxy connection response:", response.status_code)
+    print("Headers:", response.headers)
+    print()
+    
+    # Verify the response has the correct content type for SSE
+    if response.headers.get("Content-Type", "").startswith("text/event-stream"):
+        print("✅ MCP proxy connection response has correct Content-Type for SSE")
+    else:
+        print("❌ MCP proxy connection response has incorrect Content-Type")
+        print(f"Expected 'text/event-stream', got: {response.headers.get('Content-Type')}")
+    
+    # Try to read one event from the stream
+    try:
+        for line in response.iter_lines():
+            if line:
+                decoded_line = line.decode('utf-8')
+                print(f"Received SSE line: {decoded_line}")
+                if decoded_line.startswith("data:"):
+                    print("✅ Successfully received SSE data")
+                    break
+        print("✅ SSE stream is working")
+    except Exception as e:
+        print(f"❌ Error reading from SSE stream: {e}")
+    
+    print()
+
 def test_tools_list():
     """Test the tools/list method"""
     request_data = {
@@ -138,6 +171,15 @@ def test_tools_invoke():
     print("Tools invoke response:", response.status_code)
     print(json.dumps(response.json(), indent=2))
     print()
+    
+    # Verify the response has the correct format
+    result = response.json().get("result", {})
+    if "result" in result and isinstance(result["result"], list):
+        print("✅ Tools invoke response has correct format with 'result' property containing an array")
+    else:
+        print("❌ Tools invoke response has incorrect format")
+        print(f"Expected 'result' property containing an array in result, got: {list(result.keys())}")
+    print()
 
 def test_notifications_initialized():
     """Test the notifications/initialized method"""
@@ -246,6 +288,15 @@ def test_call_tool():
     print(f"Call tool '{tool_name}' response:", response.status_code)
     print(json.dumps(response.json(), indent=2))
     print()
+    
+    # Verify the response has the correct format
+    result = response.json().get("result", {})
+    if "result" in result and isinstance(result["result"], list):
+        print("✅ Call tool response has correct format with 'result' property containing an array")
+    else:
+        print("❌ Call tool response has incorrect format")
+        print(f"Expected 'result' property containing an array in result, got: {list(result.keys())}")
+    print()
 
 def test_tools_call():
     """Test the tools/call method"""
@@ -270,6 +321,15 @@ def test_tools_call():
     
     print("Tools call response:", response.status_code)
     print(json.dumps(response.json(), indent=2))
+    print()
+    
+    # Verify the response has the correct format
+    result = response.json().get("result", {})
+    if "result" in result and isinstance(result["result"], list):
+        print("✅ Tools call response has correct format with 'result' property containing an array")
+    else:
+        print("❌ Tools call response has incorrect format")
+        print(f"Expected 'result' property containing an array in result, got: {list(result.keys())}")
     print()
 
 if __name__ == "__main__":
@@ -326,6 +386,7 @@ if __name__ == "__main__":
     # Run all tests by default
     if len(sys.argv) == 1:
         test_health()
+        test_mcp_proxy_connection()
         test_initialize()
         test_tools_list()
         test_list_tools()
@@ -342,6 +403,8 @@ if __name__ == "__main__":
         for arg in sys.argv[1:]:
             if arg == "health":
                 test_health()
+            elif arg == "mcp_proxy":
+                test_mcp_proxy_connection()
             elif arg == "initialize":
                 test_initialize()
             elif arg == "tools_list":
@@ -366,7 +429,7 @@ if __name__ == "__main__":
                 test_shutdown()
             else:
                 print(f"Unknown test: {arg}")
-                print("Available tests: health, initialize, tools_list, list_tools, tools_invoke, tools_call, notifications, ping, resources_list, resources_read, call, shutdown")
+                print("Available tests: health, mcp_proxy, initialize, tools_list, list_tools, tools_invoke, tools_call, notifications, ping, resources_list, resources_read, call, shutdown")
                 sys.exit(1)
 
 # Made with Bob

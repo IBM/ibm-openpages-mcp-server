@@ -28,6 +28,7 @@ The core of the application is the MCP server implementation in `src/app/core/mc
     - Also supports legacy `list_tools` method for backward compatibility
   - `tools/invoke`: Executes tools and returns results in the specified format
     - Also supports legacy `call_tool` method for backward compatibility
+    - Returns results in an object with a `result` property containing an array of results
   - `resources/list`: Lists available resources
   - `resources/read`: Reads a specific resource by URI
   - `notifications/initialized`: Handles client notifications about initialization completion
@@ -59,6 +60,7 @@ The FastAPI router in `src/app/api/router.py`:
 
 - Exposes a health check endpoint at the root path (`/`)
 - Implements a single JSON-RPC endpoint at `/mcp` for all MCP communication
+- Provides a GET endpoint at `/mcp` with Server-Sent Events (SSE) support for mcp-proxy connection
 - Uses the `/mcp` prefix instead of the previous `/api` prefix
 - Handles all MCP methods through a single endpoint using JSON-RPC 2.0 format
 - Provides CORS support for cross-origin requests
@@ -112,6 +114,24 @@ The Docker configuration in `Dockerfile` and `docker-compose.yml`:
 **Challenge**: Implementing the streamable HTTP transport protocol correctly.
 
 **Solution**: Created a custom handler for MCP requests that properly formats JSON-RPC 2.0 requests and responses through a single endpoint.
+
+### 5. MCP Response Format Compliance
+
+**Challenge**: Ensuring that all MCP method responses comply with the expected format, particularly for tools/call and tools/invoke methods.
+
+**Solution**: Fixed the response format for tools/call and tools/invoke to return an object with a "result" property containing the array of results, rather than returning the array directly. This ensures compliance with the MCP Inspector's expectations.
+
+### 6. Server-Sent Events (SSE) Support for MCP Proxy
+
+**Challenge**: The mcp-proxy tool expects a Server-Sent Events (SSE) endpoint with the Content-Type header set to 'text/event-stream' for establishing a connection.
+
+**Solution**: Implemented an SSE endpoint at `/mcp` using FastAPI's StreamingResponse with the appropriate content type and headers. The endpoint sends an initial connection event and periodic heartbeat events to maintain the connection.
+
+### 7. Protocol Version Compatibility
+
+**Challenge**: The mcp-proxy client supports a specific protocol version (2025-03-26) and expects the server to use the same version.
+
+**Solution**: Updated the protocol version in both the SSE endpoint and the initialize response to match the client's supported version (2025-03-26), ensuring compatibility with the mcp-proxy tool.
 
 ### 3. SSL Certificate Verification
 
