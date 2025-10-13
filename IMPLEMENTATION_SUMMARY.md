@@ -33,7 +33,7 @@ The core of the application is the MCP server implementation in `src/app/core/mc
   - `resources/read`: Reads a specific resource by URI
   - `notifications/initialized`: Handles client notifications about initialization completion
     - Follows JSON-RPC 2.0 spec for notifications (no id required)
-    - Returns an empty response for notifications
+    - Returns a 202 Accepted status code with no body as per MCP specification
   - `ping`: Responds to ping requests with an empty object response as required by the MCP specification
   - `shutdown`: Handles graceful termination
 
@@ -132,6 +132,12 @@ The Docker configuration in `Dockerfile` and `docker-compose.yml`:
 **Challenge**: The mcp-proxy client supports a specific protocol version (2025-03-26) and expects the server to use the same version.
 
 **Solution**: Updated the protocol version in both the SSE endpoint and the initialize response to match the client's supported version (2025-03-26), ensuring compatibility with the mcp-proxy tool.
+
+### 8. Notification Response Format According to MCP Specification
+
+**Challenge**: The MCP specification requires that for JSON-RPC notifications, the server must return a 202 Accepted status code with no body, which differs from our initial implementation.
+
+**Solution**: Modified the notifications/initialized handler to return a 202 Accepted status code with no body as per the MCP specification, ensuring compliance with the streamable HTTP transport requirements.
 
 ### 3. SSL Certificate Verification
 

@@ -489,10 +489,13 @@ class OpenPagesMCPServer:
             # Handle notifications/initialized method
             elif method == "notifications/initialized":
                 logger.info("Received notifications/initialized notification")
-                # For notifications, we don't need to return anything
-                # The MCP Inspector doesn't expect a response for notifications
-                # But FastAPI requires us to return something, so we'll return an empty dict
-                return {}
+                # For notifications, we need to return a proper JSON-RPC response
+                # Even though notifications don't have an ID, the client expects a valid JSON-RPC message
+                return {
+                    "jsonrpc": "2.0",
+                    "result": None,
+                    "id": None  # Use None for notifications as they don't have an ID
+                }
             
             # Handle notifications/subscribe method
             elif method == "notifications/subscribe":

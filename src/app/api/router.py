@@ -6,7 +6,7 @@ Defines HTTP endpoints for the MCP server
 import logging
 import asyncio
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -65,6 +65,9 @@ async def jsonrpc_endpoint(request: Request):
         request_id = request_data.get("id")
         method = request_data.get("method", "")
         
+        # Check if this is a notification (no id)
+        is_notification = request_id is None and method == "notifications/initialized"
+        
         # Map new method names to old method names if needed
         if method == "tools/list":
             request_data["method"] = "list_tools"
@@ -73,6 +76,12 @@ async def jsonrpc_endpoint(request: Request):
         
         # Process request
         response = await mcp_server.run_streamable_http(request_data)
+        
+        # For notifications, return 202 Accepted with no body as per MCP spec
+        if is_notification:
+            logger.info("Returning 202 Accepted for notification")
+            return Response(status_code=202)
+        
         return response
     except Exception as e:
         logger.error(f"Error processing JSON-RPC request: {e}")

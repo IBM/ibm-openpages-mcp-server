@@ -196,17 +196,27 @@ def test_notifications_initialized():
     )
     
     print("Notifications/initialized response:", response.status_code)
-    try:
-        print(json.dumps(response.json(), indent=2))
-    except:
-        print("No JSON response (expected for notifications)")
-    print()
     
-    # For notifications, we expect either an empty response or no response at all
-    if response.status_code == 200:
-        print("✅ Notifications/initialized request was accepted")
+    # For notifications, we expect a 202 Accepted status code with no body
+    if response.status_code == 202:
+        print("✅ Notifications/initialized response has correct status code (202 Accepted)")
+        try:
+            # Should be empty
+            content = response.content
+            if not content:
+                print("✅ Notifications/initialized response has no body (correct)")
+            else:
+                print("❌ Notifications/initialized response has a body (incorrect)")
+                print(f"Response body: {content}")
+        except Exception as e:
+            print(f"❌ Error checking response body: {e}")
     else:
-        print("❌ Notifications/initialized request failed")
+        print(f"❌ Notifications/initialized response has incorrect status code: {response.status_code}")
+        print("Expected: 202 Accepted")
+        try:
+            print(f"Response body: {response.text}")
+        except:
+            print("No response body")
     print()
 
 def test_ping():
