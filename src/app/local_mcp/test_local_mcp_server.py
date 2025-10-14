@@ -11,6 +11,9 @@ import time
 import os
 import argparse
 
+# Add the project root directory to the Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
+
 def send_request(proc, request):
     """Send a JSON-RPC request to the server and get the response"""
     print(f"Sending request: {json.dumps(request, indent=2)}")
@@ -47,11 +50,17 @@ def main():
     
     # Start the server process
     print(f"Starting local MCP server from: {server_path}")
+    
+    # Use the same Python path as this script
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+    
     proc = subprocess.Popen(
         ["python3", server_path],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+        stderr=subprocess.PIPE,
+        env=env
     )
     
     # Wait for the server to start
@@ -137,12 +146,30 @@ def main():
                 }
                 call_query_response = send_request(proc, call_query_request)
                 
+                # Test query_issues tool
+                call_query_issues_request = {
+                    "jsonrpc": "2.0",
+                    "method": "call_tool",
+                    "params": {
+                        "name": "query_issues",
+                        "arguments": {
+                            "name": "test",
+                            "owner_filter": True,
+                            "limit": 10,
+                            "sort_by": "Name",
+                            "sort_order": "ASC"
+                        }
+                    },
+                    "id": 7
+                }
+                call_query_issues_response = send_request(proc, call_query_issues_request)
+                
                 # Send shutdown request
                 shutdown_request = {
                     "jsonrpc": "2.0",
                     "method": "shutdown",
                     "params": {},
-                    "id": 7
+                    "id": 8
                 }
                 shutdown_response = send_request(proc, shutdown_request)
     

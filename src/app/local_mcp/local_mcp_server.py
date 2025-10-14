@@ -16,6 +16,7 @@ from typing import Dict, Any, List
 from src.app.core.openpages_client import OpenPagesClient
 from src.app.tools.risk_tools import RiskTools
 from src.app.tools.control_tools import ControlTools
+from src.app.tools.issue_tools import IssueTools
 from src.app.tools.query_tools import QueryTools
 from src.app.config.settings import settings
 
@@ -69,6 +70,7 @@ class LocalMCPServer:
         # Initialize tool modules
         self.risk_tools = RiskTools(self.client)
         self.control_tools = ControlTools(self.client)
+        self.issue_tools = IssueTools(self.client)
         self.query_tools = QueryTools(self.client)
         
         # Define available tools
@@ -224,6 +226,57 @@ class LocalMCPServer:
                         }
                     },
                     "required": ["resource_id"]
+                }
+            },
+            {
+                "name": "create_issue",
+                "description": "Create a new issue in OpenPages",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name of the issue (required)"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Description of the issue"
+                        },
+                        "additional_fields": {
+                            "type": "string",
+                            "description": "JSON string with additional fields"
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "query_issues",
+                "description": "Query for issues in OpenPages",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Filter issues by name (partial match, optional)"
+                        },
+                        "owner_filter": {
+                            "type": "boolean",
+                            "description": "Filter by current user ownership (default: False)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of issues to return (default: 20)"
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "description": "Field to sort by (default: 'Name')"
+                        },
+                        "sort_order": {
+                            "type": "string",
+                            "description": "Sort order, 'ASC' or 'DESC' (default: 'ASC')"
+                        }
+                    }
                 }
             },
             {
@@ -455,6 +508,59 @@ class LocalMCPServer:
             }
         })
         
+        tools.append({
+            "name": "create_issue",
+            "description": "Create a new issue in OpenPages",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the issue (required)"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of the issue"
+                    },
+                    "additional_fields": {
+                        "type": "string",
+                        "description": "JSON string with additional fields"
+                    }
+                },
+                "required": ["name"]
+            }
+        })
+        
+        tools.append({
+            "name": "query_issues",
+            "description": "Query for issues in OpenPages",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Filter issues by name (partial match, optional)"
+                    },
+                    "owner_filter": {
+                        "type": "boolean",
+                        "description": "Filter by current user ownership (default: False)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of issues to return (default: 20)"
+                    },
+                    "sort_by": {
+                        "type": "string",
+                        "description": "Field to sort by (default: 'Name')"
+                    },
+                    "sort_order": {
+                        "type": "string",
+                        "description": "Sort order, 'ASC' or 'DESC' (default: 'ASC')"
+                    }
+                }
+            }
+        })
+
         # Add query tools
         tools.append({
             "name": "custom_query",
@@ -521,6 +627,18 @@ class LocalMCPServer:
             elif name == "update_control":
                 # Use the actual control_tools implementation
                 result = await self.control_tools.update_control(arguments)
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+            elif name == "create_issue":
+                # Use the actual issue_tools implementation
+                result = await self.issue_tools.create_issue(arguments)
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+            elif name == "query_issues":
+                # Use the actual issue_tools implementation
+                result = await self.issue_tools.query_issues(arguments)
                 return {
                     "result": [{"type": "text", "text": item.text} for item in result]
                 }
