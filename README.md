@@ -1,13 +1,16 @@
 # GRC MCP Server
 
-A Model Control Protocol (MCP) server for connecting to IBM OpenPages GRC platform via REST API. This server enables AI agents to interact with OpenPages through MCP tools.
+A Model Control Protocol (MCP) server for connecting to IBM OpenPages GRC platform via REST API. This server enables AI agents to interact with OpenPages through MCP tools. Supports both remote (HTTP) and local (stdio) modes.
 
 ## Features
 
-- Streamable HTTP protocol for MCP communication
+- Dual mode operation:
+  - Remote mode: Streamable HTTP protocol for MCP communication
+  - Local mode: stdio transport for direct integration
 - Connection to OpenPages REST API
 - Configurable OpenPages base URL and credentials
 - Docker-based deployment
+- Cross-platform support (Windows, Linux, Mac)
 - Support for various OpenPages tools:
   - Risk management
   - Control assessment
@@ -15,13 +18,25 @@ A Model Control Protocol (MCP) server for connecting to IBM OpenPages GRC platfo
 
 ## Architecture
 
-The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC platform:
+The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC platform. It supports two modes of operation:
+
+### Remote Mode (HTTP)
 
 ```
 ┌───────────┐     ┌───────────────┐     ┌───────────────┐
 │ AI Agents │────▶│ GRC MCP Server│────▶│ OpenPages API │
 └───────────┘     └───────────────┘     └───────────────┘
      MCP               HTTP/REST             REST API
+(streamable HTTP)
+```
+
+### Local Mode (stdio)
+
+```
+┌───────────┐     ┌───────────────┐     ┌───────────────┐
+│ AI Agents │────▶│ GRC MCP Server│────▶│ OpenPages API │
+└───────────┘     └───────────────┘     └───────────────┘
+    stdio              HTTP/REST             REST API
 ```
 
 ## Prerequisites
@@ -55,10 +70,36 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
    DEBUG=False
    ```
 
-4. Run the server:
+4. Run the server in remote mode (HTTP):
    ```bash
-   python -m src.app.main
+   python main.py --mode remote
    ```
+
+5. Or run the server in local mode (stdio):
+   ```bash
+   python main.py --mode local
+   ```
+
+6. Alternatively, use the provided scripts for local mode:
+   - Standard implementation with real OpenPages data:
+     - On Linux/Mac:
+       ```bash
+       ./run_local_mcp.sh
+       ```
+     - On Windows:
+       ```
+       run_local_mcp.bat
+       ```
+   
+   - Legacy implementation with simulated data (for backward compatibility):
+     - On Linux/Mac:
+       ```bash
+       ./scripts/local_mcp/run_simple_server.sh
+       ```
+     - On Windows:
+       ```
+       scripts\local_mcp\run_simple_server.bat
+       ```
 
 ### Docker Deployment
 
@@ -157,7 +198,38 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
 
 ### Control Tools
 
+The Control Tools module provides object-centric tools for working with Controls in OpenPages:
+
 - `find_ineffective_controls`: Find ineffective controls owned by the current user
+- `find_automatable_controls`: Find controls that could be tested automatically in Automated Control Monitoring
+- `create_control`: Create a new control in OpenPages with specified attributes
+- `update_control`: Update an existing control in OpenPages
+
+These tools support a comprehensive approach to control management with a focus on automation:
+
+#### find_automatable_controls
+Identifies controls that could be tested automatically based on various criteria:
+- Control type (SOXControl, etc.)
+- Automation status (Automated, Candidate, Not Suitable)
+- Control frequency (Daily, Weekly, Monthly, etc.)
+- Owner filter (current user or all)
+
+#### create_control
+Creates new controls with all essential attributes:
+- Name and description
+- Control type
+- Control frequency
+- Automation status
+- Test plan
+- Additional custom fields via JSON
+
+#### update_control
+Updates existing controls with any combination of attributes:
+- Name and description
+- Control frequency
+- Automation status
+- Test plan
+- Additional custom fields via JSON
 
 ### Query Tools
 
@@ -232,13 +304,291 @@ The server uses the streamable HTTP transport protocol as defined in the MCP spe
 - Compatibility with HTTP clients and proxies
 - Support for both synchronous and asynchronous operations
 
+## Local MCP Server Mode
+
+The GRC MCP Server supports a local mode that uses stdio transport instead of HTTP. This is useful for:
+
+1. Direct integration with AI agents without network overhead
+2. Local development and testing
+3. Environments where HTTP servers cannot be deployed
+
+### Running in Local Mode
+
+To run the server in local mode:
+
+```bash
+# Using the Python script directly
+python src/app/local_mcp/run_local_mcp.py
+
+# Or using the provided shortcut scripts
+./run_local_mcp.sh  # On Linux/Mac
+run_local_mcp.bat   # On Windows
+
+# Legacy scripts (for backward compatibility)
+./scripts/local_mcp/run_simple_server.sh  # On Linux/Mac
+scripts\local_mcp\run_simple_server.bat   # On Windows
+```
+
+This implementation uses the actual OpenPages APIs for real data access, just like the remote mode. The implementation is in `src/app/local_mcp/local_mcp_server.py` as the `LocalMCPServer` class, which connects to the OpenPages server using the same credentials as the remote mode.
+
+#### Environment Variables
+
+The local MCP server requires the following environment variables to be set:
+
+```
+OPENPAGES_BASE_URL=https://your-openpages-server.example.com
+OPENPAGES_USERNAME=your_username
+OPENPAGES_PASSWORD=your_password
+```
+
+You can set these variables in a `.env` file in the project root directory. The `run_local_mcp.py` script will automatically load these variables from the `.env` file. Alternatively, you can set these variables in your shell environment before running the script.
+
+Example `.env` file:
+```
+OPENPAGES_BASE_URL=https://openpages.example.com
+OPENPAGES_USERNAME=admin
+OPENPAGES_PASSWORD=password123
+DEBUG=False
+```
+
+### Local Mode Architecture
+
+In local mode, the MCP server communicates directly with the AI agent using stdio transport:
+
+```
+┌───────────┐     ┌───────────────┐     ┌───────────────┐
+│ AI Agents │────▶│ GRC MCP Server│────▶│ OpenPages API │
+└───────────┘     └───────────────┘     └───────────────┘
+    stdio              HTTP/REST             REST API
+```
+
+The local MCP server implementation is now standardized and follows the same structure as the remote MCP server:
+
+```
+src/app/local_mcp/
+├── __init__.py           # Package initialization
+├── local_mcp_server.py   # Main LocalMCPServer class implementation
+├── run_local_mcp.py      # Script to run the local MCP server
+└── test_local_mcp_server.py # Test script for the local MCP server
+```
+
+### Local Mode Configuration
+
+Local mode can be configured through:
+
+1. Command-line arguments:
+   ```bash
+   python main.py --mode local
+   ```
+
+2. Environment variables:
+   ```bash
+   export SERVER_MODE=local
+   python main.py
+   ```
+
+3. Settings in `.env` file:
+   ```
+   SERVER_MODE=local
+   ```
+
+4. Direct execution of the local MCP server:
+   ```bash
+   python src/app/local_mcp/run_local_mcp.py
+   ```
+
+### Local Mode Tools
+
+In local mode, the server uses the same OpenPages connection and tools as the remote mode, but communicates via stdio transport instead of HTTP. The `LocalMCPServer` class in `src/app/local_mcp/local_mcp_server.py` uses the actual OpenPages client and tools:
+
+```python
+from src.app.core.openpages_client import OpenPagesClient
+from src.app.tools.risk_tools import RiskTools
+from src.app.tools.control_tools import ControlTools
+from src.app.tools.query_tools import QueryTools
+```
+
+The tools are fully modularized and shared between both remote and local modes, ensuring consistent behavior:
+
+- `query_recent_risks`: Queries risks from OpenPages (from RiskTools module)
+- `find_ineffective_controls`: Finds ineffective controls in OpenPages (from ControlTools module)
+- `custom_query`: Executes custom queries against OpenPages (from QueryTools module)
+- `echo`: Basic echo tool for testing
+
+The tool implementations are modularized in separate files:
+- `src/app/tools/risk_tools.py`: Contains RiskTools class for risk management
+- `src/app/tools/control_tools.py`: Contains ControlTools class for control assessment
+- `src/app/tools/query_tools.py`: Contains QueryTools class for custom queries
+
+These modularized tools are used by both the remote and local MCP server implementations, with both modes connecting to the same OpenPages server using the same credentials. This approach ensures:
+
+1. Complete code reuse between remote and local modes
+2. Consistent tool interfaces and behavior
+3. Easy maintenance and extension of tool functionality
+4. Real data access in both modes
+
+Using the same OpenPages connection in both modes allows AI agents to access the same data regardless of the transport mechanism. This is particularly useful for:
+
+1. Development and testing with real OpenPages data
+2. Demonstrations and presentations with actual GRC information
+3. Environments where HTTP servers cannot be deployed but OpenPages access is still required
+
+### MCP Server for MCP Inspector
+
+For compatibility with the MCP Inspector tool, we provide two MCP server implementations:
+
+#### 1. Standard Implementation (Recommended)
+
+The standard implementation in `src/app/local_mcp/local_mcp_server.py` uses the actual OpenPages APIs and provides real data:
+
+```bash
+# Run using the shortcut scripts
+./run_local_mcp.sh  # On Linux/Mac
+run_local_mcp.bat   # On Windows
+```
+
+When using the MCP Inspector, configure it to use:
+```
+python3 /path/to/src/app/local_mcp/run_local_mcp.py
+```
+
+To test the standard implementation:
+
+```bash
+# Run using the shortcut scripts
+./run_test_local_mcp.sh  # On Linux/Mac
+run_test_local_mcp.bat   # On Windows
+```
+
+#### 2. Legacy Simple Implementation
+
+For backward compatibility, we maintain a simple MCP server implementation that doesn't rely on any external libraries:
+
+```
+scripts/local_mcp/simple_mcp_server.py
+```
+
+This legacy implementation:
+- Uses pure Python and standard libraries
+- Follows the exact response format expected by the MCP Inspector
+- Includes the required "protocolVersion" field at the top level
+- Provides all OpenPages tools with simulated responses (not real data)
+
+To run the legacy simple MCP server:
+
+```bash
+# On Linux/Mac
+./scripts/local_mcp/run_simple_server.sh
+
+# On Windows
+scripts\local_mcp\run_simple_server.bat
+```
+
+When using the MCP Inspector with the legacy implementation, configure it to use:
+```
+python3 /path/to/scripts/local_mcp/simple_mcp_server.py
+```
+
+For production use with real OpenPages data, use either the standard local implementation or the remote mode:
+
+```bash
+# Remote mode
+python main.py --mode remote
+
+# Local mode with real data
+python src/app/local_mcp/run_local_mcp.py
+```
+
+### Troubleshooting Local Mode
+
+If you encounter any of these issues when running the local MCP server:
+
+#### Externally Managed Environment Error
+
+```
+error: externally-managed-environment
+× This environment is externally managed
+```
+
+This error occurs in newer Python installations (especially on Linux) where pip is restricted from modifying system packages. If you encounter this issue:
+
+1. Create a virtual environment manually:
+   ```bash
+   python -m venv mcp_venv
+   source mcp_venv/bin/activate  # On Windows: mcp_venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+2. Then run the script within the virtual environment:
+   ```bash
+   python src/app/local_mcp/run_local_mcp.py
+   ```
+
+3. Or use the legacy simple implementation which doesn't require additional packages:
+   ```bash
+   ./run_local_mcp.sh  # On Linux/Mac (standard implementation)
+   run_local_mcp.bat   # On Windows (standard implementation)
+   # Or legacy scripts:
+   ./scripts/local_mcp/run_simple_server.sh  # On Linux/Mac
+   scripts\local_mcp\run_simple_server.bat   # On Windows
+   ```
+
+#### OpenPages Connection Issues
+
+If you encounter errors connecting to OpenPages:
+
+1. Check your environment variables:
+   ```bash
+   env | grep OPENPAGES
+   ```
+
+2. Verify that the OpenPages URL is correct and accessible:
+   ```bash
+   curl -k https://your-openpages-server.example.com
+   ```
+
+3. If you need to test without an OpenPages connection, use the legacy simple implementation:
+   ```bash
+   ./scripts/local_mcp/run_simple_server.sh  # On Linux/Mac
+   scripts\local_mcp\run_simple_server.bat   # On Windows
+   ```
+
+#### Missing Dependencies
+
+If you see errors about missing modules, you can install them manually:
+
+```bash
+pip install pydantic pydantic-settings requests
+```
+
+Or install all dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+#### Testing the Local MCP Server
+
+To verify that the local MCP server is working correctly:
+
+```bash
+# Using the provided test scripts
+./run_test_local_mcp.sh  # On Linux/Mac
+run_test_local_mcp.bat   # On Windows
+
+# Or run the test script directly
+python src/app/local_mcp/test_local_mcp_server.py
+```
+
+This will test the complete MCP lifecycle including initialization, tool discovery, tool execution, and shutdown.
+
 ## Using with AI Agents
 
 ### MCP Inspector
 
 To test with the MCP Inspector tool:
 
-1. Configure the MCP Inspector to use the correct endpoint:
+1. For remote mode, configure the MCP Inspector to use the HTTP endpoint:
    ```json
    {
      "url": "http://localhost:8000/mcp",
@@ -246,7 +596,12 @@ To test with the MCP Inspector tool:
    }
    ```
 
-2. Make sure to use the `/mcp` endpoint, not the root endpoint (`/`) or `/sse`.
+2. For local mode, use the simple MCP server:
+   ```
+   python3 /path/to/scripts/local_mcp/simple_mcp_server.py
+   ```
+
+3. Make sure to use the `/mcp` endpoint for remote mode, not the root endpoint (`/`) or `/sse`.
 
 3. If you're seeing "OPTIONS" requests in the logs but no actual tool calls, check that:
    - CORS is properly configured (the server accepts requests from the MCP Inspector's origin)
@@ -442,6 +797,37 @@ To troubleshoot:
    curl -k https://your-openpages-server.example.com
    ```
 
+## Command-Line Arguments
+
+The server supports the following command-line arguments:
+
+```
+usage: main.py [-h] [--mode {remote,local}] [--host HOST] [--port PORT] [--debug]
+
+GRC MCP Server
+
+options:
+  -h, --help           show this help message and exit
+  --mode {remote,local}
+                       Server mode: remote (HTTP) or local (stdio)
+  --host HOST          Host to bind the server to (remote mode only)
+  --port PORT          Port to bind the server to (remote mode only)
+  --debug              Enable debug mode
+```
+
+Examples:
+
+```bash
+# Run in remote mode (HTTP) on port 8000
+python main.py --mode remote --host 0.0.0.0 --port 8000
+
+# Run in local mode (stdio)
+python main.py --mode local
+
+# Run in debug mode
+python main.py --mode remote --debug
+```
+
 ## Development
 
 ### Project Structure
@@ -453,11 +839,20 @@ grc-mcp-server/
 │       ├── api/        # API endpoints
 │       ├── core/       # Core functionality
 │       ├── tools/      # Tool implementations
-│       └── config/     # Configuration
+│       ├── config/     # Configuration
+│       └── local_mcp/  # Local MCP server implementation
+├── scripts/            # Legacy scripts (for backward compatibility)
+│   ├── local_mcp/      # Legacy local MCP server scripts
+│   └── tests/          # Test scripts
 ├── tests/              # Test cases
 ├── docs/               # Documentation
 ├── nginx/              # NGINX configuration
 ├── .github/            # GitHub Actions workflows
+├── run_local_mcp.sh    # Script to run local MCP server (Linux/Mac)
+├── run_local_mcp.bat   # Script to run local MCP server (Windows)
+├── run_test_local_mcp.sh # Script to test local MCP server (Linux/Mac)
+├── run_test_local_mcp.bat # Script to test local MCP server (Windows)
+├── main.py             # Main application entry point
 ├── Dockerfile          # Docker configuration
 ├── docker-compose.yml  # Docker Compose configuration
 └── requirements.txt    # Python dependencies

@@ -13,8 +13,16 @@ class Settings(BaseSettings):
     APP_NAME: str = "GRC MCP Server"
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
     
+    # Server mode settings
+    SERVER_MODE: str = os.getenv("SERVER_MODE", "remote")  # 'remote' or 'local'
+    
     # OpenPages settings
-    OPENPAGES_BASE_URL: str = os.getenv("OPENPAGES_BASE_URL", "")
+    _base_url: str = os.getenv("OPENPAGES_BASE_URL", "")
+    # Ensure the base URL has the correct protocol
+    OPENPAGES_BASE_URL: str = (_base_url if not _base_url or
+                              _base_url.startswith('http://') or
+                              _base_url.startswith('https://')
+                              else f"https://{_base_url}")
     OPENPAGES_USERNAME: str = os.getenv("OPENPAGES_USERNAME", "")
     OPENPAGES_PASSWORD: str = os.getenv("OPENPAGES_PASSWORD", "")
     
