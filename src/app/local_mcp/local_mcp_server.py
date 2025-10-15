@@ -238,9 +238,24 @@ class LocalMCPServer:
                             "type": "string",
                             "description": "Name of the issue (required)"
                         },
+                        "title": {
+                            "type": "string",
+                            "description": "Title of the issue"
+                        },
                         "description": {
                             "type": "string",
                             "description": "Description of the issue"
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "Status of the issue (New, Open, Closed)",
+                            "enum": ["New", "Open", "Closed"]
+
+                        },
+                        "due_date": {
+                            "type": "string",
+                            "description": "Due date of the issue",
+                            "format": "date"
                         },
                         "additional_fields": {
                             "type": "string",
@@ -518,9 +533,23 @@ class LocalMCPServer:
                         "type": "string",
                         "description": "Name of the issue (required)"
                     },
+                    "title": {
+                        "type": "string",
+                        "description": "Title of the issue"
+                    },
                     "description": {
                         "type": "string",
                         "description": "Description of the issue"
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Status of the issue (New, Open, Closed)",
+                        "enum": ["New", "Open", "Closed"]
+                    },
+                    "due_date": {
+                        "type": "string",
+                        "description": "Due date of the issue",
+                        "format": "date"
                     },
                     "additional_fields": {
                         "type": "string",

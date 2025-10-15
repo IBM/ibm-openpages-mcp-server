@@ -38,7 +38,10 @@ class IssueTools:
         Args:
             arguments: Tool arguments
                 - name: Name of the issue (required)
+                - title: Issue title (optional)
                 - description: Description of the issue (optional)
+                - status: Issue status (optional)
+                - due date: Due date of the issue (optional)
                 - additional_fields: JSON string with additional fields (optional)
                 
         Returns:
@@ -50,15 +53,22 @@ class IssueTools:
             return [TextContent(type="text", text="Error: Issue name is required")]
         
         # Extract optional fields
+        title = arguments.get('title', '')
         description = arguments.get('description', '')
+        status = arguments.get('status', '')
+        due_date = arguments.get('due_date')
         type_defintiion = "SOXIssue"
         
         # Prepare content data
         content_data: dict[str, Any] = {
             "name": name,
+            "title": title,
             "description": description,
-            "type_definition_id": type_defintiion,
-            "fields": []
+            "fields": [
+                {"name": "OPSS-Issue:Status", "value": {"name": status}},
+                {"name": "OPSS-Iss:Due Date", "value": due_date}
+            ],
+            "type_definition_id": type_defintiion
         }
                 
         # Add any additional fields from JSON
