@@ -1,0 +1,35 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "install-debugpy",
+            "type": "process",
+            "command": "${command:python.interpreterPath}",
+            "args": [
+                "${workspaceFolder}/install_debugpy.py"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "run-mcp-inspector",
+            "type": "shell",
+            "command": "npx @modelcontextprotocol/inspector",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "debug-mcp-with-inspector",
+            "dependsOrder": "sequence",
+            "dependsOn": ["install-debugpy", "run-mcp-inspector"],
+            "problemMatcher": []
+        }
+    ]
+}

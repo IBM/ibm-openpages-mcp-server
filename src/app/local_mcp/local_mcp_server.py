@@ -73,6 +73,57 @@ class LocalMCPServer:
         self.issue_tools = IssueTools(self.client)
         self.query_tools = QueryTools(self.client)
         
+        # Cache for type definitions
+        self.type_definitions = {}
+        
+        # Define available tools with basic schemas
+        self._init_tools()
+        
+        # Flag to indicate if dynamic schemas have been loaded
+        self.dynamic_schemas_loaded = False
+        
+    def _init_tools(self):
+        """Initialize tools with basic schemas"""
+        # Define available tools
+        self.tools = [
+            {
+                "name": "echo",
+                "description": "Echo the input text",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "The text to echo"
+                        }
+                    },
+                    "required": ["text"]
+                }
+            },
+            # Other tools...
+        ]
+        # Tools are defined in the class initialization
+        
+    async def load_dynamic_schemas(self):
+        """Load dynamic schemas for tools"""
+        if self.dynamic_schemas_loaded:
+            return
+            
+        try:
+            # Get dynamic schema for create_issue
+            issue_schema = await self.build_dynamic_schema_for_issue("SOXIssue")
+            
+            # Update the create_issue tool schema
+            for tool in self.tools:
+                if tool["name"] == "create_issue":
+                    tool["input_schema"] = issue_schema
+                    logger.info("Updated create_issue tool with dynamic schema")
+                    break
+                    
+            self.dynamic_schemas_loaded = True
+        except Exception as e:
+            logger.error(f"Error loading dynamic schemas: {e}")
+        
         # Define available tools
         self.tools = [
             {
@@ -228,6 +279,7 @@ class LocalMCPServer:
                     "required": ["resource_id"]
                 }
             },
+            # create_issue tool will be populated with dynamic schema during initialization
             {
                 "name": "create_issue",
                 "description": "Create a new issue in OpenPages",
@@ -237,34 +289,12 @@ class LocalMCPServer:
                         "name": {
                             "type": "string",
                             "description": "Name of the issue (required)"
-                        },
-                        "title": {
-                            "type": "string",
-                            "description": "Title of the issue"
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Description of the issue"
-                        },
-                        "status": {
-                            "type": "string",
-                            "description": "Status of the issue (New, Open, Closed)",
-                            "enum": ["New", "Open", "Closed"]
-
-                        },
-                        "due_date": {
-                            "type": "string",
-                            "description": "Due date of the issue",
-                            "format": "date"
-                        },
-                        "additional_fields": {
-                            "type": "string",
-                            "description": "JSON string with additional fields"
                         }
                     },
                     "required": ["name"]
                 }
             },
+            # get_issue_fields tool removed as per user request
             {
                 "name": "query_issues",
                 "description": "Query for issues in OpenPages",
@@ -314,9 +344,124 @@ class LocalMCPServer:
             }
         ]
     
+    async def get_type_definition(self, type_name: str):
+        """
+        Get and cache type definition
+        
+        Args:
+            type_name: Name of the type to retrieve
+            
+        Returns:
+            Type definition data
+        """
+        if type_name in self.type_definitions:
+            logger.info(f"Using cached type definition for {type_name}")
+            return self.type_definitions[type_name]
+        
+        try:
+            logger.info(f"Fetching type definition for {type_name}")
+            type_def = await self.client.get_type_definition(type_name)
+            self.type_definitions[type_name] = type_def
+            return type_def
+        except Exception as e:
+            logger.error(f"Error fetching type definition for {type_name}: {e}")
+            return None
+    
+    async def build_dynamic_schema_for_issue(self, issue_type: str = "SOXIssue"):
+        """
+        Build a dynamic JSON schema for issue creation based on field definitions
+        
+        Args:
+            issue_type: Type of issue
+            
+        Returns:
+            JSON schema object
+        """
+        # Start with basic schema
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the issue (required)"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Title of the issue"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Description of the issue"
+                #},
+                #"additional_fields": {
+                #    "type": "string",
+                #    "description": "JSON string with additional fields"
+                }
+            },
+            "required": ["name"]
+        }
+        
+        # Try to get type definition
+        type_def = await self.get_type_definition(issue_type)
+        if not type_def or "field_definitions" not in type_def:
+            logger.warning(f"Could not get field definitions for {issue_type}, using default schema")
+            return schema
+        
+        # Add fields from type definition
+        for field in type_def.get("field_definitions", []):
+            field_name = field.get("name")
+            if not field_name or field_name in ["Name", "Title", "Description", "Resource ID", "Created By", "Creation Date", "Last Modification Date", "Last Modified By", "Location"]:
+                continue  # Skip fields already in schema
+                
+            # Convert OpenPages data type to JSON schema type
+            field_type = field.get("data_type", "STRING_TYPE")
+            json_type = "string"
+            json_format = None
+            
+            if field_type == "DATE_TYPE":
+                json_type = "string"
+                json_format = "date"
+            elif field_type == "BOOLEAN_TYPE":
+                json_type = "boolean"
+            elif field_type == "INTEGER_TYPE":
+                json_type = "integer"
+            elif field_type == "DECIMAL_TYPE":
+                json_type = "number"
+            elif field_type == "ENUM_TYPE":
+                json_type = "string"
+                
+            # Create property definition
+            prop_def = {
+                "type": json_type,
+                "description": field.get("description", f"Field: {field_name}")
+            }
+            
+            # Add format if applicable
+            if json_format:
+                prop_def["format"] = json_format
+                
+            # Add enum values if available
+            enum_values = field.get("enum_values", [])
+            if enum_values and field_type == "ENUM_TYPE":
+                prop_def["enum"] = [v.get("name") for v in enum_values]
+                
+            # Add to schema
+            schema["properties"][field_name] = prop_def
+            
+            # Add to required list if field is required
+            if field.get("required", False):
+                if "required" not in schema:
+                    schema["required"] = ["name"]
+                schema["required"].append(field_name)
+                
+        return schema
+    
     async def handle_initialize(self, params):
         """Handle initialize request"""
         logger.info("Handling initialize request")
+        
+        # Load dynamic schemas
+        await self.load_dynamic_schemas()
         return {
             "protocolVersion": "2025-03-26",
             "serverInfo": {
@@ -359,6 +504,9 @@ class LocalMCPServer:
     async def handle_list_tools(self, params):
         """Handle list_tools request"""
         logger.info("Handling list_tools request")
+        
+        # Load dynamic schemas
+        await self.load_dynamic_schemas()
         tools = []
         
         # Add echo tool
@@ -523,42 +671,16 @@ class LocalMCPServer:
             }
         })
         
+        # Get dynamic schema for create_issue
+        issue_schema = await self.build_dynamic_schema_for_issue("SOXIssue")
+        
         tools.append({
             "name": "create_issue",
             "description": "Create a new issue in OpenPages",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Name of the issue (required)"
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "Title of the issue"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Description of the issue"
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "Status of the issue (New, Open, Closed)",
-                        "enum": ["New", "Open", "Closed"]
-                    },
-                    "due_date": {
-                        "type": "string",
-                        "description": "Due date of the issue",
-                        "format": "date"
-                    },
-                    "additional_fields": {
-                        "type": "string",
-                        "description": "JSON string with additional fields"
-                    }
-                },
-                "required": ["name"]
-            }
+            "inputSchema": issue_schema
         })
+        
+        # get_issue_fields tool removed as per user request
         
         tools.append({
             "name": "query_issues",
@@ -665,6 +787,7 @@ class LocalMCPServer:
                 return {
                     "result": [{"type": "text", "text": item.text} for item in result]
                 }
+            # get_issue_fields tool removed as per user request
             elif name == "query_issues":
                 # Use the actual issue_tools implementation
                 result = await self.issue_tools.query_issues(arguments)

@@ -6,7 +6,7 @@ Provides functionality to interact with IBM OpenPages REST API
 import logging
 import base64
 from typing import Any, Dict, List, Optional
-import httpx
+import httpx  # type: ignore
 from src.app.config.settings import settings
 
 # Configure logging
@@ -271,5 +271,45 @@ class OpenPagesClient:
                 import traceback
                 logger.error(f"Traceback: {traceback.format_exc()}")
             return "admin"  # Return a default user on error
+    
+    async def get_type_definition(self, type_name: str) -> Dict[str, Any]:
+        """
+        Get type definition information from OpenPages
+        
+        Args:
+            type_name: Name of the type to retrieve (e.g., 'SOXIssue')
+            
+        Returns:
+            Type definition data including field definitions
+        """
+        url = f"{self.base_url}/opgrc/api/v2/types/{type_name}"
+        logger.info(f"OpenPages API Get Type Definition Request: {url}")
+        
+        async with httpx.AsyncClient(verify=False) as client:  # Disable SSL verification for self-signed certificates
+            try:
+                response = await client.get(
+                    url,
+                    headers=self.headers,
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                response_json = response.json()
+                
+                # Log the response, but truncate if too large
+                if settings.DEBUG:
+                    logger.info(f"OpenPages API Get Type Definition Response Status: {response.status_code}")
+                    response_str = str(response_json)
+                    if len(response_str) > 1000:
+                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                    else:
+                        logger.info(f"Response Body: {response_json}")
+                
+                return response_json
+            except httpx.HTTPError as e:
+                logger.error(f"HTTP error getting type definition: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    logger.error(f"Response status: {e.response.status_code}")
+                    logger.error(f"Response body: {e.response.text}")
+                raise
 
 # Made with Bob
