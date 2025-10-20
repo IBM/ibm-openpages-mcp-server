@@ -17,6 +17,7 @@ from src.app.core.openpages_client import OpenPagesClient
 from src.app.tools.risk_tools import RiskTools
 from src.app.tools.control_tools import ControlTools
 from src.app.tools.issue_tools import IssueTools
+from src.app.tools.model_tools import ModelTools
 from src.app.tools.query_tools import QueryTools
 from src.app.config.settings import settings
 
@@ -71,6 +72,7 @@ class LocalMCPServer:
         self.risk_tools = RiskTools(self.client)
         self.control_tools = ControlTools(self.client)
         self.issue_tools = IssueTools(self.client)
+        self.model_tools = ModelTools(self.client)
         self.query_tools = QueryTools(self.client)
         
         # Cache for type definitions
@@ -111,13 +113,43 @@ class LocalMCPServer:
             
         try:
             # Get dynamic schema for create_issue
-            issue_schema = await self.build_dynamic_schema_for_issue("SOXIssue")
+            issue_schema = await self.build_dynamic_schema_for_object("SOXIssue", "issue")
             
             # Update the create_issue tool schema
             for tool in self.tools:
                 if tool["name"] == "create_issue":
                     tool["input_schema"] = issue_schema
                     logger.info("Updated create_issue tool with dynamic schema")
+                    break
+            
+            # Get dynamic schema for query_issues
+            query_issues_tool = await self.update_query_issues_schema()
+            
+            # Update the query_issues tool schema
+            for tool in self.tools:
+                if tool["name"] == "query_issues":
+                    tool["input_schema"] = query_issues_tool["input_schema"]
+                    logger.info("Updated query_issues tool with dynamic schema")
+                    break
+            
+            # Get dynamic schema for create_model
+            model_schema = await self.build_dynamic_schema_for_object("Model", "model")
+            
+            # Update the create_model tool schema
+            for tool in self.tools:
+                if tool["name"] == "create_model":
+                    tool["input_schema"] = model_schema
+                    logger.info("Updated create_model tool with dynamic schema")
+                    break
+            
+            # Get dynamic schema for query_models
+            query_models_tool = await self.update_query_models_schema()
+            
+            # Update the query_models tool schema
+            for tool in self.tools:
+                if tool["name"] == "query_models":
+                    tool["input_schema"] = query_models_tool["input_schema"]
+                    logger.info("Updated query_models tool with dynamic schema")
                     break
                     
             self.dynamic_schemas_loaded = True
@@ -140,6 +172,8 @@ class LocalMCPServer:
                     "required": ["text"]
                 }
             },
+            
+            # query_issues tool will be populated with dynamic schema during load_dynamic_schemas
             {
                 "name": "query_recent_risks",
                 "description": "Query corporate risks that were opened in the last few days",
@@ -155,6 +189,107 @@ class LocalMCPServer:
                             "description": "Type of risk to query (e.g., 'CorpRisk', 'SOXRisk')"
                         }
                     }
+                }
+            },
+            {
+                "name": "get_model_fields",
+                "description": "Get available fields for model creation",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "model_type": {
+                            "type": "string",
+                            "description": "Type of model (default: Model)"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "create_model",
+                "description": "Create a new model in OpenPages",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name of the model (required)"
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Title of the model"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Description of the model"
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "query_models",
+                "description": "Query for models in OpenPages",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Filter models by name (partial match, optional)"
+                        },
+                        "owner_filter": {
+                            "type": "boolean",
+                            "description": "Filter by current user ownership (default: False)"
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Filter models by status (optional)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of models to return (default: 20)"
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "description": "Field to sort by (default: 'Name')"
+                        },
+                        "sort_order": {
+                            "type": "string",
+                            "description": "Sort order, 'ASC' or 'DESC' (default: 'ASC')"
+                        },
+                        "fields": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "List of additional fields to include in the output (multiselect). Resource ID, Name, Description, and Status are always included."
+                        }
+                    }
+                }
+            },
+            {
+                "name": "update_model",
+                "description": "Update an existing model in OpenPages",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "resource_id": {
+                            "type": "string",
+                            "description": "Resource ID of the model to update (required)"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Updated name of the model"
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Updated title of the model"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Updated description of the model"
+                        }
+                    },
+                    "required": ["resource_id"]
                 }
             },
             {
@@ -309,6 +444,10 @@ class LocalMCPServer:
                             "type": "boolean",
                             "description": "Filter by current user ownership (default: False)"
                         },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Filter issues by status (optional)"
+                        },
                         "limit": {
                             "type": "integer",
                             "description": "Maximum number of issues to return (default: 20)"
@@ -320,6 +459,14 @@ class LocalMCPServer:
                         "sort_order": {
                             "type": "string",
                             "description": "Sort order, 'ASC' or 'DESC' (default: 'ASC')"
+                        },
+                        "fields": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": []  # This will be populated with field names
+                            },
+                            "description": "List of additional fields to include in the output (multiselect). Resource ID, Name, Description, and Status are always included. Available fields: Priority, Owner, Due Date, and others from the issue type definition."
                         }
                     }
                 }
@@ -367,44 +514,54 @@ class LocalMCPServer:
             logger.error(f"Error fetching type definition for {type_name}: {e}")
             return None
     
-    async def build_dynamic_schema_for_issue(self, issue_type: str = "SOXIssue"):
+    async def build_dynamic_schema_for_object(self, object_type: str, object_label: str = ""):
         """
-        Build a dynamic JSON schema for issue creation based on field definitions
+        Build a dynamic JSON schema for object creation based on field definitions
         
         Args:
-            issue_type: Type of issue
+            object_type: Type of object (e.g., SOXIssue, Model)
+            object_label: Label to use in descriptions (e.g., "issue", "model")
             
         Returns:
             JSON schema object
         """
+        # If object_label is not provided, derive it from object_type
+        if not object_label:
+            if "Issue" in object_type:
+                object_label = "issue"
+            elif "Model" in object_type:
+                object_label = "model"
+            elif "Control" in object_type:
+                object_label = "control"
+            elif "Risk" in object_type:
+                object_label = "risk"
+            else:
+                object_label = "object"
+        
         # Start with basic schema
         schema = {
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Name of the issue (required)"
+                    "description": f"Name of the {object_label} (required)"
                 },
                 "title": {
                     "type": "string",
-                    "description": "Title of the issue"
+                    "description": f"Title of the {object_label}"
                 },
                 "description": {
                     "type": "string",
-                    "description": "Description of the issue"
-                #},
-                #"additional_fields": {
-                #    "type": "string",
-                #    "description": "JSON string with additional fields"
+                    "description": f"Description of the {object_label}"
                 }
             },
             "required": ["name"]
         }
         
         # Try to get type definition
-        type_def = await self.get_type_definition(issue_type)
+        type_def = await self.get_type_definition(object_type)
         if not type_def or "field_definitions" not in type_def:
-            logger.warning(f"Could not get field definitions for {issue_type}, using default schema")
+            logger.warning(f"Could not get field definitions for {object_type}, using default schema")
             return schema
         
         # Add fields from type definition
@@ -455,6 +612,318 @@ class LocalMCPServer:
                 schema["required"].append(field_name)
                 
         return schema
+        
+    async def build_dynamic_schema_for_query_object(self, object_type: str = "Model"):
+        """
+        Build a dynamic JSON schema for query tools with field options
+        
+        Args:
+            object_type: Type of object (e.g., Model, SOXIssue)
+            
+        Returns:
+            JSON schema object for the fields property
+        """
+        # Start with basic schema
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Filter models by name (partial match, optional)"
+                },
+                "owner_filter": {
+                    "type": "boolean",
+                    "description": "Filter by current user ownership (default: False)"
+                },
+                "status_filter": {
+                    "type": "string",
+                    "description": "Filter models by status (optional)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of models to return (default: 20)"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": []  # This will be populated with field names
+                    },
+                    "description": "List of additional fields to include in the output (multiselect). Resource ID, Name, Description, and Status are always included."
+                },
+                "sort_by": {
+                    "type": "string",
+                    "description": "Field to sort by (default: 'Name')"
+                },
+                "sort_order": {
+                    "type": "string",
+                    "enum": ["ASC", "DESC"],
+                    "description": "Sort order, 'ASC' or 'DESC' (default: 'ASC')"
+                }
+            }
+        }
+        
+        # Try to get type definition
+        type_def = await self.get_type_definition(object_type)
+        if not type_def or "field_definitions" not in type_def:
+            logger.warning(f"Could not get field definitions for {object_type}, using default schema")
+            return schema
+            
+        # Determine status field name based on object type
+        status_field_name = None
+        if "Issue" in object_type:
+            status_field_name = "OPSS-Iss:Status"
+        elif "Model" in object_type:
+            status_field_name = "MRG-Model:Status"
+        elif "Control" in object_type:
+            status_field_name = "OPSS-Ctrl:Status"
+        elif "Risk" in object_type:
+            status_field_name = "OPSS-Risk:Status"
+            
+        # Find status field to get allowable values
+        status_values = []
+        # Keep track of enum fields to exclude from sort_by
+        enum_fields = []
+        
+        for field in type_def.get("field_definitions", []):
+            field_name = field.get("name")
+            field_type = field.get("data_type")
+            
+            # Handle Status field specifically
+            if status_field_name and field_name == status_field_name:
+                # Extract enum values if available
+                enum_values = field.get("enum_values", [])
+                if enum_values and field_type == "ENUM_TYPE":
+                    status_values = [v.get("name") for v in enum_values]
+                    # Update status_filter with enum values
+                    schema["properties"]["status_filter"] = {
+                        "type": "string",
+                        "enum": status_values,
+                        "description": "Filter by status (optional)"
+                    }
+            
+            # Track all enum fields to exclude from sort_by
+            if field_type == "ENUM_TYPE":
+                # Create a simplified name for display
+                if ':' in field_name:
+                    field_group, simple_name = field_name.split(':', 1)
+                    display_name = f"{simple_name} [{field_group}]"
+                else:
+                    display_name = field_name
+                enum_fields.append(display_name)
+        
+        # Extract field names for enum values
+        field_names = []
+        for field in type_def.get("field_definitions", []):
+            field_name = field.get("name")
+            # Determine which fields to skip based on object type
+            skip_fields = ["Resource ID", "Name", "Description"]
+            if "Issue" in object_type:
+                skip_fields.append("OPSS-Iss:Status")
+            elif "Model" in object_type:
+                skip_fields.append("MRG-Model:Status")
+            elif "Control" in object_type:
+                skip_fields.append("OPSS-Ctrl:Status")
+            elif "Risk" in object_type:
+                skip_fields.append("OPSS-Risk:Status")
+                
+            if not field_name or field_name in skip_fields:
+                continue  # Skip fields already included by default
+                
+            # Extract field group and name
+            if ':' in field_name:
+                field_group, simple_name = field_name.split(':', 1)
+                # Format as "Name [Group]"
+                display_name = f"{simple_name} [{field_group}]"
+            else:
+                display_name = field_name
+                
+            field_names.append(display_name)
+        
+        # Add common field names that might not be in the type definition
+        common_fields = []
+        if "Issue" in object_type:
+            common_fields = ["Priority [OPSS-Iss]", "Owner", "Due Date [OPSS-Iss]"]
+        elif "Model" in object_type:
+            common_fields = ["Owner", "Last Modified Date", "Creation Date"]
+        elif "Control" in object_type:
+            common_fields = ["Owner", "Control Frequency", "Automation Status"]
+        elif "Risk" in object_type:
+            common_fields = ["Owner", "Risk Level", "Impact"]
+        for field in common_fields:
+            if field not in field_names:
+                field_names.append(field)
+        
+        # Sort field names for better readability
+        field_names.sort()
+        
+        # Add enum values to the fields property
+        if field_names:
+            schema["properties"]["fields"]["items"]["enum"] = field_names
+            logger.info(f"Added {len(field_names)} field options to the schema for {object_type}")
+            
+            # Create a list of sortable fields (excluding enum types)
+            sortable_fields = ["Name", "Resource ID", "Description"]
+            for field in field_names:
+                if field not in enum_fields:
+                    sortable_fields.append(field)
+            
+            # Remove sort_order as a separate property since it will be part of each sort field
+            if "sort_order" in schema["properties"]:
+                del schema["properties"]["sort_order"]
+            
+            # Replace sort_by with an array of objects that include field and order
+            schema["properties"]["sort_by"] = {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string",
+                            "enum": sortable_fields,
+                            "description": "Field to sort by"
+                        },
+                        "order": {
+                            "type": "string",
+                            "enum": ["ASC", "DESC"],
+                            "description": "Sort order (ascending or descending)"
+                        }
+                    },
+                    "required": ["field", "order"]
+                },
+                "description": "Fields to sort by with individual sort orders (up to 3 fields)",
+                "maxItems": 3
+            }
+            
+            # Add enum values to the fields property
+            if field_names:
+                schema["properties"]["fields"]["items"]["enum"] = field_names
+        
+        return schema
+    
+    async def update_query_issues_schema(self):
+        """
+        Update the query_issues tool schema with dynamic field options
+        
+        Returns:
+            Updated tool definition
+        """
+        try:
+            # Get dynamic schema for query_issues
+            issue_schema = await self.build_dynamic_schema_for_query_object("SOXIssue")
+            
+            # Return the updated tool definition
+            return {
+                "name": "query_issues",
+                "description": "Query for issues in OpenPages",
+                "input_schema": issue_schema
+            }
+        except Exception as e:
+            logger.error(f"Error updating query_issues schema: {e}")
+            # Return default schema if there's an error
+            return {
+                "name": "query_issues",
+                "description": "Query for issues in OpenPages",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Filter issues by name (partial match, optional)"
+                        },
+                        "owner_filter": {
+                            "type": "boolean",
+                            "description": "Filter by current user ownership (default: False)"
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Filter issues by status (optional)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of issues to return (default: 20)"
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "description": "Field to sort by (default: 'Name')"
+                        },
+                        "sort_order": {
+                            "type": "string",
+                            "description": "Sort order, 'ASC' or 'DESC' (default: 'ASC')"
+                        },
+                        "fields": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": []  # This will be populated with field names
+                            },
+                            "description": "List of additional fields to include in the output (multiselect). Resource ID, Name, Description, and Status are always included."
+                        }
+                    }
+                }
+            }
+            
+    async def update_query_models_schema(self):
+        """
+        Update the query_models tool schema with dynamic field options
+        
+        Returns:
+            Updated tool definition
+        """
+        try:
+            # Get dynamic schema for query_models
+            model_schema = await self.build_dynamic_schema_for_query_object("Model")
+            
+            # Return the updated tool definition
+            return {
+                "name": "query_models",
+                "description": "Query for models in OpenPages",
+                "input_schema": model_schema
+            }
+        except Exception as e:
+            logger.error(f"Error updating query_models schema: {e}")
+            # Return default schema if there's an error
+            return {
+                "name": "query_models",
+                "description": "Query for models in OpenPages",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Filter models by name (partial match, optional)"
+                        },
+                        "owner_filter": {
+                            "type": "boolean",
+                            "description": "Filter by current user ownership (default: False)"
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Filter models by status (optional)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of models to return (default: 20)"
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "description": "Field to sort by (default: 'Name')"
+                        },
+                        "sort_order": {
+                            "type": "string",
+                            "description": "Sort order, 'ASC' or 'DESC' (default: 'ASC')"
+                        },
+                        "fields": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": []  # This will be populated with field names
+                            },
+                            "description": "List of additional fields to include in the output (multiselect). Resource ID, Name, Description, and Status are always included."
+                        }
+                    }
+                }
+            }
     
     async def handle_initialize(self, params):
         """Handle initialize request"""
@@ -541,6 +1010,65 @@ class LocalMCPServer:
                         "description": "Type of risk to query (e.g., 'CorpRisk', 'SOXRisk')"
                     }
                 }
+            }
+        })
+        
+        # Add model tools
+        
+        tools.append({
+            "name": "get_model_fields",
+            "description": "Get available fields for model creation",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "model_type": {
+                        "type": "string",
+                        "description": "Type of model (default: Model)"
+                    }
+                }
+            }
+        })
+        
+        # Get dynamic schema for create_model
+        model_schema = await self.build_dynamic_schema_for_object("Model", "model")
+        
+        tools.append({
+            "name": "create_model",
+            "description": "Create a new model in OpenPages",
+            "inputSchema": model_schema
+        })
+        
+        # Get dynamic schema for query_models with field options
+        query_models_tool = await self.update_query_models_schema()
+        query_models_tool["inputSchema"] = query_models_tool["input_schema"]
+        del query_models_tool["input_schema"]  # Remove input_schema as we use inputSchema in this context
+        
+        tools.append(query_models_tool)
+        
+        tools.append({
+            "name": "update_model",
+            "description": "Update an existing model in OpenPages",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "resource_id": {
+                        "type": "string",
+                        "description": "Resource ID of the model to update (required)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Updated name of the model"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Updated title of the model"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Updated description of the model"
+                    }
+                },
+                "required": ["resource_id"]
             }
         })
         
@@ -672,7 +1200,7 @@ class LocalMCPServer:
         })
         
         # Get dynamic schema for create_issue
-        issue_schema = await self.build_dynamic_schema_for_issue("SOXIssue")
+        issue_schema = await self.build_dynamic_schema_for_object("SOXIssue", "issue")
         
         tools.append({
             "name": "create_issue",
@@ -682,35 +1210,12 @@ class LocalMCPServer:
         
         # get_issue_fields tool removed as per user request
         
-        tools.append({
-            "name": "query_issues",
-            "description": "Query for issues in OpenPages",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Filter issues by name (partial match, optional)"
-                    },
-                    "owner_filter": {
-                        "type": "boolean",
-                        "description": "Filter by current user ownership (default: False)"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of issues to return (default: 20)"
-                    },
-                    "sort_by": {
-                        "type": "string",
-                        "description": "Field to sort by (default: 'Name')"
-                    },
-                    "sort_order": {
-                        "type": "string",
-                        "description": "Sort order, 'ASC' or 'DESC' (default: 'ASC')"
-                    }
-                }
-            }
-        })
+        # Get dynamic schema for query_issues with field options
+        query_issues_tool = await self.update_query_issues_schema()
+        query_issues_tool["inputSchema"] = query_issues_tool["input_schema"]
+        del query_issues_tool["input_schema"]  # Remove input_schema as we use inputSchema in this context
+        
+        tools.append(query_issues_tool)
 
         # Add query tools
         tools.append({
@@ -791,6 +1296,30 @@ class LocalMCPServer:
             elif name == "query_issues":
                 # Use the actual issue_tools implementation
                 result = await self.issue_tools.query_issues(arguments)
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+            elif name == "get_model_fields":
+                # Use the model_tools implementation
+                result = await self.model_tools.get_model_fields(arguments)
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+            elif name == "create_model":
+                # Use the model_tools implementation
+                result = await self.model_tools.create_model(arguments)
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+            elif name == "query_models":
+                # Use the model_tools implementation
+                result = await self.model_tools.query_models(arguments)
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+            elif name == "update_model":
+                # Use the model_tools implementation
+                result = await self.model_tools.update_model(arguments)
                 return {
                     "result": [{"type": "text", "text": item.text} for item in result]
                 }

@@ -1,6 +1,6 @@
 """
-Control Tools for OpenPages MCP Server
-Provides tools for working with controls in OpenPages
+Model Tools for OpenPages MCP Server
+Provides tools for working with models in OpenPages
 """
 
 import logging
@@ -14,49 +14,49 @@ from src.app.core.openpages_client import OpenPagesClient
 # Configure logging
 logger = logging.getLogger(__name__)
 
-class IssueTools:
+class ModelTools:
     """
-    Tools for working with issues in OpenPages
+    Tools for working with models in OpenPages
     
-    This class provides object-centric tools for working with Issues objects in OpenPages,
-    including finding, creating, and updating issues.
+    This class provides object-centric tools for working with Model objects in OpenPages,
+    including finding, creating, and updating models.
     """
     
     def __init__(self, client: OpenPagesClient):
         """
-        Initialize issue tools
+        Initialize model tools
         
         Args:
             client: OpenPages API client
         """
         self.client = client
         
-    async def get_issue_fields(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def get_model_fields(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
-        Get available fields for issue creation
+        Get available fields for model creation
         
         Args:
             arguments: Tool arguments
-                - issue_type: Type of issue (default: SOXIssue)
+                - model_type: Type of model (default: Model)
                 
         Returns:
             List of text content with available fields information
         """
-        issue_type = arguments.get('issue_type', 'SOXIssue')
+        model_type = arguments.get('model_type', 'Model')
         
         try:
             # Get the type definition using the client's method
-            logger.info(f"Fetching type definition for: {issue_type}")
-            type_info = await self.client.get_type_definition(issue_type)
+            logger.info(f"Fetching type definition for: {model_type}")
+            type_info = await self.client.get_type_definition(model_type)
             
             # Extract field definitions
             field_definitions = type_info.get('field_definitions', [])
             
             if not field_definitions:
-                return [TextContent(type="text", text=f"No fields found for issue type: {issue_type}")]
+                return [TextContent(type="text", text=f"No fields found for model type: {model_type}")]
             
             # Format the response
-            response_text = f"Available fields for {issue_type} (ID: {type_info.get('id')}):\n\n"
+            response_text = f"Available fields for {model_type} (ID: {type_info.get('id')}):\n\n"
             response_text += f"Display Name: {type_info.get('localized_label', type_info.get('name'))}\n"
             response_text += f"Description: {type_info.get('description', 'No description available')}\n\n"
             response_text += "## Available Fields:\n\n"
@@ -85,29 +85,29 @@ class IssueTools:
             logger.error(f"Error getting field definitions: {e}")
             return [TextContent(type="text", text=f"Error retrieving field definitions: {str(e)}")]
     
-    async def create_issue(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def create_model(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
-        Create a new issue in OpenPages
+        Create a new model in OpenPages
         
         Args:
             arguments: Tool arguments
-                - name: Name of the issue (required)
-                - title: Issue title (optional)
-                - description: Description of the issue (optional)
+                - name: Name of the model (required)
+                - title: Model title (optional)
+                - description: Description of the model (optional)
                 - Any other field defined in the schema (optional)
                 
         Returns:
-            List of text content with created issue information
+            List of text content with created model information
         """
         # Extract required fields
         name = arguments.get('name')
         if not name:
-            return [TextContent(type="text", text="Error: Issue name is required")]
+            return [TextContent(type="text", text="Error: Model name is required")]
         
         # Extract common fields
         title = arguments.get('title', '')
         description = arguments.get('description', '')
-        issue_type = "SOXIssue"
+        model_type = "Model"
         
         # Prepare content data
         content_data: dict[str, Any] = {
@@ -115,12 +115,12 @@ class IssueTools:
             "title": title,
             "description": description,
             "fields": [],
-            "type_definition_id": issue_type
+            "type_definition_id": model_type
         }
         
         # Get field definitions to properly format field values
         try:
-            type_info = await self.client.get_type_definition(issue_type)
+            type_info = await self.client.get_type_definition(model_type)
             field_definitions = type_info.get('field_definitions', [])
             
             # Create a mapping of field names to their definitions for easy lookup
@@ -187,19 +187,19 @@ class IssueTools:
             # Continue with basic fields if there's an error
         
         try:
-            # Create the issue
-            logger.info(f"Creating new issue: {content_data}")
+            # Create the model
+            logger.info(f"Creating new model: {content_data}")
             result = await self.client.create_content(content_data)
             
             # Extract resource ID from the result
             resource_id = result.get("id")
             if not resource_id:
-                return [TextContent(type="text", text="Error: Failed to create issue (no resource ID returned)")]
+                return [TextContent(type="text", text="Error: Failed to create model (no resource ID returned)")]
             
-            response_text = f"Successfully created issue:\n\n"
+            response_text = f"Successfully created model:\n\n"
             response_text += f"- **Name**: {name}\n"
             response_text += f"- **Resource ID**: {resource_id}\n"
-            response_text += f"- **Type**: {issue_type}\n"
+            response_text += f"- **Type**: {model_type}\n"
             
             if description:
                 response_text += f"- **Description**: {description}\n"
@@ -207,35 +207,38 @@ class IssueTools:
             return [TextContent(type="text", text=response_text)]
         
         except Exception as e:
-            logger.error(f"Error creating issue: {e}")
-            return [TextContent(type="text", text=f"Error creating issue: {str(e)}")]
+            logger.error(f"Error creating model: {e}")
+            return [TextContent(type="text", text=f"Error creating model: {str(e)}")]
     
-    async def query_issues(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def query_models(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
-        Query for issues in OpenPages
+        Query for models in OpenPages
         
         Args:
             arguments: Tool arguments
-                - name: Filter issues by name (partial match, optional)
+                - name: Filter models by name (partial match, optional)
                 - owner_filter: Filter by current user ownership (default: False)
-                - status_filter: Filter issues by status (optional)
-                - limit: Maximum number of issues to return (default: 20)
+                - status_filter: Filter models by status (optional)
+                - limit: Maximum number of models to return (default: 20)
                 - sort_by: Field to sort by (default: "Name")
                 - sort_order: Sort order, "ASC" or "DESC" (default: "ASC")
                 - fields: List of additional fields to include in the output (optional, multiselect)
                   Resource ID, Name, Description, and Status are always included
                 
         Returns:
-            List of text content with issue information
+            List of text content with model information
         """
         name_filter = arguments.get('name')
         owner_filter = arguments.get('owner_filter', False)
         status_filter = arguments.get('status_filter')
         limit = arguments.get('limit', 20)
-        sort_by = arguments.get('sort_by', [{'field': 'Name', 'order': 'ASC'}])
+        sort_by = arguments.get('sort_by')
         
+        # Handle case when sort_by is None or empty
+        if not sort_by:
+            sort_fields = [{'field': 'Name', 'order': 'ASC'}]
         # Handle backward compatibility
-        if isinstance(sort_by, str):
+        elif isinstance(sort_by, str):
             # Old format: single string field name with separate sort_order
             sort_order = arguments.get('sort_order', 'ASC')
             sort_fields = [{'field': sort_by, 'order': sort_order}]
@@ -243,23 +246,25 @@ class IssueTools:
             # Old format: list of field names with single sort_order
             sort_order = arguments.get('sort_order', 'ASC')
             sort_fields = [{'field': field, 'order': sort_order} for field in sort_by]
-        else:
+        elif isinstance(sort_by, list) and len(sort_by) > 0:
             # New format: list of objects with field and order
             sort_fields = sort_by
+        else:
+            # Default if sort_by is in an unexpected format
+            sort_fields = [{'field': 'Name', 'order': 'ASC'}]
             
         # Limit to first 3 fields
         sort_fields = sort_fields[:3]
         additional_fields = arguments.get('fields', [])
         
         # Always include these required fields
-        required_fields = ['[Resource ID]', '[Name]', '[Description]', '[OPSS-Iss:Status]']
+        required_fields = ['[Resource ID]', '[Name]', '[Description]', '[MRG-Model:Status]']
         
         # Map common field names to their SQL column names
         field_mapping = {
-            'Priority': '[OPSS-Iss:Priority]',
+            'Status': '[MRG-Model:Status]',
             'Owner': '[Owner]',
-            'Due Date': '[OPSS-Iss:DueDate]',
-            'Status': '[OPSS-Iss:Status]'
+            'Creation Date': '[Creation Date]'
         }
         
         # Add additional fields if specified
@@ -267,7 +272,7 @@ class IssueTools:
         
         # Try to get field definitions to build a more complete mapping
         try:
-            type_info = await self.client.get_type_definition('SOXIssue')
+            type_info = await self.client.get_type_definition('Model')
             field_definitions = type_info.get('field_definitions', [])
             
             # Update field mapping with all available fields from type definition
@@ -313,7 +318,7 @@ class IssueTools:
         # Build query with selected fields
         query = f"""
         SELECT {', '.join(selected_fields)}
-        FROM [SOXIssue]
+        FROM [Model]
         WHERE [Resource ID] IS NOT NULL
         """
         
@@ -328,62 +333,72 @@ class IssueTools:
                 query += f" AND [Owner] = '{current_user}'"
         
         if status_filter:
-            query += f" AND [OPSS-Iss:Status] = '{status_filter}'"
+            query += f" AND [MRG-Model:Status] = '{status_filter}'"
             
         # Add sorting with multiple fields
         sort_clauses = []
         for sort_item in sort_fields:
-            field = sort_item['field']
-            order = sort_item['order']
-            
-            # Handle field names with group information in brackets
-            if isinstance(field, str) and '[' in field and field.endswith(']'):
-                field_name = field.split('[')[0].strip()
-                group_name = field[field.find('[')+1:field.find(']')]
-                full_field_name = f"{group_name}:{field_name}"
+            try:
+                # Ensure sort_item is a dictionary with required keys
+                if not isinstance(sort_item, dict) or 'field' not in sort_item or 'order' not in sort_item:
+                    logger.warning(f"Invalid sort item format: {sort_item}, skipping")
+                    continue
+                    
+                field = sort_item['field']
+                order = sort_item['order']
                 
-                # Check if this field exists in field_mapping
-                if full_field_name in field_mapping:
-                    sort_clauses.append(f"{field_mapping[full_field_name]} {order}")
+                # Validate order value
+                if order not in ['ASC', 'DESC']:
+                    logger.warning(f"Invalid sort order: {order}, defaulting to ASC")
+                    order = 'ASC'
+                
+                # Handle field names with group information in brackets
+                if isinstance(field, str) and '[' in field and field.endswith(']'):
+                    field_name = field.split('[')[0].strip()
+                    group_name = field[field.find('[')+1:field.find(']')]
+                    full_field_name = f"{group_name}:{field_name}"
+                    
+                    # Check if this field exists in field_mapping
+                    if full_field_name in field_mapping:
+                        sort_clauses.append(f"{field_mapping[full_field_name]} {order}")
+                    else:
+                        # Use the full field name with group prefix
+                        sort_clauses.append(f"[{full_field_name}] {order}")
                 else:
-                    # Use the full field name with group prefix
-                    sort_clauses.append(f"[{full_field_name}] {order}")
-            else:
-                # Handle special fields
-                if field == "Status":
-                    sort_clauses.append(f"[OPSS-Iss:Status] {order}")
-                elif field == "Priority":
-                    sort_clauses.append(f"[OPSS-Iss:Priority] {order}")
-                elif field == "Due Date":
-                    sort_clauses.append(f"[OPSS-Iss:DueDate] {order}")
-                else:
-                    sort_clauses.append(f"[{field}] {order}")
+                    # Handle special fields
+                    if field == "Status":
+                        sort_clauses.append(f"[MRG-Model:Status] {order}")
+                    else:
+                        sort_clauses.append(f"[{field}] {order}")
+            except Exception as e:
+                logger.error(f"Error processing sort item: {e}")
+                # Continue with next sort item
                 
         query += f" ORDER BY {', '.join(sort_clauses)}" if sort_clauses else ""
         
         # Add limit
         query += f" LIMIT {limit}"
         
-        logger.info(f"Executing query for issues: {query}")
+        logger.info(f"Executing query for models: {query}")
         result = await self.client.query(query)
         
         # Format results
-        issues = []
+        models = []
         for row in result.get('rows', []):
-            issue_data = {}
+            model_data = {}
             for field in row['fields']:
                 # Handle case where field['value'] could be null
                 if 'value' in field:
-                    issue_data[field['name']] = field['value']
+                    model_data[field['name']] = field['value']
                 else:
-                    issue_data[field['name']] = None
-            issues.append(issue_data)
+                    model_data[field['name']] = None
+            models.append(model_data)
         
         # Create response
-        if not issues:
-            return [TextContent(type="text", text="No issues found matching the criteria.")]
+        if not models:
+            return [TextContent(type="text", text="No models found matching the criteria.")]
         
-        response_text = f"Found {len(issues)} issue(s):\n\n"
+        response_text = f"Found {len(models)} model(s):\n\n"
         
         # Create a reverse mapping from SQL field names to display names
         display_names = {}
@@ -396,30 +411,30 @@ class IssueTools:
         display_names['Resource ID'] = 'ID'
         display_names['Name'] = 'Name'
         display_names['Description'] = 'Description'
-        display_names['OPSS-Iss:Status'] = 'Status'
+        display_names['MRG-Model:Status'] = 'Status'
         
-        for issue in issues:
-            response_text += f"## {issue.get('Name', 'N/A')}\n"
+        for model in models:
+            response_text += f"## {model.get('Name', 'N/A')}\n"
             
             # Always show required fields first
-            response_text += f"- **ID**: {issue.get('Resource ID', 'N/A')}\n"
+            response_text += f"- **ID**: {model.get('Resource ID', 'N/A')}\n"
             
             # Status might be returned with different field names depending on the query
-            status_value = issue.get('Status', issue.get('OPSS-Iss:Status', 'N/A'))
+            status_value = model.get('Status', model.get('MRG-Model:Status', 'N/A'))
             # Handle enum types (objects with name property)
             if isinstance(status_value, dict) and 'name' in status_value:
                 status_value = status_value['name']
             response_text += f"- **Status**: {status_value}\n"
             
             # Add description if available
-            description = issue.get('Description')
+            description = model.get('Description')
             if description:
                 response_text += f"- **Description**: {description}\n"
             
             # Add all other available fields that were selected
-            for field_name, field_value in issue.items():
+            for field_name, field_value in model.items():
                 # Skip fields we've already handled
-                if field_name in ['Resource ID', 'Name', 'Description', 'Status', 'OPSS-Iss:Status']:
+                if field_name in ['Resource ID', 'Name', 'Description', 'Status', 'MRG-Model:Status']:
                     continue
                     
                 # Display fields even if they have null values
@@ -438,20 +453,20 @@ class IssueTools:
         
         return [TextContent(type="text", text=response_text)]
     
-    async def update_issue(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def update_model(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
-        Update an existing issue in OpenPages
+        Update an existing model in OpenPages
         
         Args:
             arguments: Tool arguments
-                - resource_id: Resource ID of the issue to update (required)
-                - name: Name of the issue (optional)
-                - title: Issue title (optional)
-                - description: Description of the issue (optional)
+                - resource_id: Resource ID of the model to update (required)
+                - name: Name of the model (optional)
+                - title: Model title (optional)
+                - description: Description of the model (optional)
                 - Any other field defined in the schema (optional)
                 
         Returns:
-            List of text content with updated issue information
+            List of text content with updated model information
         """
         # Extract required fields
         resource_id = arguments.get('resource_id')
@@ -462,12 +477,12 @@ class IssueTools:
         name = arguments.get('name')
         title = arguments.get('title')
         description = arguments.get('description')
-        issue_type = "SOXIssue"
+        model_type = "Model"
         
         # Prepare content data
         content_data: dict[str, Any] = {
             "fields": [],
-            "type_definition_id": issue_type
+            "type_definition_id": model_type
         }
         
         # Add optional fields if provided
@@ -480,7 +495,7 @@ class IssueTools:
         
         # Get field definitions to properly format field values
         try:
-            type_info = await self.client.get_type_definition(issue_type)
+            type_info = await self.client.get_type_definition(model_type)
             field_definitions = type_info.get('field_definitions', [])
             
             # Create a mapping of field names to their definitions for easy lookup
@@ -547,16 +562,16 @@ class IssueTools:
             # Continue with basic fields if there's an error
         
         try:
-            # Update the issue
-            logger.info(f"Updating issue {resource_id}: {content_data}")
+            # Update the model
+            logger.info(f"Updating model {resource_id}: {content_data}")
             result = await self.client.update_content(resource_id, content_data)
             
             # Extract resource ID from the result
             updated_resource_id = result.get("id")
             if not updated_resource_id:
-                return [TextContent(type="text", text="Error: Failed to update issue (no resource ID returned)")]
+                return [TextContent(type="text", text="Error: Failed to update model (no resource ID returned)")]
             
-            response_text = f"Successfully updated issue:\n\n"
+            response_text = f"Successfully updated model:\n\n"
             response_text += f"- **Resource ID**: {updated_resource_id}\n"
             
             if name:
@@ -568,5 +583,7 @@ class IssueTools:
             return [TextContent(type="text", text=response_text)]
         
         except Exception as e:
-            logger.error(f"Error updating issue: {e}")
-            return [TextContent(type="text", text=f"Error updating issue: {str(e)}")]
+            logger.error(f"Error updating model: {e}")
+            return [TextContent(type="text", text=f"Error updating model: {str(e)}")]
+
+# Made with Bob
