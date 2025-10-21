@@ -105,6 +105,7 @@ class ModelTools:
             return [TextContent(type="text", text="Error: Model name is required")]
         
         # Extract common fields
+        primaryParentId = arguments.get('primaryParentId', '')
         title = arguments.get('title', '')
         description = arguments.get('description', '')
         model_type = "Model"
@@ -112,6 +113,7 @@ class ModelTools:
         # Prepare content data
         content_data: dict[str, Any] = {
             "name": name,
+            "primary_parent_id": primaryParentId,
             "title": title,
             "description": description,
             "fields": [],
@@ -137,7 +139,7 @@ class ModelTools:
             # Process all arguments and map them to OpenPages fields
             for arg_name, arg_value in arguments.items():
                 # Skip special fields that are handled separately
-                if arg_name in ['name', 'title', 'description']:
+                if arg_name in ['name', 'primaryParentId', 'title', 'description']:
                     continue
                     
                 # Skip empty values

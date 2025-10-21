@@ -23,8 +23,10 @@ class Settings(BaseSettings):
                               _base_url.startswith('http://') or
                               _base_url.startswith('https://')
                               else f"https://{_base_url}")
+    OPENPAGES_AUTHENTICATION_TYPE: str = os.getenv("OPENPAGES_AUTHENTICATION_TYPE", "basic")
     OPENPAGES_USERNAME: str = os.getenv("OPENPAGES_USERNAME", "")
     OPENPAGES_PASSWORD: str = os.getenv("OPENPAGES_PASSWORD", "")
+    OPENPAGES_APIKEY: str = os.getenv("OPENPAGES_APIKEY", "")
     
     # Server settings
     HOST: str = os.getenv("HOST", "0.0.0.0")

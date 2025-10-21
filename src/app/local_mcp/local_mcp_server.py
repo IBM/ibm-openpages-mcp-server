@@ -10,7 +10,7 @@ import sys
 import json
 import logging
 import asyncio
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 # Import OpenPages client and tools
 from src.app.core.openpages_client import OpenPagesClient
@@ -64,8 +64,10 @@ class LocalMCPServer:
         
         self.client = OpenPagesClient(
             base_url,
+            settings.OPENPAGES_AUTHENTICATION_TYPE,
             settings.OPENPAGES_USERNAME,
-            settings.OPENPAGES_PASSWORD
+            settings.OPENPAGES_PASSWORD,
+            settings.OPENPAGES_APIKEY
         )
         
         # Initialize tool modules
@@ -106,10 +108,19 @@ class LocalMCPServer:
         ]
         # Tools are defined in the class initialization
         
+    async def initialize_client(self):
+        """Initialize the OpenPages client authentication"""
+        logger.info("Initializing OpenPages client authentication")
+        await self.client.initialize_auth()
+        logger.info("OpenPages client authentication initialized")
+    
     async def load_dynamic_schemas(self):
         """Load dynamic schemas for tools"""
         if self.dynamic_schemas_loaded:
             return
+        
+        # Initialize client authentication first
+        await self.initialize_client()
             
         try:
             # Get dynamic schema for create_issue
@@ -491,7 +502,7 @@ class LocalMCPServer:
             }
         ]
     
-    async def get_type_definition(self, type_name: str):
+    async def get_type_definition(self, type_name: str) -> Optional[Dict[str, Any]]:
         """
         Get and cache type definition
         
@@ -499,7 +510,7 @@ class LocalMCPServer:
             type_name: Name of the type to retrieve
             
         Returns:
-            Type definition data
+            Type definition data or None if there was an error
         """
         if type_name in self.type_definitions:
             logger.info(f"Using cached type definition for {type_name}")
@@ -545,6 +556,10 @@ class LocalMCPServer:
                 "name": {
                     "type": "string",
                     "description": f"Name of the {object_label} (required)"
+                },
+                "primaryParentId": {
+                    "type": "string",
+                    "description": "Id of another Object Type's ID, such as 10101, or its full path, such as /_op_sox/Project/Default/Issue/Parent-Issue.txt"
                 },
                 "title": {
                     "type": "string",
@@ -1398,6 +1413,10 @@ async def main():
     
     # Create server instance
     server = LocalMCPServer()
+    
+    # Initialize client authentication
+    await server.initialize_client()
+    logger.info("Client authentication initialized")
     
     # Process JSON-RPC messages from stdin
     while True:
