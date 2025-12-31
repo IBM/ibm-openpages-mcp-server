@@ -1,0 +1,16 @@
+[
+    {
+        "name": "echo",
+        "description": "Echo the input text",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to echo"
+                }
+            },
+            "required": ["text"]
+        }
+    }
+]

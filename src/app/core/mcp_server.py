@@ -21,9 +21,8 @@ from mcp.types import (
 )
 
 from src.app.core.openpages_client import OpenPagesClient
-from src.app.tools.risk_tools import RiskTools
-from src.app.tools.control_tools import ControlTools
-from src.app.tools.query_tools import QueryTools
+from src.app.tools.generic_object_tools import GenericObjectTools
+from src.app.config.settings import settings
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -56,22 +55,38 @@ class BaseMCPServer(ABC):
 class OpenPagesMCPServer(BaseMCPServer):
     """MCP Server implementation for IBM OpenPages"""
     
-    def __init__(self, base_url: str, username: str, password: str):
+    def __init__(self, base_url: str, username: str, password: str, auth_type: str = "basic",
+                 api_key: Optional[str] = None, authentication_url: Optional[str] = None):
         """
         Initialize the OpenPages MCP Server
         
         Args:
             base_url: Base URL of the OpenPages API
-            username: OpenPages username
-            password: OpenPages password
+            username: OpenPages username (for basic auth)
+            password: OpenPages password (for basic auth)
+            auth_type: Authentication type ("basic" or "bearer")
+            api_key: API key (for bearer auth)
+            authentication_url: Authentication URL (for bearer auth)
         """
         super().__init__()
-        self.client = OpenPagesClient(base_url, username, password)
+        self.client = OpenPagesClient(
+            base_url,
+            auth_type,
+            username,
+            password,
+            api_key,
+            authentication_url,
+            custom_settings=settings
+        )
         
-        # Initialize tool modules
-        self.risk_tools = RiskTools(self.client)
-        self.control_tools = ControlTools(self.client)
-        self.query_tools = QueryTools(self.client)
+        # Initialize generic object tools for each configured object type
+        self.object_tools = {}
+        for obj_config in settings.OPENPAGES_OBJECT_TYPES:
+            obj_type = obj_config.get("type_id")
+            tool_prefix = obj_config.get("tool_prefix")
+            if obj_type and tool_prefix:
+                self.object_tools[tool_prefix] = GenericObjectTools(self.client, obj_config)
+                logger.debug(f"Initialized tool for {obj_type} with prefix {tool_prefix}")
     
     def _setup_tools(self):
         """Register available tools"""
