@@ -1,11 +1,16 @@
 version: '3.8'
 
+# Docker Compose automatically reads .env file from the same directory
+# Variables defined in .env will be used for ${VAR_NAME} substitutions below
+
 services:
   grc-mcp-server:
     build: .
     ports:
       - "8000:8000"
     environment:
+      # These values come from .env file in root directory
+      # Default values (after :-) are used if not set in .env
       - OPENPAGES_BASE_URL=${OPENPAGES_BASE_URL:-https://openpages-server.example.com}
       - OPENPAGES_USERNAME=${OPENPAGES_USERNAME:-admin}
       - OPENPAGES_PASSWORD=${OPENPAGES_PASSWORD:-password}
@@ -15,7 +20,7 @@ services:
     # Comment out volume mount if using podman and having path issues
     # volumes:
     #   - .:/app
-    command: ["python", "/app/main.py"]
+    # Uses CMD from Dockerfile: python main.py --mode remote
     networks:
       - mcp-network
 

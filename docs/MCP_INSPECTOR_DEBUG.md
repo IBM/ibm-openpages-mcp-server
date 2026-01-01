@@ -72,7 +72,7 @@ This approach allows you to use VSCode breakpoints while working with the MCP In
 
 3. Run the debug server script from the terminal (NOT by pressing F5):
    ```bash
-   python debug_server_for_vscode.py
+   python scripts/debug/debug_server_for_vscode.py
    ```
    This starts the server in debug mode and keeps it running.
 
@@ -149,8 +149,8 @@ The inspector will connect to your local MCP server, and you'll be able to:
 
 ### Three Ways to Debug
 
-- **Setup Script + Debug Server (RECOMMENDED FOR DEBUGGING)**:
-  - Uses `setup_vscode_debug.py` and `debug_server_for_vscode.py`
+- **Debug Server (RECOMMENDED FOR DEBUGGING)**:
+  - Uses `scripts/debug/debug_server_for_vscode.py`
   - Allows setting breakpoints and using VSCode's debugging features
   - Properly configures VSCode to find debugpy
   - Requires running the MCP Inspector in a separate terminal

@@ -1,8 +1,10 @@
 #!/bin/bash
-# Run MCP Inspector with debugpy installed
+# Debug the local MCP server for use with MCP Inspector
 
-# Get the directory where this script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Get the project root directory (two levels up from this script)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && cd ../.. && pwd )"
+
+echo "Starting local MCP server in debug mode for MCP Inspector..."
 
 # Check if virtual environment exists, create if not
 if [ ! -d "$SCRIPT_DIR/venv" ]; then
@@ -20,8 +22,12 @@ if ! python -c "import debugpy" &> /dev/null; then
     pip install debugpy
 fi
 
-# Run the MCP Inspector
-echo "Starting MCP Inspector..."
-npx @modelcontextprotocol/inspector
+echo "Press Ctrl+C to stop the server"
+
+# Set environment variables for debugging
+export MCP_DEBUG=true
+
+# Run the server with debug flag
+python "$SCRIPT_DIR/src/app/local_mcp/run_local_mcp.py" --debug
 
 # Made with Bob

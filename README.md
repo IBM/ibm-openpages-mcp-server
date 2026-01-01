@@ -70,25 +70,29 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
    DEBUG=False
    ```
 
-4. Run the server in remote mode (HTTP):
+4. **Choose your server mode:**
+
+   **Remote Mode (HTTP Server)** - For API access:
    ```bash
    python main.py --mode remote
+   # Server will start on http://localhost:8000
    ```
 
-5. Or run the server in local mode (stdio):
+   **Local Mode (stdio)** - For MCP client integration:
    ```bash
    python main.py --mode local
+   # Or use the convenience scripts:
    ```
 
-6. Alternatively, use the provided scripts for local mode:
+5. **Convenience scripts for local mode:**
    - Standard implementation with real OpenPages data:
      - On Linux/Mac:
        ```bash
-       ./run_local_mcp.sh
+       ./scripts/run_local_mcp.sh
        ```
      - On Windows:
        ```
-       run_local_mcp.bat
+       scripts\run_local_mcp.bat
        ```
    
    - Legacy implementation with simulated data (for backward compatibility):
@@ -103,6 +107,8 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
 
 ### Docker Deployment
 
+**Note:** Docker deployment always runs in **remote mode (HTTP)** for API access.
+
 1. Create a `.env` file based on the provided `.env.example`:
    ```bash
    cp .env.example .env
@@ -112,6 +118,7 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
 2. Build and run using Docker Compose:
    ```bash
    docker-compose up -d
+   # Server will be available at http://localhost:8000
    ```
 
 3. For production deployment with NGINX:
@@ -131,10 +138,10 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
    curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":"tools-list-request"}' http://localhost:8000/mcp
    
    # Use the provided test script to test all endpoints
-   python test_mcp_client.py
-   
+   python scripts/test/test_mcp_client.py
+
    # Run specific tests
-   python test_mcp_client.py health initialize tools_list list_tools tools_invoke notifications ping resources_list resources_read call shutdown
+   python scripts/test/test_mcp_client.py health initialize tools_list list_tools tools_invoke notifications ping resources_list resources_read call shutdown
    
    # The test script includes tests for the complete MCP lifecycle:
    # - initialize: Tests the MCP server initialization
@@ -321,8 +328,8 @@ To run the server in local mode:
 python src/app/local_mcp/run_local_mcp.py
 
 # Or using the provided shortcut scripts
-./run_local_mcp.sh  # On Linux/Mac
-run_local_mcp.bat   # On Windows
+./scripts/run_local_mcp.sh  # On Linux/Mac
+scripts\run_local_mcp.bat   # On Windows
 
 # Legacy scripts (for backward compatibility)
 ./scripts/local_mcp/run_simple_server.sh  # On Linux/Mac
@@ -443,8 +450,8 @@ The standard implementation in `src/app/local_mcp/local_mcp_server.py` uses the 
 
 ```bash
 # Run using the shortcut scripts
-./run_local_mcp.sh  # On Linux/Mac
-run_local_mcp.bat   # On Windows
+./scripts/run_local_mcp.sh  # On Linux/Mac
+scripts\run_local_mcp.bat   # On Windows
 ```
 
 When using the MCP Inspector, configure it to use:
@@ -526,8 +533,8 @@ This error occurs in newer Python installations (especially on Linux) where pip 
 
 3. Or use the legacy simple implementation which doesn't require additional packages:
    ```bash
-   ./run_local_mcp.sh  # On Linux/Mac (standard implementation)
-   run_local_mcp.bat   # On Windows (standard implementation)
+   ./scripts/run_local_mcp.sh  # On Linux/Mac (standard implementation)
+   scripts\run_local_mcp.bat   # On Windows (standard implementation)
    # Or legacy scripts:
    ./scripts/local_mcp/run_simple_server.sh  # On Linux/Mac
    scripts\local_mcp\run_simple_server.bat   # On Windows
@@ -667,7 +674,7 @@ This indicates an issue with the MCP library. We've implemented a direct handlin
 
 If you're still experiencing issues, try using the test script to verify the server functionality:
 ```bash
-python test_mcp_client.py
+python scripts/test/test_mcp_client.py
 ```
 
 #### MCP Protocol Compliance Issues
@@ -754,26 +761,26 @@ To specifically test the MCP lifecycle implementation:
 
 ```bash
 # Test initialization
-python test_mcp_client.py initialize
+python scripts/test/test_mcp_client.py initialize
 
 # Test tool discovery
-python test_mcp_client.py tools_list
+python scripts/test/test_mcp_client.py tools_list
 
 # Test tool execution
-python test_mcp_client.py tools_invoke
+python scripts/test/test_mcp_client.py tools_invoke
 
 # Test resource discovery and access
-python test_mcp_client.py resources_list
-python test_mcp_client.py resources_read
+python scripts/test/test_mcp_client.py resources_list
+python scripts/test/test_mcp_client.py resources_read
 
 # Test ping
-python test_mcp_client.py ping
+python scripts/test/test_mcp_client.py ping
 
 # Test notifications
-python test_mcp_client.py notifications
+python scripts/test/test_mcp_client.py notifications
 
 # Test shutdown
-python test_mcp_client.py shutdown
+python scripts/test/test_mcp_client.py shutdown
 ```
 
 These tests will help verify that each stage of the MCP lifecycle is working correctly. If any stage fails, check the server logs for detailed error messages.
@@ -848,9 +855,12 @@ grc-mcp-server/
 ├── docs/               # Documentation
 ├── nginx/              # NGINX configuration
 ├── .github/            # GitHub Actions workflows
-├── run_local_mcp.sh    # Script to run local MCP server (Linux/Mac)
-├── run_local_mcp.bat   # Script to run local MCP server (Windows)
-├── run_test_local_mcp.sh # Script to test local MCP server (Linux/Mac)
+├── docs/               # Documentation files
+├── scripts/            # Utility scripts
+│   ├── run_local_mcp.sh    # Script to run local MCP server (Linux/Mac)
+│   ├── run_local_mcp.bat   # Script to run local MCP server (Windows)
+│   ├── debug/              # Debug scripts
+│   └── test/               # Test scripts
 ├── run_test_local_mcp.bat # Script to test local MCP server (Windows)
 ├── main.py             # Main application entry point
 ├── Dockerfile          # Docker configuration

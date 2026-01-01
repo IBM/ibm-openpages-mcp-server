@@ -35,5 +35,6 @@ RUN touch /app/src/__init__.py
 # Add PYTHONPATH to ensure modules can be found
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 
-# Default command - run the main.py file directly
-CMD ["python", "/app/main.py"]
+# Default command - run in remote mode (HTTP server)
+# For local mode (stdio), use: python main.py --mode local
+CMD ["python", "/app/main.py", "--mode", "remote"]

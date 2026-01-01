@@ -1,7 +1,9 @@
 #!/bin/bash
 set -e
 
-COMPOSE_FILE="docker-compose.yml"
+# Get the project root directory (one level up from this script)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && cd .. && pwd )"
+COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 PROJECT_NAME="grc-mcp-server"   # change this to your compose project name
 
 echo "🔹 Stopping and removing existing containers..."

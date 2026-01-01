@@ -4,8 +4,8 @@ import sys
 import subprocess
 import time
 
-# Get the directory where this script is located
-script_dir = os.path.dirname(os.path.abspath(__file__))
+# Get the project root directory (two levels up from this script)
+script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Set environment variables for debugging
 os.environ["MCP_DEBUG"] = "true"

@@ -1,6 +1,9 @@
 @echo off
 REM Debug the local MCP server for use with MCP Inspector
 
+REM Get the project root directory (two levels up from this script)
+cd /d "%~dp0..\.."
+
 echo Starting local MCP server in debug mode for MCP Inspector...
 
 REM Check if virtual environment exists, create if not

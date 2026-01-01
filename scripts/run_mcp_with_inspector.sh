@@ -1,8 +1,8 @@
 #!/bin/bash
 # Run MCP server and Inspector together without requiring debugpy
 
-# Get the directory where this script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Get the project root directory (one level up from this script)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && cd .. && pwd )"
 
 # Check if virtual environment exists, create if not
 if [ ! -d "$SCRIPT_DIR/venv" ]; then

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Run the local MCP server
 
-# Get the directory where this script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Get the project root directory (one level up from this script)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && cd .. && pwd )"
 
 echo "Starting local MCP server..."
 echo "Press Ctrl+C to stop the server"
