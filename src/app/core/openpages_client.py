@@ -114,9 +114,33 @@ class OpenPagesClient:
             raise ValueError("Failed to obtain token from IAM service")
         return f"Bearer {token}"
     
+    def _detect_auth_type(self, authentication_url: str) -> str:
+        """
+        Detect authentication type based on the authentication URL.
+        
+        Args:
+            authentication_url (str): The authentication URL
+            
+        Returns:
+            str: Either 'ibm_cloud' or 'mcsp'
+        """
+        # Check if URL contains IBM Cloud IAM patterns
+        if 'iam.cloud.ibm.com' in authentication_url or 'iam.test.cloud.ibm.com' in authentication_url:
+            logger.info("Detected IBM Cloud OAuth2 authentication")
+            return 'ibm_cloud'
+        # Check if URL contains MCSP patterns
+        elif 'account-iam.platform' in authentication_url or 'saas.ibm.com' in authentication_url:
+            logger.info("Detected MCSP OAuth2 authentication")
+            return 'mcsp'
+        else:
+            # Default to IBM Cloud if pattern is not recognized
+            logger.warning(f"Could not detect auth type from URL: {authentication_url}. Defaulting to IBM Cloud.")
+            return 'ibm_cloud'
+    
     async def fetch_token(self, api_key: str, authentication_url: str) -> Optional[str]:
         """
-        Fetch authentication token from IBM Cloud IAM service.
+        Fetch authentication token from IBM Cloud IAM or MCSP service.
+        Automatically detects the authentication type based on the URL.
         
         Args:
             api_key (str): The API key to use for authentication
@@ -125,45 +149,83 @@ class OpenPagesClient:
         Returns:
             Optional[str]: The access token if successful, None otherwise
         """
+        # Detect authentication type
+        auth_type = self._detect_auth_type(authentication_url)
         
-        headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json'
-        }
-        
-        data = {
-            'grant_type': 'urn:ibm:params:oauth:grant-type:apikey',
-            'apikey': api_key
-        }
-        
-        try:
-            async with httpx.AsyncClient(verify=True) as client:
-                logger.info(f"Fetching token from {authentication_url}")
-                response = await client.post(authentication_url, headers=headers, data=data, timeout=30.0)
-                response.raise_for_status()  # Raise exception for non-2xx status codes
+        if auth_type == 'ibm_cloud':
+            # IBM Cloud OAuth2
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json'
+            }
+            
+            data = {
+                'grant_type': 'urn:ibm:params:oauth:grant-type:apikey',
+                'apikey': api_key
+            }
+            
+            try:
+                async with httpx.AsyncClient(verify=True) as client:
+                    logger.info(f"Fetching IBM Cloud token from {authentication_url}")
+                    response = await client.post(authentication_url, headers=headers, data=data, timeout=30.0)
+                    response.raise_for_status()
+                    
+                    token_data = response.json()
+                    
+                    if 'access_token' in token_data:
+                        logger.info("Successfully obtained IBM Cloud access token")
+                        return token_data['access_token']
+                    else:
+                        logger.error("Error: 'access_token' not found in IBM Cloud response")
+                        logger.error(f"Response: {token_data}")
+                        return None
+                    
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Error fetching IBM Cloud token: {e}")
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response body: {e.response.text}")
+                return None
+            except httpx.RequestError as e:
+                logger.error(f"Request error fetching IBM Cloud token: {e}")
+                return None
                 
-                # Parse the JSON response
-                token_data = response.json()
-                
-                # Extract and return the access token
-                if 'access_token' in token_data:
-                    logger.info("Successfully obtained access token")
-                    return token_data['access_token']
-                else:
-                    logger.error("Error: 'access_token' not found in response")
-                    logger.error(f"Response: {token_data}")
-                    return None
-                
-        except httpx.HTTPStatusError as e:
-            # This exception has response attribute
-            logger.error(f"Error fetching token: {e}")
-            logger.error(f"Response status: {e.response.status_code}")
-            logger.error(f"Response body: {e.response.text}")
-            return None
-        except httpx.RequestError as e:
-            # Network-related errors
-            logger.error(f"Request error fetching token: {e}")
-            return None
+        else:  # mcsp
+            # MCSP OAuth2
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+            
+            # MCSP expects JSON body with apikey
+            json_data = {
+                'apikey': api_key
+            }
+            
+            try:
+                async with httpx.AsyncClient(verify=True) as client:
+                    logger.info(f"Fetching MCSP token from {authentication_url}")
+                    response = await client.post(authentication_url, headers=headers, json=json_data, timeout=30.0)
+                    response.raise_for_status()
+                    
+                    token_data = response.json()
+                    
+                    # MCSP returns 'token' instead of 'access_token'
+                    if 'token' in token_data:
+                        logger.info("Successfully obtained MCSP token")
+                        return token_data['token']
+                    else:
+                        logger.error("Error: 'token' not found in MCSP response")
+                        logger.error(f"Response: {token_data}")
+                        return None
+                    
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Error fetching MCSP token: {e}")
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response body: {e.response.text}")
+                return None
+            except httpx.RequestError as e:
+                logger.error(f"Request error fetching MCSP token: {e}")
+                return None
     
     async def initialize_auth(self):
         """
