@@ -22,18 +22,20 @@ __version__ = "1.0.0"
 # Configure logging
 logger = logging.getLogger(__name__)
 
-class LocalMCPServer:
+class MCPServer:
     """
-    Local MCP Server implementation
+    MCP Server implementation
     
     This class implements a Machine Comprehension Protocol (MCP) server that interfaces
     with IBM OpenPages. It provides tools for managing issues, controls, and other
     OpenPages objects through a JSON-RPC interface.
+    
+    Supports both local (stdio) and remote (HTTP) transport modes.
     """
     
     def __init__(self, custom_settings: Optional[Settings] = None) -> None:
         """
-        Initialize the local MCP server
+        Initialize the MCP server
         
         Sets up the OpenPages client, initializes tool modules, and loads the tools schema.
         
@@ -164,6 +166,7 @@ class LocalMCPServer:
             obj_type = obj_config.get("type_id")
             tool_prefix = obj_config.get("tool_prefix")
             display_name = obj_config.get("display_name", obj_type)
+            namespace = obj_config.get("namespace", "")  # Get namespace from config
             
             # Ensure display_name is a string and not None
             if display_name is None:
@@ -173,45 +176,55 @@ class LocalMCPServer:
                 logger.warning(f"Skipping invalid object type configuration: {obj_config}")
                 continue
                 
-            logger.debug(f"Processing object type: {obj_type} with prefix {tool_prefix}")
+            logger.debug(f"Processing object type: {obj_type} with prefix {tool_prefix} and namespace {namespace}")
             
             # Define the tools for this object type
             tools_to_add = []
             
-            # Create tool
-            create_tool_name = f"create_{tool_prefix}"
-            if create_tool_name not in existing_tool_names:
+            # Build tool name with namespace if provided
+            def build_tool_name(operation: str) -> str:
+                """Build tool name with optional namespace"""
+                if namespace:
+                    return f"{namespace}_{operation}_{tool_prefix}"
+                return f"{operation}_{tool_prefix}"
+            
+            # Upsert tool (replaces create and update)
+            upsert_tool_name = build_tool_name("upsert")
+            if upsert_tool_name not in existing_tool_names:
                 tools_to_add.append({
-                    "name": create_tool_name,
-                    "description": f"Create a new {display_name.lower()} in OpenPages",
+                    "name": upsert_tool_name,
+                    "description": f"Create or update a {display_name.lower()} in OpenPages (upsert operation). Automatically determines whether to insert or update based on provided identifiers.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "name": {
                                 "type": "string",
                                 "description": f"Name of the {display_name.lower()} (required)"
-                            }
-                        },
-                        "required": ["name"]
-                    }
-                })
-                
-            # Update tool
-            update_tool_name = f"update_{tool_prefix}"
-            if update_tool_name not in existing_tool_names:
-                tools_to_add.append({
-                    "name": update_tool_name,
-                    "description": f"Update an existing {display_name.lower()} in OpenPages",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "resource_id": {
+                            },
+                            "id": {
                                 "type": "string",
-                                "description": f"Resource ID of the {display_name.lower()} to update"
+                                "description": f"Resource ID for direct lookup (optional). If provided and exists, will update; if doesn't exist, will insert."
                             },
                             "path": {
                                 "type": "string",
-                                "description": f"Path of the {display_name.lower()} to update"
+                                "description": f"Full path for lookup (optional). If provided and exists, will update; if doesn't exist, will insert."
+                            },
+                            "operation": {
+                                "type": "string",
+                                "enum": ["insert", "update", "auto"],
+                                "description": "Operation mode: 'insert' (force create), 'update' (force update), or 'auto' (intelligent decision, default)"
+                            },
+                            "primaryParentId": {
+                                "type": "string",
+                                "description": f"Parent object ID for the {display_name.lower()} (optional, used for insert)"
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": f"Title of the {display_name.lower()} (optional)"
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": f"Description of the {display_name.lower()} (optional)"
                             }
                         },
                         "required": ["name"]
@@ -219,7 +232,7 @@ class LocalMCPServer:
                 })
                 
             # Query tool
-            query_tool_name = f"query_{tool_prefix}s"
+            query_tool_name = build_tool_name("query") + "s"
             if query_tool_name not in existing_tool_names:
                 tools_to_add.append({
                     "name": query_tool_name,
@@ -230,6 +243,11 @@ class LocalMCPServer:
                             "name": {
                                 "type": "string",
                                 "description": f"Filter {display_name.lower()}s by name (partial match, optional)"
+                            },
+                            "filters": {
+                                "type": "object",
+                                "description": f"Dynamic field filters as key-value pairs. Supports any field from the {display_name.lower()} schema. Examples: {{'Priority': 'High', 'Status': 'Active', 'Owner': 'John Doe'}}. Use '*' or '%' for partial matches.",
+                                "additionalProperties": True
                             },
                             "owner_filter": {
                                 "type": "boolean",
@@ -264,7 +282,7 @@ class LocalMCPServer:
                 })
                 
             # Delete tool
-            delete_tool_name = f"delete_{tool_prefix}"
+            delete_tool_name = build_tool_name("delete")
             if delete_tool_name not in existing_tool_names:
                 tools_to_add.append({
                     "name": delete_tool_name,
@@ -342,20 +360,25 @@ class LocalMCPServer:
                 obj_type = obj_config.get("type_id")
                 tool_prefix = obj_config.get("tool_prefix")
                 display_name = obj_config.get("display_name", obj_type)
+                namespace = obj_config.get("namespace", "")
+                
+                # Build tool name with namespace if provided
+                def build_tool_name(operation: str) -> str:
+                    """Build tool name with optional namespace"""
+                    if namespace:
+                        return f"{namespace}_{operation}_{tool_prefix}"
+                    return f"{operation}_{tool_prefix}"
                 
                 if obj_type and tool_prefix:
-                    # Create schema
+                    # Upsert schema (replaces create and update)
                     logger.debug(f"Building dynamic schema for {obj_type}")
                     obj_schema = await self.build_dynamic_schema_for_object(obj_type, tool_prefix)
-                    self._update_tool_schema(f"create_{tool_prefix}", obj_schema)
-                    
-                    # Update schema
-                    update_obj_schema = self._create_update_schema(obj_schema, tool_prefix)
-                    self._update_tool_schema(f"update_{tool_prefix}", update_obj_schema)
+                    upsert_obj_schema = self._create_upsert_schema(obj_schema, tool_prefix)
+                    self._update_tool_schema(build_tool_name("upsert"), upsert_obj_schema)
                     
                     # Query schema
                     query_obj_schema = await self.build_dynamic_schema_for_query_object(obj_type)
-                    self._update_tool_schema(f"query_{tool_prefix}s", {
+                    self._update_tool_schema(build_tool_name("query") + "s", {
                         "type": "object",
                         "properties": query_obj_schema.get("properties", {}),
                         "description": f"Query for {display_name.lower() if display_name else tool_prefix}s in OpenPages"
@@ -376,7 +399,7 @@ class LocalMCPServer:
                         },
                         "description": f"Delete a {display_name.lower() if display_name else tool_prefix} in OpenPages"
                     }
-                    self._update_tool_schema(f"delete_{tool_prefix}", delete_obj_schema)
+                    self._update_tool_schema(build_tool_name("delete"), delete_obj_schema)
             
             self.dynamic_schemas_loaded = True
             logger.info("Successfully loaded all dynamic schemas")
@@ -399,39 +422,44 @@ class LocalMCPServer:
                 logger.info(f"Updated {tool_name} tool with dynamic schema")
                 break
     
-    def _create_update_schema(self, base_schema: Dict[str, Any], object_type: str) -> Dict[str, Any]:
+    def _create_upsert_schema(self, base_schema: Dict[str, Any], object_type: str) -> Dict[str, Any]:
         """
-        Create an update schema based on a base schema
+        Create an upsert schema based on a base schema
         
         Args:
             base_schema: Base schema to extend
             object_type: Type of object (e.g., "issue", "control")
             
         Returns:
-            Dict containing the update schema
+            Dict containing the upsert schema
         """
         # Start with a copy of the base schema
-        update_schema = {
+        upsert_schema = {
             "type": "object",
             "properties": {},
             "required": ["name"]
         }
         
-        # Add resource_id and path fields
-        update_schema["properties"]["resource_id"] = {
+        # Add upsert-specific fields
+        upsert_schema["properties"]["id"] = {
             "type": "string",
-            "description": f"Resource ID of the {object_type} to update. (Note: Either Resource_ID or Path is required.)"
+            "description": f"Resource ID for direct lookup (optional). If provided and exists, will update; if doesn't exist, will insert."
         }
-        update_schema["properties"]["path"] = {
+        upsert_schema["properties"]["path"] = {
             "type": "string",
-            "description": f"Path of the {object_type} including the name. (Note: Either Resource_ID or Path is required.)"
+            "description": f"Full path for lookup (optional). If provided and exists, will update; if doesn't exist, will insert."
+        }
+        upsert_schema["properties"]["operation"] = {
+            "type": "string",
+            "enum": ["insert", "update", "auto"],
+            "description": "Operation mode: 'insert' (force create), 'update' (force update), or 'auto' (intelligent decision, default)"
         }
         
         # Copy all properties from base_schema
         for prop_name, prop_def in base_schema.get("properties", {}).items():
-            update_schema["properties"][prop_name] = prop_def
+            upsert_schema["properties"][prop_name] = prop_def
         
-        return update_schema
+        return upsert_schema
     
     async def get_type_definition(self, type_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -630,6 +658,11 @@ class LocalMCPServer:
                 "name": {
                     "type": "string",
                     "description": f"Filter {object_label} by name (partial match, optional)"
+                },
+                "filters": {
+                    "type": "object",
+                    "description": f"Dynamic field filters as key-value pairs. Supports any field from the {object_label} schema. Examples: {{'Priority': 'High', 'Status': 'Active', 'Owner': 'John Doe'}}. Use '*' or '%' for partial matches. Supports lists for IN queries.",
+                    "additionalProperties": True
                 },
                 "owner_filter": {
                     "type": "boolean",
@@ -1043,23 +1076,44 @@ class LocalMCPServer:
         Handle any generic tool based on the tool name
         
         Args:
-            tool_name: Name of the tool to handle
+            tool_name: Name of the tool to handle (format: [namespace_]operation_prefix)
             arguments: Tool arguments
             
         Returns:
             Dict containing the tool execution result
         """
-        # Parse the tool name to determine the operation and object type
-        parts = tool_name.split('_', 1)
-        if len(parts) != 2:
+        # Parse the tool name to determine namespace, operation and object type
+        # Format can be: operation_prefix or namespace_operation_prefix
+        parts = tool_name.split('_')
+        
+        if len(parts) < 2:
+            return {
+                "result": [
+                    {"type": "text", "text": f"Invalid tool name format: {tool_name}"}
+                ]
+            }
+        
+        # Determine if namespace is present
+        # Check if first part matches any configured namespace
+        namespace = None
+        operation_index = 0
+        
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            config_namespace = obj_config.get("namespace", "")
+            if config_namespace and parts[0] == config_namespace:
+                namespace = config_namespace
+                operation_index = 1
+                break
+        
+        if len(parts) < operation_index + 2:
             return {
                 "result": [
                     {"type": "text", "text": f"Invalid tool name format: {tool_name}"}
                 ]
             }
             
-        operation = parts[0]  # create, update, query, delete
-        obj_type = parts[1]   # control, issue, etc.
+        operation = parts[operation_index]  # upsert, query, delete
+        obj_type = '_'.join(parts[operation_index + 1:])  # control, issue, etc. (may contain underscores)
         
         # Handle plural form for query operations
         if obj_type.endswith('s') and operation == 'query':
@@ -1078,10 +1132,8 @@ class LocalMCPServer:
         
         try:
             # Call the appropriate method based on the operation
-            if operation == 'create':
-                result = await tool.create_object(arguments)
-            elif operation == 'update':
-                result = await tool.update_object(arguments)
+            if operation == 'upsert':
+                result = await tool.upsert_object(arguments)
             elif operation == 'query':
                 result = await tool.query_objects(arguments)
             elif operation == 'delete':

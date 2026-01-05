@@ -1,10 +1,10 @@
 @echo off
-REM Debug the local MCP server for use with MCP Inspector
+REM Debug the MCP server for use with MCP Inspector
 
 REM Get the project root directory (two levels up from this script)
 cd /d "%~dp0..\.."
 
-echo Starting local MCP server in debug mode for MCP Inspector...
+echo Starting MCP server in debug mode for MCP Inspector...
 
 REM Check if virtual environment exists, create if not
 if not exist venv (
@@ -29,7 +29,7 @@ REM Set environment variables for debugging
 set MCP_DEBUG=true
 
 REM Run the server with debug flag
-python src\app\local_mcp\run_local_mcp.py --debug
+python src\app\mcp\run_stdio_mode.py --debug
 
 REM Made with Bob
 

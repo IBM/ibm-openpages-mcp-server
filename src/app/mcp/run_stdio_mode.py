@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Run Local MCP Server
+Run MCP Server in Stdio Mode
 
-This script runs the local MCP server for IBM OpenPages integration.
+This script runs the MCP server in stdio mode for IBM OpenPages integration.
 It handles command line arguments, environment configuration, and server startup.
 """
 
@@ -16,7 +16,7 @@ from typing import Optional, NoReturn
 # Add the project root directory to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 
-from src.app.local_mcp.server_runner import main
+from src.app.mcp.server_runner import main
 from src.app.utils import configure_logging, get_env_file_path
 from src.app.config.settings import settings, create_settings
 
@@ -39,7 +39,7 @@ def parse_arguments() -> argparse.Namespace:
         argparse.Namespace: Parsed command line arguments
     """
     parser = argparse.ArgumentParser(
-        description=f'OpenPages Local MCP Server v{__version__}'
+        description=f'OpenPages MCP Server (Stdio Mode) v{__version__}'
     )
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     parser.add_argument('--port', type=int, help='Server port (overrides .env setting)')
@@ -85,8 +85,7 @@ def main_cli() -> Optional[NoReturn]:
             app_settings.HOST = args.host
             logger.info(f"Using host from command line: {args.host}")
         
-        logger.info(f"Starting OpenPages Local MCP Server v{__version__}...")
-        logger.info(f"Server will listen on {app_settings.HOST}:{app_settings.PORT}")
+        logger.info(f"Starting OpenPages MCP Server in stdio mode v{__version__}...")
         
         # Pass only the settings object to the main function
         asyncio.run(main(custom_settings=app_settings))
@@ -94,7 +93,7 @@ def main_cli() -> Optional[NoReturn]:
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
     except Exception as e:
-        logger.error(f"Error running local MCP server: {e}")
+        logger.error(f"Error running MCP server: {e}")
         if args.debug:
             import traceback
             logger.debug(traceback.format_exc())

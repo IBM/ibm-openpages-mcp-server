@@ -1,10 +1,10 @@
 #!/bin/bash
-# Debug the local MCP server for use with MCP Inspector
+# Debug the MCP server for use with MCP Inspector
 
 # Get the project root directory (two levels up from this script)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && cd ../.. && pwd )"
 
-echo "Starting local MCP server in debug mode for MCP Inspector..."
+echo "Starting MCP server in debug mode for MCP Inspector..."
 
 # Check if virtual environment exists, create if not
 if [ ! -d "$SCRIPT_DIR/venv" ]; then
@@ -28,6 +28,6 @@ echo "Press Ctrl+C to stop the server"
 export MCP_DEBUG=true
 
 # Run the server with debug flag
-python "$SCRIPT_DIR/src/app/local_mcp/run_local_mcp.py" --debug
+python "$SCRIPT_DIR/src/app/mcp/run_stdio_mode.py" --debug
 
 # Made with Bob

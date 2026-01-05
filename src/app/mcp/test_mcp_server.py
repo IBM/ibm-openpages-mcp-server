@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for the local MCP server
+Test script for the MCP server
 This script sends JSON-RPC requests to the server and prints the responses
 """
 
@@ -37,16 +37,16 @@ def send_request(proc, request):
 
 def main():
     """Main entry point"""
-    parser = argparse.ArgumentParser(description='Test the local MCP server')
-    parser.add_argument('--server-path', default=None, help='Path to the local MCP server script')
+    parser = argparse.ArgumentParser(description='Test the MCP server')
+    parser.add_argument('--server-path', default=None, help='Path to the MCP server script')
     args = parser.parse_args()
     
-    # Get the path to the local_mcp_server.py script
+    # Get the path to the run_stdio_mode.py script
     if args.server_path:
         server_path = args.server_path
     else:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        server_path = os.path.join(script_dir, "local_mcp_server.py")
+        server_path = os.path.join(script_dir, "run_stdio_mode.py")
     
     # Start the server process
     print(f"Starting local MCP server from: {server_path}")

@@ -19,8 +19,8 @@ export MCP_DEBUG=true
 export PYTHONPATH="$SCRIPT_DIR"
 
 # Start the MCP server in the background
-echo "Starting local MCP server in debug mode..."
-python "$SCRIPT_DIR/src/app/local_mcp/run_local_mcp.py" --debug &
+echo "Starting MCP server in debug mode..."
+python "$SCRIPT_DIR/src/app/mcp/run_stdio_mode.py" --debug &
 SERVER_PID=$!
 
 # Give the server a moment to start

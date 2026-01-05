@@ -19,8 +19,8 @@ set MCP_DEBUG=true
 set PYTHONPATH=%CD%
 
 REM Start the MCP server in the background
-echo Starting local MCP server in debug mode...
-start /b python src\app\local_mcp\run_local_mcp.py --debug
+echo Starting MCP server in debug mode...
+start /b python src\app\mcp\run_stdio_mode.py --debug
 
 REM Give the server a moment to start
 timeout /t 2 /nobreak > nul

@@ -5,21 +5,24 @@
       "tool_prefix": "control",
       "display_name": "Control",
       "path_prefix": "Controls",
-      "status_field": "OPSS-Ctl:Status"
+      "status_field": "OPSS-Ctl:Status",
+      "namespace": "openpages"
     },
     {
       "type_id": "SOXIssue",
       "tool_prefix": "issue",
       "display_name": "Issue",
       "path_prefix": "Issue",
-      "status_field": "OPSS-Iss:Status"
+      "status_field": "OPSS-Iss:Status",
+      "namespace": "openpages"
     },
     {
       "type_id": "SOXRisk",
       "tool_prefix": "risk",
       "display_name": "Risk",
       "path_prefix": "Risk",
-      "status_field": "OPSS-Risk:Status"
+      "status_field": "OPSS-Risk:Status",
+      "namespace": "openpages"
     }
   ]
 }

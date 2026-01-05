@@ -7,7 +7,7 @@ import logging
 import json
 from typing import Optional, Union, Any
 
-from src.app.local_mcp.local_mcp_server import LocalMCPServer
+from src.app.mcp.mcp_server import MCPServer
 from src.app.config.settings import settings
 
 # Configure logging
@@ -22,10 +22,10 @@ def enable_debug_logging():
 # Global MCP server instance
 _mcp_server_instance = None
 
-def initialize_server() -> Optional[LocalMCPServer]:
+def initialize_server() -> Optional[MCPServer]:
     """
     Initialize the MCP server instance based on server mode
-    Both local and remote modes now use the same LocalMCPServer architecture
+    Both local and remote modes use the same MCPServer architecture
     
     Returns:
         The MCP server instance or None if initialization fails
@@ -36,10 +36,10 @@ def initialize_server() -> Optional[LocalMCPServer]:
         return _mcp_server_instance
     
     try:
-        # Both local and remote modes use the same LocalMCPServer
+        # Both local and remote modes use the same MCPServer
         logger.info(f"Initializing MCP Server in {settings.SERVER_MODE} mode")
         
-        _mcp_server_instance = LocalMCPServer(custom_settings=settings)
+        _mcp_server_instance = MCPServer(custom_settings=settings)
         logger.info("MCP Server initialized successfully")
         
         return _mcp_server_instance
@@ -49,7 +49,7 @@ def initialize_server() -> Optional[LocalMCPServer]:
         logger.error(traceback.format_exc())
         return None
 
-def get_server() -> Optional[LocalMCPServer]:
+def get_server() -> Optional[MCPServer]:
     """
     Get the MCP server instance
     
@@ -65,14 +65,14 @@ def get_server() -> Optional[LocalMCPServer]:
 
 def run_local_server(debug_mode=False):
     """
-    Run the local MCP server with stdio transport
+    Run the MCP server with stdio transport (local mode)
     This is used for direct script execution
     
     Args:
         debug_mode (bool): Whether to run in debug mode with verbose logging
     """
     import asyncio
-    from src.app.local_mcp.server_runner import main
+    from src.app.mcp.server_runner import main
     from src.app.utils import configure_logging
     
     # Force local mode

@@ -13,7 +13,7 @@ os.environ["PYTHONPATH"] = script_dir
 
 # Start the MCP server in debug mode
 server_process = subprocess.Popen(
-    [sys.executable, os.path.join(script_dir, "src", "app", "local_mcp", "run_local_mcp.py"), "--debug"],
+    [sys.executable, os.path.join(script_dir, "src", "app", "mcp", "run_stdio_mode.py"), "--debug"],
     env=os.environ
 )
 

@@ -1,13 +1,13 @@
 #!/bin/bash
-# Run the local MCP server
+# Run the MCP server in stdio mode
 
 # Get the project root directory (one level up from this script)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && cd .. && pwd )"
 
-echo "Starting local MCP server..."
+echo "Starting MCP server in stdio mode..."
 echo "Press Ctrl+C to stop the server"
 
 # Run the server
-python3 "$SCRIPT_DIR/src/app/local_mcp/run_local_mcp.py" "$@"
+python3 "$SCRIPT_DIR/src/app/mcp/run_stdio_mode.py" "$@"
 
 # Made with Bob

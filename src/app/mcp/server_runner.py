@@ -13,7 +13,7 @@ import asyncio
 from typing import Dict, Any, Tuple, Optional
 
 from src.app.utils import configure_logging
-from src.app.local_mcp.local_mcp_server import LocalMCPServer, __version__
+from src.app.mcp.mcp_server import MCPServer, __version__
 from src.app.config.settings import Settings, settings
 
 # Configure logging to stderr only (no stdout pollution)
@@ -39,7 +39,7 @@ async def main(custom_settings: Optional[Settings] = None) -> None:
     # Configure logging based on settings
     configure_logging(app_settings.LOG_LEVEL)
     
-    logger.info(f"Local MCP server v{__version__} starting...")
+    logger.info(f"MCP server v{__version__} starting in stdio mode...")
     logger.info(f"Debug mode: {app_settings.DEBUG}")
     logger.info(f"Server mode: {app_settings.SERVER_MODE}")
     
@@ -50,7 +50,7 @@ async def main(custom_settings: Optional[Settings] = None) -> None:
     
     try:
         # Create server instance with the custom settings
-        server = LocalMCPServer(custom_settings=app_settings)
+        server = MCPServer(custom_settings=app_settings)
         
         # Initialize client authentication
         try:

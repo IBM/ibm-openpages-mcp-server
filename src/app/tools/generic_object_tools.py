@@ -92,25 +92,135 @@ class GenericObjectTools(BaseTool):
             logger.error(f"Error getting field definitions: {e}")
             return [TextContent(type="text", text=f"Error retrieving field definitions: {str(e)}")]
     
-    async def create_object(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def upsert_object(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
-        Create a new object in OpenPages
+        Create or update an object in OpenPages (upsert operation)
         
         Args:
             arguments: Tool arguments
+                - id: Resource ID for direct lookup (optional)
+                - path: Full path for lookup (optional)
                 - name: Name of the object (required)
+                - operation: "insert", "update", or "auto" (default: "auto")
                 - title: Object title (optional)
                 - description: Description of the object (optional)
+                - primaryParentId: Parent object ID (optional, for insert)
                 - Any other field defined in the schema (optional)
                 
         Returns:
-            List of text content with created object information
+            List of text content with upserted object information
         """
         # Extract required fields
         name = arguments.get('name')
         if not name:
             return [TextContent(type="text", text=f"Error: {self.display_name} name is required")]
         
+        # Extract operation mode
+        operation = arguments.get('operation', 'auto').lower()
+        if operation not in ['insert', 'update', 'auto']:
+            return [TextContent(type="text", text=f"Error: Invalid operation '{operation}'. Must be 'insert', 'update', or 'auto'")]
+        
+        # Extract identifiers
+        resource_id = arguments.get('id')
+        path = arguments.get('path')
+        
+        # Determine if this should be an insert or update
+        should_update = False
+        existing_object_id = None
+        existing_objects = []
+        
+        # SCENARIO 1: Explicit operation specified
+        if operation == 'insert':
+            logger.info(f"Explicit insert requested for {self.display_name.lower()}: {name}")
+            should_update = False
+        elif operation == 'update':
+            logger.info(f"Explicit update requested for {self.display_name.lower()}: {name}")
+            should_update = True
+            
+            # For explicit update, we need to find the object
+            if resource_id:
+                existing_object_id = resource_id
+            elif path:
+                existing_object_id = f"{self.path_prefix}/{path}"
+                existing_object_id = urllib.parse.quote(existing_object_id, safe='')
+            else:
+                # Try to find by name
+                try:
+                    query = f"SELECT [Resource ID], [Name] FROM [{self.type_id}] WHERE [Name] = '{name}' LIMIT 2"
+                    result = await self.client.query(query)
+                    existing_objects = result.get('rows', [])
+                    
+                    if len(existing_objects) == 0:
+                        return [TextContent(type="text", text=f"Error: No {self.display_name.lower()} found with name '{name}' for update")]
+                    elif len(existing_objects) > 1:
+                        obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}" for obj in existing_objects])
+                        return [TextContent(type="text", text=f"Error: Multiple {self.display_name.lower()}s found with name '{name}'. Please specify 'id' or 'path':\n{obj_list}")]
+                    else:
+                        existing_object_id = existing_objects[0]['fields'][0]['value']
+                except Exception as e:
+                    logger.error(f"Error querying for object by name: {e}")
+                    return [TextContent(type="text", text=f"Error: Could not find {self.display_name.lower()} with name '{name}': {str(e)}")]
+        
+        # SCENARIO 2: Auto mode - intelligently decide
+        else:  # operation == 'auto'
+            # Check if ID or path is provided
+            if resource_id or path:
+                # Try to find the object
+                try:
+                    lookup_id = resource_id if resource_id else f"{self.path_prefix}/{path}"
+                    if not resource_id:
+                        lookup_id = urllib.parse.quote(lookup_id, safe='')
+                    
+                    # Try to get the object
+                    obj_data = await self.client.get_content(lookup_id)
+                    if obj_data:
+                        should_update = True
+                        existing_object_id = lookup_id
+                        logger.info(f"Found existing {self.display_name.lower()} by {'ID' if resource_id else 'path'}, will update")
+                    else:
+                        should_update = False
+                        logger.info(f"{self.display_name.lower()} not found by {'ID' if resource_id else 'path'}, will insert")
+                except Exception as e:
+                    logger.warning(f"Could not find {self.display_name.lower()} by {'ID' if resource_id else 'path'}: {e}. Will attempt insert")
+                    should_update = False
+            else:
+                # No ID or path provided, check by name
+                try:
+                    query = f"SELECT [Resource ID], [Name] FROM [{self.type_id}] WHERE [Name] = '{name}' LIMIT 2"
+                    result = await self.client.query(query)
+                    existing_objects = result.get('rows', [])
+                    
+                    if len(existing_objects) == 0:
+                        should_update = False
+                        logger.info(f"No existing {self.display_name.lower()} found with name '{name}', will insert")
+                    elif len(existing_objects) > 1:
+                        obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}" for obj in existing_objects])
+                        return [TextContent(type="text", text=f"Error: Multiple {self.display_name.lower()}s found with name '{name}'. Please specify 'id' or 'path' to update:\n{obj_list}")]
+                    else:
+                        should_update = True
+                        existing_object_id = existing_objects[0]['fields'][0]['value']
+                        logger.info(f"Found existing {self.display_name.lower()} with name '{name}', will update")
+                except Exception as e:
+                    logger.warning(f"Error querying for object by name: {e}. Will attempt insert")
+                    should_update = False
+        
+        # Now perform the appropriate operation
+        if should_update and existing_object_id:
+            return await self._perform_update(existing_object_id, name, arguments)
+        else:
+            return await self._perform_insert(name, arguments)
+    
+    async def _perform_insert(self, name: str, arguments: Dict[str, Any]) -> List[TextContent]:
+        """
+        Perform insert operation
+        
+        Args:
+            name: Name of the object
+            arguments: Tool arguments
+            
+        Returns:
+            List of text content with created object information
+        """
         # Extract common fields
         primaryParentId = arguments.get('primaryParentId', '')
         title = arguments.get('title', '')
@@ -179,7 +289,7 @@ class GenericObjectTools(BaseTool):
             # Process all arguments and map them to OpenPages fields
             for arg_name, arg_value in arguments.items():
                 # Skip special fields that are handled separately
-                if arg_name in ['name', 'primaryParentId', 'title', 'description']:
+                if arg_name in ['name', 'primaryParentId', 'title', 'description', 'id', 'path', 'operation']:
                     continue
                     
                 # Skip empty values
@@ -273,6 +383,7 @@ class GenericObjectTools(BaseTool):
             
             # Use base class method to create response text
             response_items = {
+                "Operation": "INSERT",
                 "Name": name,
                 "Resource ID": resource_id,
                 "Type": self.type_id,
@@ -289,7 +400,205 @@ class GenericObjectTools(BaseTool):
         
         except Exception as e:
             logger.error(f"Error creating {self.display_name.lower()}: {e}")
+            # Check if it's a name conflict error
+            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                return [TextContent(type="text", text=f"Error: {self.display_name} with name '{name}' already exists. Use operation='update' or provide 'id'/'path' to update it.")]
             return [TextContent(type="text", text=f"Error creating {self.display_name.lower()}: {str(e)}")]
+    
+    async def _perform_update(self, object_id: str, name: str, arguments: Dict[str, Any]) -> List[TextContent]:
+        """
+        Perform update operation
+        
+        Args:
+            object_id: Resource ID or path of the object to update
+            name: Name of the object
+            arguments: Tool arguments
+            
+        Returns:
+            List of text content with updated object information
+        """
+        # Extract common fields
+        title = arguments.get('title')
+        description = arguments.get('description')
+        
+        # Prepare content data
+        content_data: dict[str, Any] = {
+            "fields": [],
+            "type_definition_id": self.type_id
+        }
+        
+        # Add optional fields if provided
+        if name:
+            content_data["name"] = name
+        if title:
+            content_data["title"] = title
+        if description:
+            content_data["description"] = description
+        
+        # Get field definitions to properly format field values
+        try:
+            # Use base class method to get type definition
+            type_info = await self.get_type_definition(self.type_id)
+            field_definitions = type_info.get('field_definitions', [])
+            
+            # Create mappings for field names and labels
+            field_def_map = {}  # Maps field names to definitions (case-sensitive)
+            field_def_map_lower = {}  # Maps lowercase field names to definitions (case-insensitive)
+            label_to_field_map = {}  # Maps lowercase labels to field names
+            simple_name_map = {}  # Maps lowercase simple names to field names
+            conflict_map = {}  # Tracks potential conflicts
+            
+            for field_def in field_definitions:
+                field_name = field_def.get('name')
+                if field_name:
+                    # 1. Map full field name to definition (case-sensitive)
+                    field_def_map[field_name] = field_def
+                    
+                    # Also map lowercase version for case-insensitive matching
+                    field_name_lower = field_name.lower()
+                    if field_name_lower in field_def_map_lower:
+                        conflict_map[field_name_lower] = True
+                        logger.warning(f"Field name conflict: '{field_name_lower}' maps to multiple fields")
+                    field_def_map_lower[field_name_lower] = field_def
+                    
+                    # 2. Get user-friendly label and map it to field name (case-insensitive)
+                    label = field_def.get('localized_label')
+                    if label:
+                        label_lower = label.lower()
+                        if label_lower in label_to_field_map:
+                            conflict_map[label_lower] = True
+                            logger.warning(f"Label conflict: '{label}' maps to both '{label_to_field_map[label_lower]}' and '{field_name}'")
+                        else:
+                            label_to_field_map[label_lower] = field_name
+                    
+                    # 3. Map simple name (without prefix) to field name (case-insensitive)
+                    simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
+                    simple_name_lower = simple_name.lower()
+                    if simple_name_lower in simple_name_map:
+                        conflict_map[simple_name_lower] = True
+                        logger.warning(f"Simple name conflict: '{simple_name}' maps to both '{simple_name_map[simple_name_lower]}' and '{field_name}'")
+                    else:
+                        simple_name_map[simple_name_lower] = field_name
+            
+            # Process all arguments and map them to OpenPages fields
+            for arg_name, arg_value in arguments.items():
+                # Skip special fields that are handled separately
+                if arg_name in ['name', 'title', 'description', 'id', 'path', 'operation', 'primaryParentId']:
+                    continue
+                    
+                # Skip empty values
+                if arg_value is None or arg_value == '':
+                    continue
+                
+                # Try to find the matching field definition
+                field_def = None
+                field_name = None
+                arg_name_lower = arg_name.lower()
+                
+                # 1. First try direct match with full field name (case-sensitive)
+                if arg_name in field_def_map:
+                    field_def = field_def_map[arg_name]
+                    field_name = arg_name
+                    logger.debug(f"Field '{arg_name}' matched by exact name")
+                
+                # 2. Try case-insensitive match with full field name
+                elif arg_name_lower in field_def_map_lower:
+                    # Check if this is a conflicted field name
+                    if arg_name_lower in conflict_map:
+                        logger.warning(f"Using ambiguous field name: '{arg_name}' has multiple possible matches")
+                        # In case of conflict, prefer the exact match if available
+                        for actual_name in field_def_map:
+                            if actual_name.lower() == arg_name_lower:
+                                field_name = actual_name
+                                field_def = field_def_map[actual_name]
+                                logger.debug(f"Ambiguous field '{arg_name}' resolved to exact match '{field_name}'")
+                                break
+                        # If no exact match found, use the first one
+                        if not field_name:
+                            field_def = field_def_map_lower[arg_name_lower]
+                            field_name = field_def.get('name')
+                            logger.debug(f"Ambiguous field '{arg_name}' using first match '{field_name}'")
+                    else:
+                        field_def = field_def_map_lower[arg_name_lower]
+                        field_name = field_def.get('name')
+                        logger.debug(f"Field '{arg_name}' matched by case-insensitive name to '{field_name}'")
+                
+                # 3. Try match with user-friendly label (case-insensitive)
+                elif arg_name_lower in label_to_field_map:
+                    if arg_name_lower in conflict_map:
+                        logger.warning(f"Ambiguous label: '{arg_name}' could refer to multiple fields")
+                    field_name = label_to_field_map[arg_name_lower]
+                    field_def = field_def_map.get(field_name)
+                    logger.debug(f"Field '{arg_name}' matched by label to '{field_name}'")
+                
+                # 4. Try match with simple name (without prefix) (case-insensitive)
+                elif arg_name_lower in simple_name_map:
+                    if arg_name_lower in conflict_map:
+                        logger.warning(f"Ambiguous simple name: '{arg_name}' could refer to multiple fields")
+                    field_name = simple_name_map[arg_name_lower]
+                    field_def = field_def_map.get(field_name)
+                    logger.debug(f"Field '{arg_name}' matched by simple name to '{field_name}'")
+                
+                if field_def:
+                    field_name = field_def.get('name')
+                    field_type = field_def.get('data_type', 'STRING_TYPE')
+                    
+                    # Format the value based on field type using base class method
+                    formatted_value = self.format_field_value(arg_value, field_type)
+                    
+                    # Add the field to the content data
+                    content_data["fields"].append({
+                        "name": field_name,
+                        "value": formatted_value
+                    })
+                    logger.info(f"Added field {field_name} with value {formatted_value}")
+                else:
+                    # If no matching field definition found, add it as is
+                    # This might happen for custom fields or if the field name doesn't match exactly
+                    logger.warning(f"No field definition found for {arg_name}, adding as is")
+                    content_data["fields"].append({
+                        "name": arg_name,
+                        "value": arg_value
+                    })
+                    
+        except Exception as e:
+            logger.error(f"Error processing field definitions: {e}")
+            # Continue with basic fields if there's an error
+        
+        try:
+            # Update the object
+            logger.info(f"Updating {self.display_name.lower()} {object_id}: {content_data}")
+            result = await self.client.update_content(object_id, content_data)
+            
+            # Extract resource ID from the result
+            updated_resource_id = result.get("id")
+            if not updated_resource_id:
+                return [TextContent(type="text", text=f"Error: Failed to update {self.display_name.lower()} (no resource ID returned)")]
+            
+            # Use base class method to create response text
+            response_items = {
+                "Operation": "UPDATE",
+                "Resource ID": updated_resource_id,
+                "Task-View Path": self.get_task_view_url(updated_resource_id)
+            }
+            
+            if name:
+                response_items["Name"] = name
+                
+            if description:
+                response_items["Description"] = description
+                
+            response_text = self.create_response_text(f"Successfully updated {self.display_name.lower()}:", response_items)
+            
+            return [TextContent(type="text", text=response_text)]
+        
+        except Exception as e:
+            logger.error(f"Error updating {self.display_name.lower()}: {e}")
+            # If update fails because object doesn't exist, try insert as fallback
+            if "not found" in str(e).lower() or "does not exist" in str(e).lower():
+                logger.info(f"Object not found for update, falling back to insert")
+                return await self._perform_insert(name, arguments)
+            return [TextContent(type="text", text=f"Error updating {self.display_name.lower()}: {str(e)}")]
     
     async def query_objects(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
@@ -300,6 +609,8 @@ class GenericObjectTools(BaseTool):
                 - name: Filter objects by name (partial match, optional)
                 - owner_filter: Filter by current user ownership (default: False)
                 - status_filter: Filter objects by status (optional)
+                - filters: Dynamic field filters as key-value pairs (optional)
+                  Example: {"Priority": "High", "Status": "Active", "Owner": "John"}
                 - limit: Maximum number of objects to return (default: 20)
                 - sort_by: Field to sort by (default: "Name")
                 - sort_order: Sort order, "ASC" or "DESC" (default: "ASC")
@@ -313,6 +624,7 @@ class GenericObjectTools(BaseTool):
         name_filter = arguments.get('name')
         owner_filter = arguments.get('owner_filter', False)
         status_filter = arguments.get('status_filter')
+        dynamic_filters = arguments.get('filters', {})  # New dynamic filters parameter
         limit = arguments.get('limit', 20)
         sort_by = arguments.get('sort_by', [{'field': 'Name', 'order': 'ASC'}])
         fetch_all_properties = arguments.get('fetch_all_properties', False)
@@ -415,6 +727,80 @@ class GenericObjectTools(BaseTool):
         
         if status_filter and self.status_field:
             query += f" AND [{self.status_field}] = '{status_filter}'"
+        
+        # Process dynamic filters
+        if dynamic_filters and isinstance(dynamic_filters, dict):
+            for filter_field, filter_value in dynamic_filters.items():
+                if filter_value is None or filter_value == '':
+                    continue
+                
+                # Try to resolve the field name using the field mapping
+                resolved_field = None
+                filter_field_lower = filter_field.lower()
+                
+                # 1. Try direct match (case-insensitive)
+                for field_name, sql_field in field_mapping.items():
+                    if field_name.lower() == filter_field_lower:
+                        resolved_field = sql_field.replace('[', '').replace(']', '')
+                        break
+                
+                # 2. Try matching with simple name (without prefix)
+                if not resolved_field:
+                    for field_name, sql_field in field_mapping.items():
+                        simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
+                        if simple_name.lower() == filter_field_lower:
+                            resolved_field = sql_field.replace('[', '').replace(']', '')
+                            break
+                
+                # 3. Try matching with field name from "Name [Group]" format
+                if not resolved_field and '[' in filter_field and filter_field.endswith(']'):
+                    field_name_part = filter_field.split('[')[0].strip()
+                    group_name = filter_field[filter_field.find('[')+1:filter_field.find(']')]
+                    full_field_name = f"{group_name}:{field_name_part}"
+                    
+                    if full_field_name in field_mapping:
+                        resolved_field = field_mapping[full_field_name].replace('[', '').replace(']', '')
+                
+                # 4. If still not resolved, use the field name as-is
+                if not resolved_field:
+                    resolved_field = filter_field
+                    logger.warning(f"Could not resolve field '{filter_field}' in field mapping, using as-is")
+                
+                # Determine the filter operator based on value type
+                if isinstance(filter_value, str):
+                    # Check if it's a partial match request (contains wildcards or is a search term)
+                    if '%' in filter_value or '*' in filter_value:
+                        # Use LIKE for pattern matching
+                        filter_value_escaped = filter_value.replace('*', '%').replace("'", "''")
+                        query += f" AND [{resolved_field}] LIKE '{filter_value_escaped}'"
+                    else:
+                        # Exact match for strings
+                        filter_value_escaped = filter_value.replace("'", "''")
+                        query += f" AND [{resolved_field}] = '{filter_value_escaped}'"
+                elif isinstance(filter_value, bool):
+                    # Boolean values
+                    query += f" AND [{resolved_field}] = {str(filter_value).upper()}"
+                elif isinstance(filter_value, (int, float)):
+                    # Numeric values
+                    query += f" AND [{resolved_field}] = {filter_value}"
+                elif isinstance(filter_value, list):
+                    # IN clause for multiple values
+                    if filter_value:
+                        # Build list of escaped values
+                        escaped_values = []
+                        for v in filter_value:
+                            if isinstance(v, str):
+                                escaped_values.append(f"'{str(v).replace(chr(39), chr(39)+chr(39))}'")
+                            else:
+                                escaped_values.append(str(v))
+                        values_str = ', '.join(escaped_values)
+                        query += f" AND [{resolved_field}] IN ({values_str})"
+                else:
+                    # Default to string comparison
+                    filter_value_escaped = str(filter_value).replace("'", "''")
+                    query += f" AND [{resolved_field}] = '{filter_value_escaped}'"
+                
+                logger.info(f"Added dynamic filter: {filter_field} -> [{resolved_field}] = {filter_value}")
             
         # Add sorting with multiple fields
         sort_clauses = []
@@ -522,218 +908,6 @@ class GenericObjectTools(BaseTool):
         
         return [TextContent(type="text", text=response_text)]
     
-    async def update_object(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        """
-        Update an existing object in OpenPages
-        
-        Args:
-            arguments: Tool arguments
-                - resource_id: Resource ID of the object to update
-                - path: Path of the object including the name (i.e. /High Oaks Bank/Africa and Middle East/Test Object #1)
-                - name: Name of the object (optional)
-                - title: Object title (optional)
-                - description: Description of the object (optional)
-                - Any other field defined in the schema (optional)
-                
-        Returns:
-            List of text content with updated object information
-        """
-        # Extract required fields
-        resource_id = arguments.get('resource_id')
-        path = arguments.get('path')
-        
-        if not resource_id and not path:
-            return [TextContent(type="text", text=f"Error: Resource ID or path is required")]
-        
-        if resource_id and path:
-            return [TextContent(type="text", text=f"Error: Only one of resource ID or path is required")]
-
-        name = arguments.get('name')
-        if not name:
-            return [TextContent(type="text", text=f"Error: {self.display_name} name is required")]
-        
-        object_id = resource_id
-        if not object_id:
-            object_id = f"{self.path_prefix}/{path}"
-            object_id = urllib.parse.quote(object_id, safe='')
-            
-        # Extract common fields
-        title = arguments.get('title')
-        description = arguments.get('description')
-        
-        # Prepare content data
-        content_data: dict[str, Any] = {
-            "fields": [],
-            "type_definition_id": self.type_id
-        }
-        
-        # Add optional fields if provided
-        if name:
-            content_data["name"] = name
-        if title:
-            content_data["title"] = title
-        if description:
-            content_data["description"] = description
-        
-        # Get field definitions to properly format field values
-        try:
-            # Use base class method to get type definition
-            type_info = await self.get_type_definition(self.type_id)
-            field_definitions = type_info.get('field_definitions', [])
-            
-            # Create mappings for field names and labels
-            field_def_map = {}  # Maps field names to definitions (case-sensitive)
-            field_def_map_lower = {}  # Maps lowercase field names to definitions (case-insensitive)
-            label_to_field_map = {}  # Maps lowercase labels to field names
-            simple_name_map = {}  # Maps lowercase simple names to field names
-            conflict_map = {}  # Tracks potential conflicts
-            
-            for field_def in field_definitions:
-                field_name = field_def.get('name')
-                if field_name:
-                    # 1. Map full field name to definition (case-sensitive)
-                    field_def_map[field_name] = field_def
-                    
-                    # Also map lowercase version for case-insensitive matching
-                    field_name_lower = field_name.lower()
-                    if field_name_lower in field_def_map_lower:
-                        conflict_map[field_name_lower] = True
-                        logger.warning(f"Field name conflict: '{field_name_lower}' maps to multiple fields")
-                    field_def_map_lower[field_name_lower] = field_def
-                    
-                    # 2. Get user-friendly label and map it to field name (case-insensitive)
-                    label = field_def.get('localized_label')
-                    if label:
-                        label_lower = label.lower()
-                        if label_lower in label_to_field_map:
-                            conflict_map[label_lower] = True
-                            logger.warning(f"Label conflict: '{label}' maps to both '{label_to_field_map[label_lower]}' and '{field_name}'")
-                        else:
-                            label_to_field_map[label_lower] = field_name
-                    
-                    # 3. Map simple name (without prefix) to field name (case-insensitive)
-                    simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
-                    simple_name_lower = simple_name.lower()
-                    if simple_name_lower in simple_name_map:
-                        conflict_map[simple_name_lower] = True
-                        logger.warning(f"Simple name conflict: '{simple_name}' maps to both '{simple_name_map[simple_name_lower]}' and '{field_name}'")
-                    else:
-                        simple_name_map[simple_name_lower] = field_name
-            
-            # Process all arguments and map them to OpenPages fields
-            for arg_name, arg_value in arguments.items():
-                # Skip special fields that are handled separately
-                if arg_name in ['name', 'title', 'description', 'resource_id', 'path']:
-                    continue
-                    
-                # Skip empty values
-                if arg_value is None or arg_value == '':
-                    continue
-                
-                # Try to find the matching field definition
-                field_def = None
-                field_name = None
-                arg_name_lower = arg_name.lower()
-                
-                # 1. First try direct match with full field name (case-sensitive)
-                if arg_name in field_def_map:
-                    field_def = field_def_map[arg_name]
-                    field_name = arg_name
-                    logger.debug(f"Field '{arg_name}' matched by exact name")
-                
-                # 2. Try case-insensitive match with full field name
-                elif arg_name_lower in field_def_map_lower:
-                    # Check if this is a conflicted field name
-                    if arg_name_lower in conflict_map:
-                        logger.warning(f"Using ambiguous field name: '{arg_name}' has multiple possible matches")
-                        # In case of conflict, prefer the exact match if available
-                        for actual_name in field_def_map:
-                            if actual_name.lower() == arg_name_lower:
-                                field_name = actual_name
-                                field_def = field_def_map[actual_name]
-                                logger.debug(f"Ambiguous field '{arg_name}' resolved to exact match '{field_name}'")
-                                break
-                        # If no exact match found, use the first one
-                        if not field_name:
-                            field_def = field_def_map_lower[arg_name_lower]
-                            field_name = field_def.get('name')
-                            logger.debug(f"Ambiguous field '{arg_name}' using first match '{field_name}'")
-                    else:
-                        field_def = field_def_map_lower[arg_name_lower]
-                        field_name = field_def.get('name')
-                        logger.debug(f"Field '{arg_name}' matched by case-insensitive name to '{field_name}'")
-                
-                # 3. Try match with user-friendly label (case-insensitive)
-                elif arg_name_lower in label_to_field_map:
-                    if arg_name_lower in conflict_map:
-                        logger.warning(f"Ambiguous label: '{arg_name}' could refer to multiple fields")
-                    field_name = label_to_field_map[arg_name_lower]
-                    field_def = field_def_map.get(field_name)
-                    logger.debug(f"Field '{arg_name}' matched by label to '{field_name}'")
-                
-                # 4. Try match with simple name (without prefix) (case-insensitive)
-                elif arg_name_lower in simple_name_map:
-                    if arg_name_lower in conflict_map:
-                        logger.warning(f"Ambiguous simple name: '{arg_name}' could refer to multiple fields")
-                    field_name = simple_name_map[arg_name_lower]
-                    field_def = field_def_map.get(field_name)
-                    logger.debug(f"Field '{arg_name}' matched by simple name to '{field_name}'")
-                
-                if field_def:
-                    field_name = field_def.get('name')
-                    field_type = field_def.get('data_type', 'STRING_TYPE')
-                    
-                    # Format the value based on field type using base class method
-                    formatted_value = self.format_field_value(arg_value, field_type)
-                    
-                    # Add the field to the content data
-                    content_data["fields"].append({
-                        "name": field_name,
-                        "value": formatted_value
-                    })
-                    logger.info(f"Added field {field_name} with value {formatted_value}")
-                else:
-                    # If no matching field definition found, add it as is
-                    # This might happen for custom fields or if the field name doesn't match exactly
-                    logger.warning(f"No field definition found for {arg_name}, adding as is")
-                    content_data["fields"].append({
-                        "name": arg_name,
-                        "value": arg_value
-                    })
-                    
-        except Exception as e:
-            logger.error(f"Error processing field definitions: {e}")
-            # Continue with basic fields if there's an error
-        
-        try:
-            # Update the object
-            logger.info(f"Updating {self.display_name.lower()} {object_id}: {content_data}")
-            result = await self.client.update_content(object_id, content_data)
-            
-            # Extract resource ID from the result
-            updated_resource_id = result.get("id")
-            if not updated_resource_id:
-                return [TextContent(type="text", text=f"Error: Failed to update {self.display_name.lower()} (no resource ID returned)")]
-            
-            # Use base class method to create response text
-            response_items = {
-                "Resource ID": updated_resource_id,
-                "Task-View Path": self.get_task_view_url(updated_resource_id)
-            }
-            
-            if name:
-                response_items["Name"] = name
-                
-            if description:
-                response_items["Description"] = description
-                
-            response_text = self.create_response_text(f"Successfully updated {self.display_name.lower()}:", response_items)
-            
-            return [TextContent(type="text", text=response_text)]
-        
-        except Exception as e:
-            logger.error(f"Error updating {self.display_name.lower()}: {e}")
-            return [TextContent(type="text", text=f"Error updating {self.display_name.lower()}: {str(e)}")]
     
     async def delete_object(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
