@@ -4,11 +4,13 @@ Provides common functionality for all tool classes
 """
 
 import logging
+import json
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
 from mcp.types import TextContent  # type: ignore
 from src.app.core.openpages_client import OpenPagesClient
+from src.app.config.settings import settings
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -29,6 +31,7 @@ class BaseTool:
             client: OpenPages API client
         """
         self.client = client
+        self.output_format = settings.OUTPUT_FORMAT
         
     async def get_type_definition(self, object_type: str) -> Dict[str, Any]:
         """
@@ -154,6 +157,95 @@ class BaseTool:
             response_text += f"- **{key}**: {display_value}\n"
             
         return response_text
+    
+    def format_response(self, data: Dict[str, Any], operation: str = "operation") -> List[TextContent]:
+        """
+        Format response based on global output format setting
+        
+        Args:
+            data: Data to format (should be JSON-serializable)
+            operation: Operation type for text format title
+            
+        Returns:
+            List of TextContent with formatted response
+        """
+        if self.output_format == "json":
+            return self._format_json_response(data)
+        else:
+            return self._format_text_response(data, operation)
+    
+    def _format_json_response(self, data: Dict[str, Any]) -> List[TextContent]:
+        """
+        Format response as JSON
+        
+        Args:
+            data: Data to format
+            
+        Returns:
+            List of TextContent with JSON response
+        """
+        try:
+            json_str = json.dumps(data, indent=2, ensure_ascii=False)
+            return [TextContent(type="text", text=json_str)]
+        except Exception as e:
+            logger.error(f"Error formatting JSON response: {e}")
+            # Fallback to string representation
+            return [TextContent(type="text", text=str(data))]
+    
+    def _format_text_response(self, data: Dict[str, Any], operation: str) -> List[TextContent]:
+        """
+        Format response as human-readable text
+        
+        Args:
+            data: Data to format
+            operation: Operation type for title
+            
+        Returns:
+            List of TextContent with text response
+        """
+        # Check if this is a single item or list of items
+        if "items" in data and isinstance(data["items"], list):
+            # Multiple items (query result)
+            return self._format_query_text_response(data)
+        else:
+            # Single item (upsert/delete result)
+            title = data.get("message", f"Operation: {operation}")
+            items = {k: v for k, v in data.items() if k != "message"}
+            return [TextContent(type="text", text=self.create_response_text(title, items))]
+    
+    def _format_query_text_response(self, data: Dict[str, Any]) -> List[TextContent]:
+        """
+        Format query response as human-readable text
+        
+        Args:
+            data: Query result data with items list
+            
+        Returns:
+            List of TextContent with formatted query results
+        """
+        items = data.get("items", [])
+        count = data.get("count", len(items))
+        object_type = data.get("object_type", "objects")
+        
+        if not items:
+            return [TextContent(type="text", text=f"No {object_type} found matching the criteria.")]
+        
+        response_text = f"Found {count} {object_type}:\n\n"
+        
+        for item in items:
+            name = item.get("name", "N/A")
+            response_text += f"## {name}\n"
+            
+            for key, value in item.items():
+                if key != "name":  # Skip name as it's in the header
+                    display_value = self.extract_display_value(value)
+                    # Format key to be more readable
+                    formatted_key = key.replace("_", " ").title()
+                    response_text += f"- **{formatted_key}**: {display_value}\n"
+            
+            response_text += "\n"
+        
+        return [TextContent(type="text", text=response_text)]
         
     def get_task_view_url(self, resource_id: str) -> str:
         """

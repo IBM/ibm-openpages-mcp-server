@@ -37,7 +37,6 @@ class GenericObjectTools(BaseTool):
         self.type_id = object_config.get("type_id", "")
         self.display_name = object_config.get("display_name", "Object")
         self.path_prefix = object_config.get("path_prefix", "")
-        self.status_field = object_config.get("status_field", "")
         
     async def get_object_fields(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
@@ -381,22 +380,22 @@ class GenericObjectTools(BaseTool):
             if not resource_id:
                 return [TextContent(type="text", text=f"Error: Failed to create {self.display_name.lower()} (no resource ID returned)")]
             
-            # Use base class method to create response text
-            response_items = {
-                "Operation": "INSERT",
-                "Name": name,
-                "Resource ID": resource_id,
-                "Type": self.type_id,
-                "Parent": primaryParentId,
-                "Task-View Path": self.get_task_view_url(resource_id)
+            # Prepare response data
+            response_data = {
+                "message": f"Successfully created {self.display_name.lower()}",
+                "operation": "INSERT",
+                "name": name,
+                "resource_id": resource_id,
+                "type": self.type_id,
+                "parent_id": primaryParentId,
+                "task_view_url": self.get_task_view_url(resource_id)
             }
             
             if description:
-                response_items["Description"] = description
-                
-            response_text = self.create_response_text(f"Successfully created {self.display_name.lower()}:", response_items)
+                response_data["description"] = description
             
-            return [TextContent(type="text", text=response_text)]
+            # Use base class method to format response based on output format
+            return self.format_response(response_data, "insert")
         
         except Exception as e:
             logger.error(f"Error creating {self.display_name.lower()}: {e}")
@@ -575,22 +574,22 @@ class GenericObjectTools(BaseTool):
             if not updated_resource_id:
                 return [TextContent(type="text", text=f"Error: Failed to update {self.display_name.lower()} (no resource ID returned)")]
             
-            # Use base class method to create response text
-            response_items = {
-                "Operation": "UPDATE",
-                "Resource ID": updated_resource_id,
-                "Task-View Path": self.get_task_view_url(updated_resource_id)
+            # Prepare response data
+            response_data = {
+                "message": f"Successfully updated {self.display_name.lower()}",
+                "operation": "UPDATE",
+                "resource_id": updated_resource_id,
+                "task_view_url": self.get_task_view_url(updated_resource_id)
             }
             
             if name:
-                response_items["Name"] = name
+                response_data["name"] = name
                 
             if description:
-                response_items["Description"] = description
-                
-            response_text = self.create_response_text(f"Successfully updated {self.display_name.lower()}:", response_items)
+                response_data["description"] = description
             
-            return [TextContent(type="text", text=response_text)]
+            # Use base class method to format response based on output format
+            return self.format_response(response_data, "update")
         
         except Exception as e:
             logger.error(f"Error updating {self.display_name.lower()}: {e}")
@@ -608,14 +607,14 @@ class GenericObjectTools(BaseTool):
             arguments: Tool arguments
                 - name: Filter objects by name (partial match, optional)
                 - owner_filter: Filter by current user ownership (default: False)
-                - status_filter: Filter objects by status (optional)
-                - filters: Dynamic field filters as key-value pairs (optional)
+                - filters: Dynamic field filters as key-value pairs (optional, for backward compatibility)
                   Example: {"Priority": "High", "Status": "Active", "Owner": "John"}
+                - filter_*: Individual filter fields (e.g., filter_Status, filter_Priority)
                 - limit: Maximum number of objects to return (default: 20)
                 - sort_by: Field to sort by (default: "Name")
                 - sort_order: Sort order, "ASC" or "DESC" (default: "ASC")
                 - fields: List of additional fields to include in the output (optional, multiselect)
-                  Resource ID, Name, Description, and Status are always included
+                  Resource ID, Name, and Description are always included
                 - fetch_all_properties: Whether to fetch all main properties (default: False)
                 
         Returns:
@@ -623,8 +622,19 @@ class GenericObjectTools(BaseTool):
         """
         name_filter = arguments.get('name')
         owner_filter = arguments.get('owner_filter', False)
-        status_filter = arguments.get('status_filter')
-        dynamic_filters = arguments.get('filters', {})  # New dynamic filters parameter
+        
+        # Collect filters from both sources:
+        # 1. Generic 'filters' object (backward compatibility)
+        # 2. Individual 'filter_*' parameters (new structured approach)
+        dynamic_filters = arguments.get('filters', {}).copy() if arguments.get('filters') else {}
+        
+        # Process individual filter_* parameters
+        for arg_name, arg_value in arguments.items():
+            if arg_name.startswith('filter_') and arg_value is not None and arg_value != '':
+                # Extract the field name from filter_FieldName
+                filter_field = arg_name[7:]  # Remove 'filter_' prefix
+                dynamic_filters[filter_field] = arg_value
+                logger.debug(f"Added structured filter: {filter_field} = {arg_value}")
         limit = arguments.get('limit', 20)
         sort_by = arguments.get('sort_by', [{'field': 'Name', 'order': 'ASC'}])
         fetch_all_properties = arguments.get('fetch_all_properties', False)
@@ -651,8 +661,6 @@ class GenericObjectTools(BaseTool):
         
         # Always include these required fields
         required_fields = ['[Resource ID]', '[Name]', '[Description]']
-        if self.status_field:
-            required_fields.append(f'[{self.status_field}]')
         
         # Add additional fields if specified
         selected_fields = required_fields.copy()
@@ -725,8 +733,8 @@ class GenericObjectTools(BaseTool):
             if current_user:
                 query += f" AND [Owner] = '{current_user}'"
         
-        if status_filter and self.status_field:
-            query += f" AND [{self.status_field}] = '{status_filter}'"
+        # Note: status_filter is now handled through the dynamic filters mechanism
+        # Users should use filters={'Status': 'value'} instead
         
         # Process dynamic filters
         if dynamic_filters and isinstance(dynamic_filters, dict):
@@ -832,81 +840,40 @@ class GenericObjectTools(BaseTool):
         result = await self.client.query(query)
         
         # Format results
-        objects = []
+        items = []
         for row in result.get('rows', []):
             object_data = {}
             for field in row['fields']:
                 # Handle case where field['value'] could be null
-                if 'value' in field:
-                    object_data[field['name']] = field['value']
-                else:
-                    object_data[field['name']] = None
-            objects.append(object_data)
-        
-        # Create response
-        if not objects:
-            return [TextContent(type="text", text=f"No {self.display_name.lower()}s found matching the criteria.")]
-        
-        response_text = f"Found {len(objects)} {self.display_name.lower()}(s):\n\n"
-        
-        # Create a reverse mapping from SQL field names to display names
-        display_names = {}
-        for display_name, sql_field in field_mapping.items():
-            # Remove brackets from SQL field name for matching with result keys
-            clean_field = sql_field.replace('[', '').replace(']', '')
-            display_names[clean_field] = display_name
-            
-        # Add special cases for required fields
-        display_names['Resource ID'] = 'ID'
-        display_names['Name'] = 'Name'
-        display_names['Description'] = 'Description'
-        if self.status_field:
-            display_names[self.status_field] = 'Status'
-        
-        for obj in objects:
-            response_text += f"## {obj.get('Name', 'N/A')}\n"
-            
-            # Create a dictionary for the object items to display
-            object_items = {}
-            
-            # Get the resource ID
-            resource_id = obj.get('Resource ID', 'N/A')
-            
-            # Always show required fields first
-            object_items["ID"] = resource_id
-            
-            # Add taskview link
-            if resource_id != 'N/A':
-                object_items["Task-View Path"] = self.get_task_view_url(resource_id)
-            
-            # Status might be returned with different field names depending on the query
-            if self.status_field:
-                status_value = obj.get('Status', obj.get(self.status_field, 'N/A'))
-                object_items["Status"] = status_value
-            
-            # Add description if available
-            description = obj.get('Description')
-            if description:
-                object_items["Description"] = description
-            
-            # Add all other available fields that were selected
-            for field_name, field_value in obj.items():
-                # Skip fields we've already handled
-                if field_name in ['Resource ID', 'Name', 'Description']:
-                    continue
+                field_name = field['name']
+                field_value = field.get('value')
                 
-                # Get display name for the field
-                display_name = display_names.get(field_name, field_name)
-                object_items[display_name] = field_value
+                # Convert field names to snake_case for JSON consistency
+                json_field_name = field_name.replace(' ', '_').replace('-', '_').lower()
+                object_data[json_field_name] = field_value
+                
+                # Also keep original field names for backward compatibility
+                object_data[field_name] = field_value
             
-            # Use base class method to format the object items
-            for key, value in object_items.items():
-                display_value = self.extract_display_value(value)
-                response_text += f"- **{key}**: {display_value}\n"
+            # Add computed fields
+            resource_id = object_data.get('Resource ID') or object_data.get('resource_id')
+            if resource_id:
+                object_data['task_view_url'] = self.get_task_view_url(resource_id)
+                object_data['resource_id'] = resource_id
             
-            response_text += "\n"
+            object_data['name'] = object_data.get('Name') or object_data.get('name', 'N/A')
+            
+            items.append(object_data)
         
-        return [TextContent(type="text", text=response_text)]
+        # Prepare response data
+        response_data = {
+            "count": len(items),
+            "object_type": f"{self.display_name.lower()}s",
+            "items": items
+        }
+        
+        # Use base class method to format response based on output format
+        return self.format_response(response_data, "query")
     
     
     async def delete_object(self, arguments: Dict[str, Any]) -> List[TextContent]:
@@ -954,15 +921,21 @@ class GenericObjectTools(BaseTool):
             logger.info(f"Deleting {self.display_name.lower()} with ID: {object_id}")
             result = await self.client.delete_content(object_id)
             
-            # Create response text
-            if object_info:
-                response_items = object_info
-            else:
-                response_items = {"Resource ID": object_id}
-                
-            response_text = self.create_response_text(f"Successfully deleted {self.display_name.lower()}:", response_items)
+            # Prepare response data
+            response_data = {
+                "message": f"Successfully deleted {self.display_name.lower()}",
+                "operation": "DELETE",
+                "resource_id": object_id
+            }
             
-            return [TextContent(type="text", text=response_text)]
+            if object_info:
+                response_data.update({
+                    "name": object_info.get("Name"),
+                    "deleted_resource_id": object_info.get("Resource ID")
+                })
+            
+            # Use base class method to format response based on output format
+            return self.format_response(response_data, "delete")
         
         except Exception as e:
             logger.error(f"Error deleting {self.display_name.lower()}: {e}")

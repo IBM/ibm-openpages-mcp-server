@@ -1,28 +1,93 @@
 {
+  "global_settings": {
+    "output_format": "json",
+    "output_format_description": "Global output format for all tool responses. Options: 'text' (human-readable, default) or 'json' (structured, machine-readable for agents)"
+  },
   "object_types": [
     {
       "type_id": "SOXControl",
       "tool_prefix": "control",
       "display_name": "Control",
       "path_prefix": "Controls",
-      "status_field": "OPSS-Ctl:Status",
-      "namespace": "openpages"
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a SOX control in OpenPages. Automatically determines whether to insert a new control or update an existing one based on provided identifiers (id, path, or name).",
+        "query": "Search and retrieve SOX controls from OpenPages. Supports filtering by name, owner, and custom field filters. Returns control details including ID, name, description, and selected fields.",
+        "delete": "Delete an existing SOX control from OpenPages. Requires either the resource ID or the full path to the control."
+      },
+      "create_fields": {
+        "include_all_fields": false,
+        "fields": [
+          "OPSS-Ctl:Status",
+          "OPSS-Ctl:Type",
+          "OPSS-Ctl:Frequency",
+          "OPSS-Ctl:Owner"
+        ]
+      },
+      "query_filters": {
+        "fields": [
+          "OPSS-Ctl:Status",
+          "OPSS-Ctl:Type",
+          "OPSS-Ctl:Frequency",
+          "OPSS-Ctl:Owner"
+        ]
+      }
     },
     {
       "type_id": "SOXIssue",
       "tool_prefix": "issue",
       "display_name": "Issue",
       "path_prefix": "Issue",
-      "status_field": "OPSS-Iss:Status",
-      "namespace": "openpages"
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an issue in OpenPages. Automatically determines whether to insert a new issue or update an existing one based on provided identifiers (id, path, or name).",
+        "query": "Search and retrieve issues from OpenPages. Supports filtering by name, owner, and custom field filters. Returns issue details including ID, name, description, and selected fields.",
+        "delete": "Delete an existing issue from OpenPages. Requires either the resource ID or the full path to the issue."
+      },
+      "create_fields": {
+        "include_all_fields": false,
+        "fields": [
+          "OPSS-Iss:Status",
+          "OPSS-Iss:Priority",
+          "OPSS-Iss:Severity",
+          "OPSS-Iss:Owner"
+        ]
+      },
+      "query_filters": {
+        "fields": [
+          "OPSS-Iss:Status",
+          "OPSS-Iss:Priority",
+          "OPSS-Iss:Severity",
+          "OPSS-Iss:Owner"
+        ]
+      }
     },
     {
       "type_id": "SOXRisk",
       "tool_prefix": "risk",
       "display_name": "Risk",
       "path_prefix": "Risk",
-      "status_field": "OPSS-Risk:Status",
-      "namespace": "openpages"
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a risk in OpenPages. Automatically determines whether to insert a new risk or update an existing one based on provided identifiers (id, path, or name).",
+        "query": "Search and retrieve risks from OpenPages. Supports filtering by name, owner, and custom field filters. Returns risk details including ID, name, description, and selected fields.",
+        "delete": "Delete an existing risk from OpenPages. Requires either the resource ID or the full path to the risk."
+      },
+      "create_fields": {
+        "include_all_fields": false,
+        "fields": [
+          "OPSS-Risk:Status",
+          "OPSS-Risk:RiskLevel",
+          "OPSS-Risk:Owner"
+        ]
+      },
+      "query_filters": {
+        "fields": [
+          "OPSS-Risk:Status",
+          "OPSS-Risk:RiskLevel",
+          "OPSS-Risk:Owner"
+        ]
+      }
     }
   ]
 }

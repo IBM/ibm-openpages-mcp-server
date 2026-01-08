@@ -167,6 +167,7 @@ class MCPServer:
             tool_prefix = obj_config.get("tool_prefix")
             display_name = obj_config.get("display_name", obj_type)
             namespace = obj_config.get("namespace", "")  # Get namespace from config
+            tool_descriptions = obj_config.get("tool_descriptions", {})  # Get operation-specific descriptions
             
             # Ensure display_name is a string and not None
             if display_name is None:
@@ -191,9 +192,11 @@ class MCPServer:
             # Upsert tool (replaces create and update)
             upsert_tool_name = build_tool_name("upsert")
             if upsert_tool_name not in existing_tool_names:
+                # Use operation-specific description if provided, otherwise use default
+                upsert_description = tool_descriptions.get("upsert", f"Create or update a {display_name.lower()} in OpenPages (upsert operation). Automatically determines whether to insert or update based on provided identifiers.")
                 tools_to_add.append({
                     "name": upsert_tool_name,
-                    "description": f"Create or update a {display_name.lower()} in OpenPages (upsert operation). Automatically determines whether to insert or update based on provided identifiers.",
+                    "description": upsert_description,
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -234,9 +237,11 @@ class MCPServer:
             # Query tool
             query_tool_name = build_tool_name("query") + "s"
             if query_tool_name not in existing_tool_names:
+                # Use operation-specific description if provided, otherwise use default
+                query_description = tool_descriptions.get("query", f"Query for {display_name.lower()}s in OpenPages")
                 tools_to_add.append({
                     "name": query_tool_name,
-                    "description": f"Query for {display_name.lower()}s in OpenPages",
+                    "description": query_description,
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -284,9 +289,11 @@ class MCPServer:
             # Delete tool
             delete_tool_name = build_tool_name("delete")
             if delete_tool_name not in existing_tool_names:
+                # Use operation-specific description if provided, otherwise use default
+                delete_description = tool_descriptions.get("delete", f"Delete an existing {display_name.lower()} in OpenPages")
                 tools_to_add.append({
                     "name": delete_tool_name,
-                    "description": f"Delete an existing {display_name.lower()} in OpenPages",
+                    "description": delete_description,
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -370,14 +377,14 @@ class MCPServer:
                     return f"{operation}_{tool_prefix}"
                 
                 if obj_type and tool_prefix:
-                    # Upsert schema (replaces create and update)
+                    # Upsert schema (replaces create and update) - pass obj_config for field validation
                     logger.debug(f"Building dynamic schema for {obj_type}")
-                    obj_schema = await self.build_dynamic_schema_for_object(obj_type, tool_prefix)
+                    obj_schema = await self.build_dynamic_schema_for_object(obj_type, tool_prefix, obj_config)
                     upsert_obj_schema = self._create_upsert_schema(obj_schema, tool_prefix)
                     self._update_tool_schema(build_tool_name("upsert"), upsert_obj_schema)
                     
-                    # Query schema
-                    query_obj_schema = await self.build_dynamic_schema_for_query_object(obj_type)
+                    # Query schema - pass obj_config for filter validation
+                    query_obj_schema = await self.build_dynamic_schema_for_query_object(obj_type, obj_config)
                     self._update_tool_schema(build_tool_name("query") + "s", {
                         "type": "object",
                         "properties": query_obj_schema.get("properties", {}),
@@ -500,17 +507,18 @@ class MCPServer:
             logger.error(f"Error fetching type definition for {type_name}: {e}")
             return None
     
-    async def build_dynamic_schema_for_object(self, object_type: str, object_label: str = "") -> Dict[str, Any]:
+    async def build_dynamic_schema_for_object(self, object_type: str, object_label: str = "", obj_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Build a dynamic JSON schema for object creation based on field definitions
         
         Creates a JSON schema that describes the fields available for a given object type.
         This schema is used to validate and document the inputs for tools that create or
-        update objects in OpenPages.
+        update objects in OpenPages. Validates configured fields against actual type definition.
         
         Args:
             object_type: Type of object (e.g., "SOXIssue", "SOXControl")
             object_label: Label to use in descriptions (e.g., "issue", "control")
+            obj_config: Optional object configuration with create_fields settings
             
         Returns:
             Dict containing the JSON schema
@@ -562,16 +570,56 @@ class MCPServer:
         
         # Common fields to skip (already included or system fields)
         skip_fields = [
-            "Name", "Title", "Description", "Resource ID", 
-            "Created By", "Creation Date", "Last Modification Date", 
+            "Name", "Title", "Description", "Resource ID",
+            "Created By", "Creation Date", "Last Modification Date",
             "Last Modified By", "Location"
         ]
         
-        # Add fields from type definition
+        # Get create_fields configuration
+        create_fields_config = obj_config.get("create_fields", {}) if obj_config else {}
+        include_all_fields = create_fields_config.get("include_all_fields", True)
+        configured_fields = create_fields_config.get("fields", [])
+        
+        # Build a map of valid fields from type definition
+        valid_fields_map = {}
         for field in type_def.get("field_definitions", []):
             field_name = field.get("name")
-            if not field_name or field_name in skip_fields:
-                continue  # Skip fields already in schema or system fields
+            if field_name and field_name not in skip_fields:
+                valid_fields_map[field_name.lower()] = field
+        
+        # Validate configured fields if provided
+        validated_fields = []
+        if configured_fields:
+            for config_field in configured_fields:
+                if config_field.lower() in valid_fields_map:
+                    validated_fields.append(config_field)
+                    logger.debug(f"Validated field: {config_field}")
+                else:
+                    logger.warning(f"Ignoring invalid configured field '{config_field}' for type {object_type}")
+        
+        # Determine which fields to include based on configuration
+        fields_to_include = []
+        if include_all_fields:
+            # Scenario 1: include_all_fields = True -> Include all valid fields
+            fields_to_include = list(valid_fields_map.values())
+            logger.info(f"Config: include_all_fields=True -> Including all {len(fields_to_include)} fields for {object_type}")
+        elif validated_fields:
+            # Scenario 2: include_all_fields = False AND fields specified -> Include only specified fields
+            for field_name in validated_fields:
+                field = valid_fields_map.get(field_name.lower())
+                if field:
+                    fields_to_include.append(field)
+            logger.info(f"Config: include_all_fields=False with {len(validated_fields)} specified fields -> Including {len(fields_to_include)} configured fields for {object_type}")
+        else:
+            # Scenario 3: include_all_fields = False AND no fields specified -> Default to all fields (safe fallback)
+            fields_to_include = list(valid_fields_map.values())
+            logger.warning(f"Config: include_all_fields=False but no fields specified -> Defaulting to all {len(fields_to_include)} fields for {object_type}. Consider setting include_all_fields=True or specifying fields explicitly.")
+        
+        # Add fields to schema
+        for field in fields_to_include:
+            field_name = field.get("name")
+            if not field_name:
+                continue
                 
             # Convert OpenPages data type to JSON schema type
             field_type = field.get("data_type", "STRING_TYPE")
@@ -591,26 +639,30 @@ class MCPServer:
             elif field_type == "ENUM_TYPE":
                 json_type = "string"
                 
-            # Create property definition
+            # Create property definition with description from OpenPages API
+            field_description = field.get("description", "")
+            if not field_description:
+                field_description = f"Field: {field_name}"
+            
             prop_def: Dict[str, Any] = {
                 "type": json_type,
-                "description": field.get("description") or f"Field: {field_name}"
+                "description": field_description
             }
             
-            # Add label information
+            # Add label information from OpenPages API
             label = field.get("localized_label")
             if label:
                 # Add label as metadata that can be used by the LLM
                 prop_def["x-label"] = label
                 
                 # Include label in the description for better context
-                prop_def["description"] = f"{label} ({field_name}): {prop_def['description']}"
+                prop_def["description"] = f"{label} ({field_name}): {field_description}"
             
             # Add format if applicable
             if json_format:
                 prop_def["format"] = json_format
                 
-            # Add enum values if available
+            # Add enum values if available (from OpenPages API)
             enum_values = field.get("enum_values", [])
             if enum_values and field_type == "ENUM_TYPE":
                 prop_def["enum"] = [v.get("name") for v in enum_values if v.get("name")]
@@ -625,15 +677,17 @@ class MCPServer:
         logger.debug(f"Built schema for {object_type} with {len(schema['properties'])} properties")
         return schema
         
-    async def build_dynamic_schema_for_query_object(self, object_type: str = "Model") -> Dict[str, Any]:
+    async def build_dynamic_schema_for_query_object(self, object_type: str = "Model", obj_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Build a dynamic JSON schema for query tools with field options
         
         Creates a schema that describes the available query parameters for a given object type.
         This includes fields that can be selected, filters, and sorting options.
+        Validates configured filter fields against actual type definition.
         
         Args:
             object_type: Type of object (e.g., "Model", "SOXIssue", "SOXControl")
+            obj_config: Optional object configuration with query_filters settings
             
         Returns:
             Dict containing the JSON schema for query parameters
@@ -659,18 +713,9 @@ class MCPServer:
                     "type": "string",
                     "description": f"Filter {object_label} by name (partial match, optional)"
                 },
-                "filters": {
-                    "type": "object",
-                    "description": f"Dynamic field filters as key-value pairs. Supports any field from the {object_label} schema. Examples: {{'Priority': 'High', 'Status': 'Active', 'Owner': 'John Doe'}}. Use '*' or '%' for partial matches. Supports lists for IN queries.",
-                    "additionalProperties": True
-                },
                 "owner_filter": {
                     "type": "boolean",
                     "description": "Filter by current user ownership (default: False)"
-                },
-                "status_filter": {
-                    "type": "string",
-                    "description": f"Filter {object_label} by status (optional)"
                 },
                 "limit": {
                     "type": "integer",
@@ -688,7 +733,7 @@ class MCPServer:
                         "type": "string",
                         "enum": []  # This will be populated with field names
                     },
-                    "description": "List of additional fields to include in the output. Resource ID, Name, Description, and Status are always included."
+                    "description": "List of additional fields to include in the output. Resource ID, Name, and Description are always included."
                 },
                 "sort_by": {
                     "type": "string",
@@ -707,49 +752,104 @@ class MCPServer:
         if not type_def or "field_definitions" not in type_def:
             logger.warning(f"Could not get field definitions for {object_type}, using default schema")
             return schema
-            
-        # Map object types to their status field names
-        status_field_mapping = {
-            "SOXIssue": "OPSS-Iss:Status",
-            "Model": "MRG-Model:Status",
-            "SOXControl": "OPSS-Ctl:Status",
-            "SOXRisk": "OPSS-Risk:Status"
-        }
         
-        # Determine status field name based on object type
-        status_field_name = None
-        for obj_type, field_name in status_field_mapping.items():
-            if obj_type in object_type:
-                status_field_name = field_name
-                break
+        # Get query_filters configuration
+        query_filters_config = obj_config.get("query_filters", {}) if obj_config else {}
+        configured_filter_fields = query_filters_config.get("fields", [])
+        
+        # Build a map of valid fields from type definition for filter validation
+        valid_filter_fields_map = {}
+        field_definitions = type_def.get("field_definitions", [])
+        for field in field_definitions:
+            field_name = field.get("name")
+            if field_name:
+                valid_filter_fields_map[field_name.lower()] = field
+        
+        # Validate configured filter fields if provided
+        validated_filter_fields = []
+        if configured_filter_fields:
+            for config_field in configured_filter_fields:
+                if config_field.lower() in valid_filter_fields_map:
+                    validated_filter_fields.append(config_field)
+                    logger.debug(f"Validated filter field: {config_field}")
+                else:
+                    logger.warning(f"Ignoring invalid configured filter field '{config_field}' for type {object_type}")
+        
+        # Determine which filter fields to include
+        filter_fields_to_include = []
+        if validated_filter_fields:
+            # Use only validated configured filter fields
+            for field_name in validated_filter_fields:
+                field = valid_filter_fields_map.get(field_name.lower())
+                if field:
+                    filter_fields_to_include.append(field)
+            logger.info(f"Config: Using {len(filter_fields_to_include)} configured filter fields for {object_type}")
+        else:
+            # No filter fields configured - add a generic filters object for backward compatibility
+            schema["properties"]["filters"] = {
+                "type": "object",
+                "description": f"Dynamic field filters as key-value pairs. Supports any field from the {object_label} schema. Examples: {{'Priority': 'High', 'Status': 'Active', 'Owner': 'John Doe'}}. Use '*' or '%' for partial matches. Supports lists for IN queries.",
+                "additionalProperties": True
+            }
+            logger.info(f"Config: No filter fields configured, using generic filters object for {object_type}")
+        
+        # Add validated filter fields as individual properties
+        for field in filter_fields_to_include:
+            field_name = field.get("name")
+            if not field_name:
+                continue
             
-        # Find status field to get allowable values
-        status_values = []
+            field_type = field.get("data_type", "STRING_TYPE")
+            field_description = field.get("description", "")
+            label = field.get("localized_label", field_name)
+            
+            # Create a user-friendly property name (use label or simple name)
+            simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
+            property_name = f"filter_{simple_name}"
+            
+            # Determine JSON schema type
+            json_type = "string"
+            prop_def: Dict[str, Any] = {
+                "description": f"Filter by {label}: {field_description}" if field_description else f"Filter by {label}"
+            }
+            
+            if field_type == "ENUM_TYPE":
+                # For enum fields, provide the allowed values
+                enum_values = field.get("enum_values", [])
+                if enum_values:
+                    prop_def["type"] = "string"
+                    prop_def["enum"] = [v.get("name") for v in enum_values if v.get("name")]
+                else:
+                    prop_def["type"] = "string"
+            elif field_type == "BOOLEAN_TYPE":
+                prop_def["type"] = "boolean"
+            elif field_type == "INTEGER_TYPE":
+                prop_def["type"] = "integer"
+            elif field_type == "DECIMAL_TYPE":
+                prop_def["type"] = "number"
+            elif field_type == "DATE_TYPE":
+                prop_def["type"] = "string"
+                prop_def["format"] = "date"
+            else:
+                prop_def["type"] = "string"
+            
+            # Add metadata for field mapping
+            prop_def["x-field-name"] = field_name
+            prop_def["x-label"] = label
+            
+            schema["properties"][property_name] = prop_def
+            logger.debug(f"Added filter property: {property_name} for field {field_name}")
+            
         # Keep track of enum fields to exclude from sort_by
         enum_fields = []
         
-        # Process fields to extract status values and enum fields
+        # Process fields to extract enum fields
         for field in type_def.get("field_definitions", []):
             field_name = field.get("name")
             field_type = field.get("data_type")
             
             if not field_name:
                 continue
-                
-            # Handle Status field specifically
-            if status_field_name and field_name == status_field_name:
-                # Extract enum values if available
-                enum_values = field.get("enum_values", [])
-                if enum_values and field_type == "ENUM_TYPE":
-                    status_values = [v.get("name") for v in enum_values if v.get("name")]
-                    # Update status_filter with enum values
-                    if status_values:
-                        schema["properties"]["status_filter"] = {
-                            "type": "string",
-                            "enum": status_values,
-                            "description": f"Filter {object_label} by status (optional)"
-                        }
-                        logger.debug(f"Added {len(status_values)} status values to schema")
             
             # Track all enum fields to exclude from sort_by
             if field_type == "ENUM_TYPE":
@@ -761,10 +861,8 @@ class MCPServer:
                     display_name = field_name
                 enum_fields.append(display_name)
         
-        # Determine which fields to skip based on object type
+        # Determine which fields to skip (only system fields)
         skip_fields = ["Resource ID", "Name", "Description"]
-        if status_field_name:
-            skip_fields.append(status_field_name)
                 
         # Extract field names for enum values
         field_names = []

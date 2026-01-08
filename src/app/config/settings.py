@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Object type configuration
     OPENPAGES_OBJECT_TYPES: List[Dict[str, Any]] = []
     
+    # Global output format setting
+    OUTPUT_FORMAT: str = "text"  # Options: "text" or "json"
+    
     # Path to object types configuration file
     OBJECT_TYPES_CONFIG_PATH: str = "object_types.json"
     
@@ -110,6 +113,13 @@ class Settings(BaseSettings):
                 try:
                     config_data = json.load(f)
                     self.OPENPAGES_OBJECT_TYPES = config_data.get('object_types', [])
+                    
+                    # Load global settings if present
+                    global_settings = config_data.get('global_settings', {})
+                    if 'output_format' in global_settings:
+                        self.OUTPUT_FORMAT = global_settings['output_format']
+                        print(f"Loaded global output format: {self.OUTPUT_FORMAT}")
+                    
                     print(f"Loaded {len(self.OPENPAGES_OBJECT_TYPES)} object types from {config_path}")
                 except json.JSONDecodeError as e:
                     print(f"Error parsing object types configuration file: {e}")
