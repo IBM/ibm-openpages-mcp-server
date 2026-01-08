@@ -23,6 +23,7 @@ if os.path.exists('/app'):
     sys.path.append('/app')
 
 from src.app.api.router import router as api_router
+from src.app.api.health import health_router
 from src.app.config.settings import settings
 from src.app.core.server_instance import initialize_server, run_local_server
 
@@ -82,13 +83,24 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
-# Include API router
+# Include API routers
 app.include_router(api_router)
+app.include_router(health_router)
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
-    return {"status": "GRC MCP Server is running"}
+    """Root endpoint - simple status check"""
+    return {
+        "status": "GRC MCP Server is running",
+        "version": "1.0.0",
+        "health_endpoints": {
+            "comprehensive": "/health",
+            "readiness": "/health/ready",
+            "liveness": "/health/live",
+            "startup": "/health/startup",
+            "simple": "/healthz"
+        }
+    }
 
 if __name__ == "__main__":
     # Parse command line arguments

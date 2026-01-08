@@ -35,6 +35,13 @@ RUN touch /app/src/__init__.py
 # Add PYTHONPATH to ensure modules can be found
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 
+# Health check for container orchestration
+# Checks the /health/ready endpoint every 30 seconds
+# Starts checking after 30 seconds, with 10 second timeout
+# Marks unhealthy after 3 consecutive failures
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/health/ready || exit 1
+
 # Default command - run in remote mode (HTTP server)
 # For local mode (stdio), use: python main.py --mode local
 CMD ["python", "/app/main.py", "--mode", "remote"]

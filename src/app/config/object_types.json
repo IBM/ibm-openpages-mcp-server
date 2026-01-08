@@ -16,7 +16,7 @@
         "delete": "Delete an existing SOX control from OpenPages. Requires either the resource ID or the full path to the control."
       },
       "create_fields": {
-        "include_all_fields": false,
+        "include_all_fields": true,
         "fields": [
           "OPSS-Ctl:Status",
           "OPSS-Ctl:Type",
