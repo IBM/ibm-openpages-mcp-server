@@ -70,30 +70,38 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
    DEBUG=False
    ```
 
-4. **Choose your server mode:**
+4. **Run the server using convenience scripts:**
 
-   **Remote Mode (HTTP Server)** - For API access:
+   The project provides convenient scripts that handle dependency installation and virtual environment setup automatically:
+
+   **Remote Mode (HTTP Server)** - Default mode for API access:
    ```bash
-   python main.py --mode remote
+   # Linux/Mac
+   ./scripts/run_mcp.sh
+   
+   # Windows
+   scripts\run_mcp.bat
+   
    # Server will start on http://localhost:8000
    ```
 
-   **Local Mode (stdio)** - For MCP client integration:
+   **Local Mode (stdio)** - For direct MCP client integration:
    ```bash
-   python main.py --mode local
-   # Or use the convenience scripts:
+   # Linux/Mac
+   ./scripts/run_mcp.sh local
+   
+   # Windows
+   scripts\run_mcp.bat local
    ```
 
-5. **Convenience scripts for local mode:**
-   - Standard implementation with real OpenPages data:
-     - On Linux/Mac:
-       ```bash
-       ./scripts/run_local_mcp.sh
-       ```
-     - On Windows:
-       ```
-       scripts\run_local_mcp.bat
-       ```
+   **Manual execution** (if you prefer not to use the scripts):
+   ```bash
+   # Remote mode
+   python main.py --mode remote
+   
+   # Local mode
+   python main.py --mode local
+   ```
    
 
 ### Docker Deployment
@@ -315,12 +323,12 @@ The GRC MCP Server supports a local mode that uses stdio transport instead of HT
 To run the server in local mode:
 
 ```bash
-# Using the main entry point
-python main.py --mode local
+# Using the convenience scripts (recommended)
+./scripts/run_mcp.sh local  # On Linux/Mac
+scripts\run_mcp.bat local   # On Windows
 
-# Or using the provided shortcut scripts
-./scripts/run_local_mcp.sh  # On Linux/Mac
-scripts\run_local_mcp.bat   # On Windows
+# Or using the main entry point directly
+python main.py --mode local
 ```
 
 This implementation uses the actual OpenPages APIs for real data access, just like the remote mode.
@@ -408,11 +416,13 @@ python3 /path/to/main.py --mode local
 Or use the convenience scripts:
 ```bash
 # On Linux/Mac
-./scripts/run_local_mcp.sh
+./scripts/run_mcp.sh local
 
 # On Windows
-scripts\run_local_mcp.bat
+scripts\run_mcp.bat local
 ```
+
+For debugging purposes, additional scripts are available in the `scripts/debug/` folder.
 
 ### Troubleshooting Local Mode
 
@@ -475,11 +485,11 @@ To verify that the local MCP server is working correctly:
 
 ```bash
 # Using the provided test scripts
-./run_test_local_mcp.sh  # On Linux/Mac
-run_test_local_mcp.bat   # On Windows
+./scripts/test/run_test_local_mcp.sh  # On Linux/Mac
+scripts\test\run_test_local_mcp.bat   # On Windows
 
 # Or run the test script directly
-python src/app/local_mcp/test_local_mcp_server.py
+python scripts/test/test_mcp_client.py
 ```
 
 This will test the complete MCP lifecycle including initialization, tool discovery, tool execution, and shutdown.
@@ -744,24 +754,48 @@ grc-mcp-server/
 │       ├── tools/      # Tool implementations
 │       └── config/     # Configuration
 ├── scripts/            # Utility scripts
-│   ├── debug/          # Debug scripts
-│   └── test/           # Test scripts
+│   ├── run_mcp.sh          # Main script to run MCP server (Linux/Mac)
+│   ├── run_mcp.bat         # Main script to run MCP server (Windows)
+│   ├── podman-redeploy.sh  # Podman redeployment script
+│   ├── debug/              # Debug and development scripts
+│   │   ├── run_local_mcp.sh
+│   │   ├── run_local_mcp.bat
+│   │   ├── run_mcp_inspector.sh
+│   │   ├── run_mcp_inspector.bat
+│   │   └── ...
+│   └── test/               # Test scripts
+│       ├── run_test_local_mcp.sh
+│       ├── run_test_local_mcp.bat
+│       └── test_mcp_client.py
 ├── tests/              # Test cases
 ├── docs/               # Documentation
 ├── nginx/              # NGINX configuration
-├── .github/            # GitHub Actions workflows
-├── docs/               # Documentation files
-├── scripts/            # Utility scripts
-│   ├── run_local_mcp.sh    # Script to run local MCP server (Linux/Mac)
-│   ├── run_local_mcp.bat   # Script to run local MCP server (Windows)
-│   ├── debug/              # Debug scripts
-│   └── test/               # Test scripts
-├── run_test_local_mcp.bat # Script to test local MCP server (Windows)
 ├── main.py             # Main application entry point
 ├── Dockerfile          # Docker configuration
 ├── docker-compose.yml  # Docker Compose configuration
 └── requirements.txt    # Python dependencies
 ```
+
+### Convenience Scripts
+
+The project provides convenient scripts for running the MCP server:
+
+**Main Scripts** (in `scripts/` directory):
+- `run_mcp.sh` / `run_mcp.bat`: Run the MCP server (defaults to remote mode)
+  - Usage: `./scripts/run_mcp.sh [mode]` where mode is `remote` (default) or `local`
+  - Automatically handles virtual environment setup and dependency installation
+  
+- `podman-redeploy.sh`: Redeploy the server using Podman
+
+**Debug Scripts** (in `scripts/debug/` directory):
+- `run_local_mcp.sh` / `run_local_mcp.bat`: Legacy local mode scripts
+- `run_mcp_inspector.sh` / `run_mcp_inspector.bat`: Run with MCP Inspector
+- `run_mcp_with_inspector.sh` / `run_mcp_with_inspector.bat`: Combined MCP and Inspector
+- Additional debugging utilities
+
+**Test Scripts** (in `scripts/test/` directory):
+- `run_test_local_mcp.sh` / `run_test_local_mcp.bat`: Test the local MCP server
+- `test_mcp_client.py`: Comprehensive MCP client tests
 
 ### Running Tests
 
