@@ -6,7 +6,7 @@ A Model Context Protocol (MCP) server for IBM OpenPages GRC platform. Enables AI
 
 - **Dual Mode Operation**: Remote (HTTP) and Local (stdio) transport
 - **OpenPages Integration**: Full REST API connectivity with configurable credentials
-- **Generic Object Tools**: Dynamic CRUD operations for any OpenPages object type (configurable via `object_types.json`)
+- **Generic Object Tools**: Dynamic data operations for any OpenPages object type (configurable via `object_types.json`)
 - **Docker Support**: Containerized deployment with optional NGINX proxy
 - **Cross-Platform**: Windows, Linux, macOS
 - **MCP Compliant**: Full lifecycle support (initialize, tools, resources, notifications, shutdown)
@@ -194,7 +194,7 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
 
 ## Available Tools
 
-The server provides generic CRUD tools for any OpenPages object type configured in `src/app/config/object_types.json`.
+The server provides generic **Data tools** for any OpenPages object type configured in `src/app/config/object_types.json`. These tools enable data operations (create, read, update, delete) on OpenPages objects.
 
 ### Tool Naming Convention
 
@@ -243,37 +243,125 @@ The server comes pre-configured with three OpenPages object types:
 | SOXIssue | issue | openpages | `openpages_upsert_issue`, `openpages_query_issues`, `openpages_delete_issue` |
 | SOXRisk | risk | openpages | `openpages_upsert_risk`, `openpages_query_risks`, `openpages_delete_risk` |
 
-### Adding Custom Object Types
+### Dynamic Tool Configuration with object_types.json
 
-To add support for additional OpenPages object types, edit `src/app/config/object_types.json`:
+The server's data tools are dynamically generated from the `src/app/config/object_types.json` configuration file. This provides flexibility to add, modify, or remove OpenPages object types without changing the server code.
 
-```json
-{
-  "object_types": [
-    {
-      "type_id": "YourObjectType",
-      "tool_prefix": "yourobject",
-      "display_name": "Your Object",
-      "path_prefix": "YourObjects",
-      "namespace": "openpages",
-      "tool_descriptions": {
-        "upsert": "Create or update your object...",
-        "query": "Search and retrieve your objects...",
-        "delete": "Delete your object..."
-      },
-      "create_fields": {
-        "include_all_fields": true,
-        "fields": ["Field1", "Field2"]
-      },
-      "query_filters": {
-        "fields": ["Field1", "Field2"]
-      }
-    }
-  ]
-}
-```
+#### Configuration Structure
 
-After adding a new object type, restart the server to load the new tools.
+The configuration file contains two main sections:
+
+1. **Global Settings**: Controls server-wide behavior
+   ```json
+   {
+     "global_settings": {
+       "output_format": "json",
+       "output_format_description": "Global output format for all tool responses. Options: 'text' (human-readable) or 'json' (structured, machine-readable for agents)"
+     }
+   }
+   ```
+
+2. **Object Types**: Defines each OpenPages object type and its associated tools
+   ```json
+   {
+     "object_types": [
+       {
+         "type_id": "SOXControl",           // OpenPages object type ID
+         "tool_prefix": "control",          // Prefix for tool names
+         "display_name": "Control",         // Human-readable name
+         "path_prefix": "Controls",         // Path prefix in OpenPages
+         "namespace": "openpages",          // Tool namespace (optional)
+         "tool_descriptions": {             // Custom descriptions for each operation
+           "upsert": "Create or update a SOX control...",
+           "query": "Search and retrieve SOX controls...",
+           "delete": "Delete an existing SOX control..."
+         },
+         "create_fields": {                 // Fields available for create/update
+           "include_all_fields": true,      // Include all object fields
+           "fields": [                      // Specific fields to include
+             "OPSS-Ctl:Status",
+             "OPSS-Ctl:Type"
+           ]
+         },
+         "query_filters": {                 // Fields available for filtering
+           "fields": [
+             "OPSS-Ctl:Status",
+             "OPSS-Ctl:Type"
+           ]
+         }
+       }
+     ]
+   }
+   ```
+
+#### Adding Custom Object Types
+
+To add support for additional OpenPages object types:
+
+1. **Edit the configuration file** (`src/app/config/object_types.json`):
+   ```json
+   {
+     "object_types": [
+       {
+         "type_id": "YourObjectType",
+         "tool_prefix": "yourobject",
+         "display_name": "Your Object",
+         "path_prefix": "YourObjects",
+         "namespace": "openpages",
+         "tool_descriptions": {
+           "upsert": "Create or update your object in OpenPages...",
+           "query": "Search and retrieve your objects from OpenPages...",
+           "delete": "Delete your object from OpenPages..."
+         },
+         "create_fields": {
+           "include_all_fields": true,
+           "fields": ["YourField1", "YourField2"]
+         },
+         "query_filters": {
+           "fields": ["YourField1", "YourField2"]
+         }
+       }
+     ]
+   }
+   ```
+
+2. **Restart the server** to load the new configuration:
+   ```bash
+   # Docker
+   docker-compose restart
+   
+   # Local
+   ./scripts/run_mcp.sh
+   ```
+
+3. **Verify the new tools** are available:
+   ```bash
+   curl -X POST -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":"1"}' \
+     http://localhost:8000/mcp
+   ```
+
+#### Configuration Options Explained
+
+- **`type_id`**: Must match the exact OpenPages object type identifier
+- **`tool_prefix`**: Used to generate tool names (e.g., `control` → `openpages_upsert_control`)
+- **`display_name`**: Human-readable name shown in tool descriptions
+- **`path_prefix`**: Default path prefix when creating objects in OpenPages
+- **`namespace`**: Optional namespace to group related tools (e.g., `openpages`)
+- **`tool_descriptions`**: Custom descriptions for each operation (upsert, query, delete)
+- **`create_fields.include_all_fields`**:
+  - `true`: Include all available fields from OpenPages schema
+  - `false`: Only include fields listed in the `fields` array
+- **`create_fields.fields`**: Specific fields to include for create/update operations
+- **`query_filters.fields`**: Fields that can be used for filtering in query operations
+
+#### Benefits of Dynamic Configuration
+
+- **No Code Changes**: Add new object types without modifying server code
+- **Flexible Field Control**: Choose which fields to expose for each object type
+- **Custom Descriptions**: Provide context-specific tool descriptions
+- **Easy Maintenance**: Update configurations without redeployment
+- **Multi-Tenant Support**: Different configurations for different environments
 
 ## API Endpoints
 
