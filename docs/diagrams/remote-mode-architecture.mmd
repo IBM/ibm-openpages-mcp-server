@@ -1,0 +1,78 @@
+%% OpenPages MCP Server - Remote Mode Architecture
+%% This is a Mermaid diagram that can be rendered in GitHub, VS Code, or online tools
+
+graph TB
+    subgraph "Client Layer"
+        A1[AI Agents<br/>Custom Applications]
+        A2[MCP Inspector<br/>Testing Tool]
+        A3[Claude Desktop<br/>AI Assistant]
+    end
+    
+    subgraph "Network Layer (Optional)"
+        B[NGINX Reverse Proxy<br/>SSL/TLS, Load Balancing<br/>Ports: 80, 443]
+    end
+    
+    subgraph "Application Layer - Docker Container"
+        C[FastAPI Application<br/>Port 8000]
+        
+        subgraph "Middleware Stack"
+            D1[CORS Middleware]
+            D2[Rate Limiting]
+            D3[Observability]
+        end
+        
+        subgraph "MCP Server Core"
+            E1[Request Processor]
+            E2[Tool Handlers]
+            E3[Schema Builder]
+        end
+        
+        subgraph "OpenPages Client"
+            F1[REST API Client]
+            F2[Authentication]
+            F3[Session Management]
+        end
+    end
+    
+    subgraph "Backend Layer"
+        G[IBM OpenPages<br/>GRC Platform<br/>REST API]
+    end
+    
+    subgraph "Monitoring Stack"
+        H1[Prometheus<br/>Metrics]
+        H2[Grafana<br/>Dashboards]
+        H3[AlertManager<br/>Alerts]
+    end
+    
+    A1 -->|MCP Protocol<br/>HTTP/JSON-RPC| B
+    A2 -->|MCP Protocol<br/>HTTP/JSON-RPC| B
+    A3 -->|MCP Protocol<br/>HTTP/JSON-RPC| B
+    
+    B -->|HTTP| C
+    
+    C --> D1
+    D1 --> D2
+    D2 --> D3
+    D3 --> E1
+    
+    E1 --> E2
+    E2 --> E3
+    E3 --> F1
+    
+    F1 --> F2
+    F2 --> F3
+    F3 -->|HTTPS/REST| G
+    
+    C -->|/metrics| H1
+    H1 --> H2
+    H1 --> H3
+    
+    style A1 fill:#e1f5ff
+    style A2 fill:#e1f5ff
+    style A3 fill:#e1f5ff
+    style B fill:#fff4e6
+    style C fill:#e8f5e9
+    style G fill:#f3e5f5
+    style H1 fill:#fce4ec
+    style H2 fill:#fce4ec
+    style H3 fill:#fce4ec

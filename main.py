@@ -5,16 +5,11 @@ This server provides MCP tools to interact with IBM OpenPages GRC platform
 Supports both remote (HTTP) and local (stdio) modes
 """
 
-import logging
 import os
 import argparse
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Import modules with explicit paths
 import sys
@@ -22,9 +17,31 @@ import sys
 if os.path.exists('/app'):
     sys.path.append('/app')
 
-from src.app.api.router import router as api_router
+from src.app.mcp.remote.http_router import router as mcp_router
+from src.app.mcp.remote.server_instance import initialize_server
+from src.app.mcp.local.runner import run_local_server
+from src.app.api.health import health_router
+from src.app.api.metrics import metrics_router
 from src.app.config.settings import settings
-from src.app.core.server_instance import initialize_server, run_local_server
+
+# Import observability modules
+from src.app.observability.logger import setup_logging, get_logger
+from src.app.observability.tracing import setup_tracing, instrument_fastapi_app
+from src.app.observability.metrics import setup_metrics
+from src.app.observability.middleware import (
+    RateLimitMiddleware,
+    ObservabilityMiddleware,
+)
+
+# Setup structured logging
+setup_logging(
+    level=settings.LOG_LEVEL,
+    service_name=settings.APP_NAME,
+    json_format=(settings.LOG_FORMAT == "json"),
+    log_file=settings.LOG_FILE,
+)
+
+logger = get_logger(__name__)
 
 def parse_arguments():
     """Parse command line arguments"""
@@ -55,15 +72,37 @@ def parse_arguments():
     
     return parser.parse_args()
 
+# Setup tracing BEFORE creating the app
+if settings.OBSERVABILITY_ENABLED and settings.TRACING_ENABLED:
+    setup_tracing(
+        service_name=settings.APP_NAME,
+        otlp_endpoint=settings.OTLP_ENDPOINT,
+        console_export=settings.CONSOLE_TRACING,
+        enabled=True,
+    )
+    logger.info("Tracing setup completed")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize MCP server on startup"""
+    """Initialize MCP server and observability on startup"""
+    logger.info("Starting GRC MCP Server")
+    
+    # Setup metrics
+    if settings.OBSERVABILITY_ENABLED and settings.METRICS_ENABLED:
+        setup_metrics(
+            enabled=True,
+            service_name=settings.APP_NAME,
+            service_version="1.0.0",
+        )
+        logger.info("Metrics collection enabled")
+    
     # Initialize the MCP server using the singleton pattern
     initialize_server()
+    logger.info("MCP Server initialized")
     
     yield
     
-    logger.info("Shutting down MCP Server")
+    logger.info("Shutting down GRC MCP Server")
 
 # Create FastAPI application
 app = FastAPI(
@@ -73,7 +112,30 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
+# Instrument FastAPI app AFTER creation but BEFORE adding middleware
+if settings.OBSERVABILITY_ENABLED and settings.TRACING_ENABLED:
+    instrument_fastapi_app(app)
+    logger.info("FastAPI instrumentation completed")
+
+# Add observability middleware (order matters - add in reverse order of execution)
+if settings.OBSERVABILITY_ENABLED:
+    # Add observability middleware first (executes last)
+    app.add_middleware(ObservabilityMiddleware)
+    
+    # Add rate limiting middleware
+    if settings.RATE_LIMIT_ENABLED:
+        app.add_middleware(
+            RateLimitMiddleware,
+            requests_per_minute=settings.RATE_LIMIT_REQUESTS_PER_MINUTE,
+            burst_size=settings.RATE_LIMIT_BURST_SIZE,
+            enabled=True,
+        )
+        logger.info(
+            f"Rate limiting enabled: {settings.RATE_LIMIT_REQUESTS_PER_MINUTE} req/min, "
+            f"burst={settings.RATE_LIMIT_BURST_SIZE}"
+        )
+
+# Add CORS middleware (executes first)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins
@@ -82,13 +144,25 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
-# Include API router
-app.include_router(api_router)
+# Include API routers
+app.include_router(mcp_router)
+app.include_router(health_router)
+app.include_router(metrics_router)
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
-    return {"status": "GRC MCP Server is running"}
+    """Root endpoint - simple status check"""
+    return {
+        "status": "GRC MCP Server is running",
+        "version": "1.0.0",
+        "health_endpoints": {
+            "comprehensive": "/health",
+            "readiness": "/health/ready",
+            "liveness": "/health/live",
+            "startup": "/health/startup",
+            "simple": "/healthz"
+        }
+    }
 
 if __name__ == "__main__":
     # Parse command line arguments

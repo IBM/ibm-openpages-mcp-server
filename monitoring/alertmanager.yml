@@ -1,0 +1,23 @@
+# AlertManager Configuration for GRC MCP Server
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: 'default'
+
+receivers:
+  - name: 'default'
+    # Configure your notification channels here
+    # Examples: email, slack, pagerduty, webhook
+    
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']

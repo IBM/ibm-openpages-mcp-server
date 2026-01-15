@@ -1,0 +1,61 @@
+%% OpenPages MCP Server - Deployment Mode Comparison
+%% Side-by-side comparison of Remote and Local modes
+
+graph TB
+    subgraph "Remote Mode Deployment"
+        subgraph "RM_Clients [Multiple Clients]"
+            RM_A1[AI Agent 1]
+            RM_A2[AI Agent 2]
+            RM_A3[Claude Desktop]
+        end
+        
+        RM_B[NGINX<br/>Load Balancer<br/>Optional]
+        
+        subgraph "RM_Docker [Docker Container]"
+            RM_C[FastAPI Server<br/>Port 8000]
+            RM_D[MCP Core]
+            RM_E[OpenPages Client]
+        end
+        
+        RM_F[OpenPages<br/>REST API]
+        
+        RM_A1 -->|HTTP| RM_B
+        RM_A2 -->|HTTP| RM_B
+        RM_A3 -->|HTTP| RM_B
+        RM_B --> RM_C
+        RM_C --> RM_D
+        RM_D --> RM_E
+        RM_E -->|HTTPS| RM_F
+    end
+    
+    subgraph "Local Mode Deployment"
+        subgraph "LM_Clients [Single Client]"
+            LM_A[AI Agent<br/>or<br/>Claude Desktop]
+        end
+        
+        subgraph "LM_Process [Python Process]"
+            LM_B[stdio Handler]
+            LM_C[MCP Core]
+            LM_D[OpenPages Client]
+        end
+        
+        LM_E[OpenPages<br/>REST API]
+        
+        LM_A -->|stdio| LM_B
+        LM_B --> LM_C
+        LM_C --> LM_D
+        LM_D -->|HTTPS| LM_E
+    end
+    
+    subgraph "Key Differences"
+        K1["Remote: Network-based, Multi-client, Scalable"]
+        K2["Local: Process-based, Single-client, Lightweight"]
+    end
+    
+    style RM_B fill:#fff4e6
+    style RM_C fill:#e8f5e9
+    style RM_F fill:#f3e5f5
+    style LM_B fill:#fff9c4
+    style LM_E fill:#f3e5f5
+    style K1 fill:#e3f2fd
+    style K2 fill:#e3f2fd

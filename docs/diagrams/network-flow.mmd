@@ -1,0 +1,59 @@
+%% OpenPages MCP Server - Network Flow Diagrams
+%% Detailed network communication flows for both modes
+
+graph TB
+    subgraph "Remote Mode - Network Flow"
+        subgraph "RM_External [External Network]"
+            RM_Client[Client Application]
+        end
+        
+        subgraph "RM_DMZ [DMZ / Edge Network]"
+            RM_FW[Firewall<br/>Port 443]
+            RM_NGINX[NGINX<br/>SSL Termination<br/>Load Balancer]
+        end
+        
+        subgraph "RM_Internal [Internal Network]"
+            subgraph "RM_Docker [Docker Bridge Network]"
+                RM_Server[MCP Server<br/>Container<br/>Port 8000]
+            end
+        end
+        
+        subgraph "RM_Backend [Backend Network]"
+            RM_OP[OpenPages<br/>REST API<br/>Port 443]
+        end
+        
+        RM_Client -->|"1. HTTPS Request<br/>POST /mcp<br/>JSON-RPC"| RM_FW
+        RM_FW -->|"2. Allow<br/>Port 443"| RM_NGINX
+        RM_NGINX -->|"3. HTTP<br/>Port 8000<br/>Internal"| RM_Server
+        RM_Server -->|"4. HTTPS<br/>REST API<br/>Auth + Request"| RM_OP
+        RM_OP -.->|"5. Response<br/>JSON Data"| RM_Server
+        RM_Server -.->|"6. JSON-RPC<br/>Response"| RM_NGINX
+        RM_NGINX -.->|"7. HTTPS<br/>Response"| RM_FW
+        RM_FW -.->|"8. Response"| RM_Client
+    end
+    
+    subgraph "Local Mode - Process Flow"
+        subgraph "LM_Process [Same Machine]"
+            LM_Client[Client Process<br/>AI Agent]
+            LM_Server[MCP Server<br/>Python Process]
+        end
+        
+        subgraph "LM_Backend [Network]"
+            LM_OP[OpenPages<br/>REST API<br/>Port 443]
+        end
+        
+        LM_Client -->|"1. spawn()<br/>Start Process"| LM_Server
+        LM_Client -->|"2. stdin<br/>JSON-RPC Request"| LM_Server
+        LM_Server -->|"3. HTTPS<br/>REST API<br/>Auth + Request"| LM_OP
+        LM_OP -.->|"4. Response<br/>JSON Data"| LM_Server
+        LM_Server -.->|"5. stdout<br/>JSON-RPC Response"| LM_Client
+    end
+    
+    style RM_Client fill:#e1f5ff
+    style RM_FW fill:#ffebee
+    style RM_NGINX fill:#fff4e6
+    style RM_Server fill:#e8f5e9
+    style RM_OP fill:#f3e5f5
+    style LM_Client fill:#e1f5ff
+    style LM_Server fill:#e8f5e9
+    style LM_OP fill:#f3e5f5

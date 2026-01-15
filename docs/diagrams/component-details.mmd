@@ -1,0 +1,136 @@
+%% OpenPages MCP Server - Detailed Component Architecture
+%% Internal component structure and interactions
+
+graph TB
+    subgraph "MCP Server Internal Architecture"
+        subgraph "Transport Layer"
+            T1[HTTP Transport<br/>FastAPI/Uvicorn<br/>Remote Mode]
+            T2[stdio Transport<br/>stdin/stdout<br/>Local Mode]
+        end
+        
+        subgraph "Middleware Layer"
+            M1[CORS Middleware<br/>Cross-Origin Support]
+            M2[Rate Limiting<br/>Request Throttling]
+            M3[Observability<br/>Logging/Tracing/Metrics]
+            M4[Error Handling<br/>Exception Management]
+        end
+        
+        subgraph "API Layer"
+            A1[Health Endpoints<br/>/health, /health/ready]
+            A2[Metrics Endpoint<br/>/metrics]
+            A3[MCP Endpoint<br/>/mcp]
+        end
+        
+        subgraph "MCP Protocol Layer"
+            P1[Request Processor<br/>JSON-RPC Handler]
+            P2[Method Router<br/>initialize, tools/list, etc.]
+            P3[Response Builder<br/>JSON-RPC Formatter]
+        end
+        
+        subgraph "Tool Management Layer"
+            TM1[Tool Registry<br/>Available Tools]
+            TM2[Schema Builder<br/>Tool Definitions]
+            TM3[Tool Handlers<br/>Execution Logic]
+        end
+        
+        subgraph "Tool Implementation Layer"
+            TI1[Risk Tools<br/>query_recent_risks]
+            TI2[Control Tools<br/>find_ineffective_controls<br/>create_control<br/>update_control]
+            TI3[Query Tools<br/>custom_query]
+            TI4[Generic Tools<br/>Dynamic Object Tools]
+        end
+        
+        subgraph "OpenPages Integration Layer"
+            O1[OpenPages Client<br/>REST API Wrapper]
+            O2[Authentication<br/>Basic/API Key]
+            O3[Session Manager<br/>Token Management]
+            O4[Request Builder<br/>API Formatting]
+            O5[Response Parser<br/>Data Extraction]
+        end
+        
+        subgraph "Configuration Layer"
+            C1[Settings<br/>Environment Config]
+            C2[Object Types<br/>Dynamic Config]
+            C3[Logging Config<br/>Log Levels]
+        end
+        
+        subgraph "Observability Layer"
+            OB1[Logger<br/>Structured Logging]
+            OB2[Tracer<br/>Distributed Tracing]
+            OB3[Metrics Collector<br/>Prometheus]
+        end
+    end
+    
+    %% Transport connections
+    T1 --> M1
+    T2 --> P1
+    
+    %% Middleware flow
+    M1 --> M2
+    M2 --> M3
+    M3 --> M4
+    M4 --> A3
+    
+    %% API to Protocol
+    A1 --> O1
+    A2 --> OB3
+    A3 --> P1
+    
+    %% Protocol flow
+    P1 --> P2
+    P2 --> P3
+    P2 --> TM1
+    
+    %% Tool management
+    TM1 --> TM2
+    TM2 --> TM3
+    TM3 --> TI1
+    TM3 --> TI2
+    TM3 --> TI3
+    TM3 --> TI4
+    
+    %% Tool to OpenPages
+    TI1 --> O1
+    TI2 --> O1
+    TI3 --> O1
+    TI4 --> O1
+    
+    %% OpenPages flow
+    O1 --> O2
+    O2 --> O3
+    O3 --> O4
+    O4 --> O5
+    
+    %% Configuration
+    C1 --> O1
+    C1 --> TM1
+    C2 --> TI4
+    C3 --> OB1
+    
+    %% Observability
+    M3 --> OB1
+    M3 --> OB2
+    M3 --> OB3
+    
+    %% Styling
+    style T1 fill:#e3f2fd
+    style T2 fill:#e3f2fd
+    style M1 fill:#f3e5f5
+    style M2 fill:#f3e5f5
+    style M3 fill:#f3e5f5
+    style M4 fill:#f3e5f5
+    style A3 fill:#e8f5e9
+    style P1 fill:#fff9c4
+    style P2 fill:#fff9c4
+    style P3 fill:#fff9c4
+    style TM1 fill:#ffe0b2
+    style TM2 fill:#ffe0b2
+    style TM3 fill:#ffe0b2
+    style TI1 fill:#c8e6c9
+    style TI2 fill:#c8e6c9
+    style TI3 fill:#c8e6c9
+    style TI4 fill:#c8e6c9
+    style O1 fill:#b3e5fc
+    style OB1 fill:#ffccbc
+    style OB2 fill:#ffccbc
+    style OB3 fill:#ffccbc

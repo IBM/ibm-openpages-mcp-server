@@ -1,0 +1,15 @@
+# Grafana Dashboard Provisioning Configuration
+
+apiVersion: 1
+
+providers:
+  - name: 'GRC MCP Server Dashboards'
+    orgId: 1
+    folder: 'GRC MCP Server'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: true
