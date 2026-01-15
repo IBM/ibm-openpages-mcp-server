@@ -1,5 +1,17 @@
 """
 Configuration settings for the GRC MCP Server
+
+This module defines the application configuration using Pydantic settings.
+It loads configuration from environment variables and .env files, and provides
+settings for:
+- Application behavior (debug mode, server mode)
+- OpenPages connection (URL, authentication)
+- Observability (logging, metrics, tracing)
+- Rate limiting
+- Object type configurations
+
+The settings are loaded from environment variables with the prefix matching
+the variable names, and can be overridden via .env files.
 """
 
 import os
@@ -9,7 +21,41 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Dict, Any, List
 
 class Settings(BaseSettings):
-    """Application settings"""
+    """
+    Application settings for GRC MCP Server
+    
+    This class defines all configuration settings for the application using Pydantic.
+    Settings are loaded from environment variables and .env files.
+    
+    Attributes:
+        APP_NAME: Name of the application
+        DEBUG: Enable debug mode
+        SERVER_MODE: Server mode ('remote' for HTTP, 'local' for stdio)
+        OPENPAGES_BASE_URL: Base URL for OpenPages API
+        OPENPAGES_AUTHENTICATION_TYPE: Authentication type ('basic' or 'bearer')
+        OPENPAGES_USERNAME: Username for basic auth
+        OPENPAGES_PASSWORD: Password for basic auth
+        OPENPAGES_APIKEY: API key for bearer auth
+        OPENPAGES_AUTHENTICATION_URL: Authentication URL for bearer auth
+        HOST: Server host address
+        PORT: Server port number
+        SSL_VERIFY: Enable SSL certificate verification
+        LOG_LEVEL: Logging level
+        LOG_FORMAT: Log format ('json' or 'text')
+        LOG_FILE: Optional log file path
+        OBSERVABILITY_ENABLED: Enable observability features
+        METRICS_ENABLED: Enable Prometheus metrics
+        METRICS_PORT: Metrics server port
+        TRACING_ENABLED: Enable distributed tracing
+        OTLP_ENDPOINT: OpenTelemetry collector endpoint
+        CONSOLE_TRACING: Enable console trace export
+        RATE_LIMIT_ENABLED: Enable rate limiting
+        RATE_LIMIT_REQUESTS_PER_MINUTE: Rate limit threshold
+        RATE_LIMIT_BURST_SIZE: Rate limit burst size
+        OPENPAGES_OBJECT_TYPES: List of configured object types
+        OUTPUT_FORMAT: Default output format ('text' or 'json')
+        OBJECT_TYPES_CONFIG_PATH: Path to object types configuration file
+    """
     
     # Application settings
     APP_NAME: str = "GRC MCP Server"
@@ -37,6 +83,25 @@ class Settings(BaseSettings):
     
     # Logging settings
     LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "json"  # Options: "json" or "text"
+    LOG_FILE: Optional[str] = None
+    
+    # Observability settings
+    OBSERVABILITY_ENABLED: bool = True
+    
+    # Metrics settings
+    METRICS_ENABLED: bool = True
+    METRICS_PORT: int = 9090
+    
+    # Tracing settings
+    TRACING_ENABLED: bool = False
+    OTLP_ENDPOINT: Optional[str] = None  # e.g., "http://localhost:4317"
+    CONSOLE_TRACING: bool = False
+    
+    # Rate limiting settings
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_REQUESTS_PER_MINUTE: int = 60
+    RATE_LIMIT_BURST_SIZE: int = 10
     
     # Object type configuration
     OPENPAGES_OBJECT_TYPES: List[Dict[str, Any]] = []
@@ -80,6 +145,10 @@ class Settings(BaseSettings):
     def _load_object_types(self) -> None:
         """
         Load object types from JSON configuration file
+        
+        Reads the object_types.json file and populates the OPENPAGES_OBJECT_TYPES
+        list with configured object type definitions. Also loads global settings
+        like output format.
         """
         try:
             # Get the path to the object_types.json file

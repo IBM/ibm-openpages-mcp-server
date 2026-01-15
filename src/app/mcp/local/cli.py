@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run MCP Server in Stdio Mode
+Run MCP Server in Stdio Mode - CLI Entry Point
 
 This script runs the MCP server in stdio mode for IBM OpenPages integration.
 It handles command line arguments, environment configuration, and server startup.
@@ -14,9 +14,9 @@ import argparse
 from typing import Optional, NoReturn
 
 # Add the project root directory to the Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
 
-from src.app.mcp.server_runner import main
+from src.app.mcp.local.stdio_runner import run_stdio_server
 from src.app.utils import configure_logging, get_env_file_path
 from src.app.config.settings import settings, create_settings
 
@@ -88,7 +88,7 @@ def main_cli() -> Optional[NoReturn]:
         logger.info(f"Starting OpenPages MCP Server in stdio mode v{__version__}...")
         
         # Pass only the settings object to the main function
-        asyncio.run(main(custom_settings=app_settings))
+        asyncio.run(run_stdio_server(custom_settings=app_settings))
         
     except KeyboardInterrupt:
         logger.info("Server stopped by user")

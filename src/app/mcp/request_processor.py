@@ -1,13 +1,26 @@
 """
 Request Processor Module
-Handles JSON-RPC request processing for MCP server
+
+This module handles JSON-RPC request processing for the MCP server.
+It routes incoming JSON-RPC method calls to the appropriate handlers and
+manages the request/response lifecycle.
+
+The RequestProcessor class provides:
+- JSON-RPC 2.0 protocol handling
+- Method routing (initialize, list_tools, call_tool, shutdown)
+- Error handling and response formatting
+- Support for notifications (requests without IDs)
+- Dynamic schema loading integration
+- Tool execution delegation
 """
 
 import json
 import logging
 from typing import Dict, Any, Tuple, Callable, Optional
 
-logger = logging.getLogger(__name__)
+from src.app.observability.logger import get_logger, log_method_call
+
+logger = get_logger(__name__)
 
 
 class RequestProcessor:
@@ -43,13 +56,24 @@ class RequestProcessor:
         self.list_tools_callback = list_tools_callback
     
     def update_tools(self, tools: list):
-        """Update the tools list"""
+        """
+        Update the tools list
+        
+        Args:
+            tools: New list of available tools with their schemas
+        """
         self.tools = tools
     
     def set_dynamic_schemas_loaded(self, loaded: bool):
-        """Update the dynamic schemas loaded flag"""
+        """
+        Update the dynamic schemas loaded flag
+        
+        Args:
+            loaded: Boolean indicating whether dynamic schemas have been loaded
+        """
         self.dynamic_schemas_loaded = loaded
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle initialize request from the client
@@ -61,8 +85,9 @@ class RequestProcessor:
             Dict containing server information and capabilities
         """
         logger.info("Handling initialize request")
+        logger.debug(f"Initialize params: {params}")
         
-        return {
+        result = {
             "protocolVersion": "2025-03-26",
             "serverInfo": {
                 "name": "local-mcp-server",
@@ -100,6 +125,9 @@ class RequestProcessor:
             },
             "tools": self.tools
         }
+        
+        logger.debug("handle_initialize() completed successfully")
+        return result
     
     async def handle_list_tools(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -137,6 +165,7 @@ class RequestProcessor:
         logger.info("Handling shutdown request")
         return {}
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def process_request(self, request_data: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
         """
         Process a JSON-RPC request
@@ -154,7 +183,10 @@ class RequestProcessor:
         request_id = request_data.get("id")
         
         if not method:
-            logger.error("Missing method in JSON-RPC request")
+            logger.error("Missing method in JSON-RPC request", extra_fields={
+                "request_id": request_id,
+                "has_params": bool(params)
+            })
             return {
                 "jsonrpc": "2.0",
                 "error": {
@@ -164,7 +196,7 @@ class RequestProcessor:
                 "id": request_id
             }, False
         
-        logger.info(f"Processing request: {method} (ID: {request_id})")
+        logger.info(f"Processing JSON-RPC request: {method} (ID: {request_id})")
         
         try:
             # Handle different methods

@@ -9,7 +9,14 @@ Thumbs.db
 
 # Environment files
 .env
+.env.old
+.env.backup
+.env.*
 src/app/local_mcp/.env
+
+# Logs
+logs/
+*.log
 
 # VS Code settings
 .vscode/launch.json

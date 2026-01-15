@@ -1,6 +1,17 @@
 """
 Schema Builder Module
-Handles dynamic schema generation for OpenPages MCP tools
+
+This module handles dynamic schema generation for OpenPages MCP tools.
+It fetches type definitions from OpenPages and builds JSON schemas that
+describe the available fields, their types, validation rules, and enum values.
+
+The SchemaBuilder class provides:
+- Type definition caching for performance
+- Dynamic schema generation for create/update operations
+- Query schema generation with field filtering
+- Upsert schema creation combining insert and update capabilities
+- Support for custom field configurations (include_all_fields, specific fields)
+- Enum value extraction and validation
 """
 
 import logging

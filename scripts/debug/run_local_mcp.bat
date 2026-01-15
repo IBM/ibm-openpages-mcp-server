@@ -8,6 +8,6 @@ echo Starting MCP server in stdio mode...
 echo Press Ctrl+C to stop the server
 
 REM Run the server
-python3 src\app\mcp\run_stdio_mode.py %*
+python3 src\app\mcp\local\cli.py %*
 
 @REM Made with Bob

@@ -1,7 +1,7 @@
 """
-OpenPages MCP Server Runner
+OpenPages MCP Server Runner - Stdio Mode
 
-This module provides the entry point for running the MCP server.
+This module provides the entry point for running the MCP server in stdio (local) mode.
 It handles stdin/stdout communication for the JSON-RPC protocol.
 """
 
@@ -24,9 +24,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def main(custom_settings: Optional[Settings] = None) -> None:
+async def run_stdio_server(custom_settings: Optional[Settings] = None) -> None:
     """
-    Main entry point for the MCP server
+    Main entry point for the MCP server in stdio mode
     
     Initializes the server and processes JSON-RPC requests from stdin.
     
@@ -60,7 +60,8 @@ async def main(custom_settings: Optional[Settings] = None) -> None:
             # Authentication failed - but keep server running to respond to requests
             auth_failed = True
             auth_error_message = f"Authentication failed: {str(auth_error)}. Please check your authentication credentials and URLs in the .env file."
-            logger.info("Server will continue running but all requests will return authentication error")
+            logger.error(f"Authentication failed: {auth_error}")
+            logger.warning("Server will continue running but all requests will return authentication error")
         
         # Process JSON-RPC messages from stdin
         logger.info("Ready to process requests")
@@ -135,6 +136,6 @@ async def main(custom_settings: Optional[Settings] = None) -> None:
         sys.exit(1)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_stdio_server())
 
 # Made with Bob

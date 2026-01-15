@@ -29,7 +29,7 @@ REM Set environment variables for debugging
 set MCP_DEBUG=true
 
 REM Run the server with debug flag
-python src\app\mcp\run_stdio_mode.py --debug
+python src\app\mcp\local\cli.py --debug
 
 REM Made with Bob
 

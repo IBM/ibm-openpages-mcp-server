@@ -28,6 +28,6 @@ echo "Press Ctrl+C to stop the server"
 export MCP_DEBUG=true
 
 # Run the server with debug flag
-python "$SCRIPT_DIR/src/app/mcp/run_stdio_mode.py" --debug
+python "$SCRIPT_DIR/src/app/mcp/local/cli.py" --debug
 
 # Made with Bob

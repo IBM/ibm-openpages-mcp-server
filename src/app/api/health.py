@@ -222,7 +222,7 @@ async def health_check(response: Response):
     - 200: Healthy
     - 503: Unhealthy or degraded
     """
-    from src.app.core.server_instance import get_server
+    from src.app.mcp.remote.server_instance import get_server
     
     mcp_server = get_server()
     health_status = await health_checker.check_server_health(mcp_server)
@@ -249,7 +249,7 @@ async def readiness_check(response: Response):
     - Load balancer health checks
     - Determining if server can handle traffic
     """
-    from src.app.core.server_instance import get_server
+    from src.app.mcp.remote.server_instance import get_server
     
     mcp_server = get_server()
     readiness = await health_checker.check_readiness(mcp_server)
@@ -288,7 +288,7 @@ async def startup_check(response: Response):
     - Kubernetes startup probes
     - Delayed health checks during initialization
     """
-    from src.app.core.server_instance import get_server
+    from src.app.mcp.remote.server_instance import get_server
     
     mcp_server = get_server()
     

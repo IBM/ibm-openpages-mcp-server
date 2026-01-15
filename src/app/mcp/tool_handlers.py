@@ -1,12 +1,23 @@
 """
 Tool Handlers Module
-Handles execution of MCP tools for OpenPages operations
+
+This module handles the execution of MCP tools for OpenPages operations.
+It routes tool calls to the appropriate handlers based on tool names and
+manages the execution lifecycle including error handling and response formatting.
+
+The ToolHandlers class supports:
+- Echo tool for testing
+- Generic object tools (upsert, query, delete) for any configured object type
+- Dynamic tool routing based on naming conventions
+- Namespace support for tool organization
 """
 
 import logging
 from typing import Dict, Any
 
-logger = logging.getLogger(__name__)
+from src.app.observability.logger import get_logger, log_method_call
+
+logger = get_logger(__name__)
 
 
 class ToolHandlers:
@@ -28,6 +39,7 @@ class ToolHandlers:
         self.object_tools = object_tools
         self.settings = settings
     
+    @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     async def handle_echo_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle the echo tool
@@ -39,12 +51,14 @@ class ToolHandlers:
             Dict containing the echo result
         """
         text = arguments.get("text", "")
+        logger.debug(f"Echo tool called with text: {text[:100]}")
         return {
             "result": [
                 {"type": "text", "text": f"Echo: {text}"}
             ]
         }
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_generic_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle any generic tool based on the tool name
@@ -56,11 +70,14 @@ class ToolHandlers:
         Returns:
             Dict containing the tool execution result
         """
+        logger.info(f"Handling generic tool: {tool_name}")
+        
         # Parse the tool name to determine namespace, operation and object type
         # Format can be: operation_prefix or namespace_operation_prefix
         parts = tool_name.split('_')
         
         if len(parts) < 2:
+            logger.warning(f"Invalid tool name format: {tool_name}")
             return {
                 "result": [
                     {"type": "text", "text": f"Invalid tool name format: {tool_name}"}
@@ -94,6 +111,7 @@ class ToolHandlers:
             
         # Check if we have a tool for this object type
         if obj_type not in self.object_tools:
+            logger.warning(f"No tool available for object type: {obj_type}")
             return {
                 "result": [
                     {"type": "text", "text": f"No tool available for object type: {obj_type}"}
@@ -102,16 +120,21 @@ class ToolHandlers:
             
         # Get the appropriate tool
         tool = self.object_tools[obj_type]
+        logger.debug(f"Routing to {operation} operation for {obj_type}")
         
         try:
             # Call the appropriate method based on the operation
             if operation == 'upsert':
+                logger.info(f"Executing upsert operation for {obj_type}")
                 result = await tool.upsert_object(arguments)
             elif operation == 'query':
+                logger.info(f"Executing query operation for {obj_type}")
                 result = await tool.query_objects(arguments)
             elif operation == 'delete':
+                logger.info(f"Executing delete operation for {obj_type}")
                 result = await tool.delete_object(arguments)
             else:
+                logger.warning(f"Unknown operation: {operation}")
                 return {
                     "result": [
                         {"type": "text", "text": f"Unknown operation: {operation}"}
@@ -119,18 +142,25 @@ class ToolHandlers:
                 }
                 
             # Format the response
+            logger.debug(f"Tool execution completed successfully for {tool_name}")
             return {
                 "result": [{"type": "text", "text": item.text} for item in result]
             }
             
         except Exception as e:
-            logger.error(f"Error handling {tool_name}: {e}", exc_info=True)
+            logger.error(f"Error handling {tool_name}: {e}", exc_info=True, extra_fields={
+                "tool_name": tool_name,
+                "operation": operation,
+                "object_type": obj_type,
+                "error_type": type(e).__name__
+            })
             return {
                 "result": [
                     {"type": "text", "text": f"Error handling {tool_name}: {str(e)}"}
                 ]
             }
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_call_tool(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle call_tool request from the client
@@ -165,13 +195,19 @@ class ToolHandlers:
             
             # Check if this is a special tool
             if name in special_tool_handlers:
+                logger.debug(f"Routing to special tool handler: {name}")
                 return await special_tool_handlers[name](arguments)
             
             # Handle all other tools using the generic handler
+            logger.debug(f"Routing to generic tool handler: {name}")
             return await self.handle_generic_tool(name, arguments)
                 
         except Exception as e:
-            logger.error(f"Error calling tool {name}: {e}", exc_info=True)
+            logger.error(f"Error calling tool {name}: {e}", exc_info=True, extra_fields={
+                "tool_name": name,
+                "error_type": type(e).__name__,
+                "has_arguments": bool(arguments)
+            })
             return {
                 "result": [
                     {"type": "text", "text": f"Error calling tool {name}: {str(e)}"}

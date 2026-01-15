@@ -8,12 +8,13 @@ import base64
 from typing import Any, Dict, List, Optional
 import httpx  # type: ignore
 from src.app.config.settings import Settings, settings
+from src.app.observability.logger import get_logger, log_method_call
 
 # Type annotation for better error handling
 HTTPXError = httpx.HTTPError
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class OpenPagesClient:
     """Client for interacting with IBM OpenPages API"""
@@ -227,6 +228,7 @@ class OpenPagesClient:
                 logger.error(f"Request error fetching MCSP token: {e}")
                 return None
     
+    @log_method_call(level=logging.DEBUG)
     async def initialize_auth(self):
         """
         Initialize authentication asynchronously.
@@ -237,7 +239,10 @@ class OpenPagesClient:
             self.auth_header = await self._create_bearer_auth_header(self.api_key, self.authentication_url)
             self.headers['Authorization'] = self.auth_header
             logger.info("Bearer authentication initialized successfully")
+        else:
+            logger.debug(f"Auth already initialized or using basic auth (type: {self.auth_type})")
             
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def query(self, statement: str, offset: int = 0, limit: int = 100) -> Dict[str, Any]:
         """
         Execute a query against OpenPages
@@ -250,6 +255,9 @@ class OpenPagesClient:
         Returns:
             Query results
         """
+        logger.info(f"Executing OpenPages query (limit={limit}, offset={offset})")
+        logger.debug(f"Query statement: {statement[:100]}..." if len(statement) > 100 else f"Query statement: {statement}")
+        
         # Ensure authentication is initialized
         await self.initialize_auth()
         
@@ -295,6 +303,7 @@ class OpenPagesClient:
                     else:
                         logger.info(f"Response Body: {response_json}")
                 
+                logger.debug(f"query() completed successfully, returned {len(response_json.get('rows', []))} rows")
                 return response_json
             except httpx.HTTPStatusError as e:
                 # This exception has response attribute
@@ -309,6 +318,7 @@ class OpenPagesClient:
                 # Return a mock empty result instead of raising an error
                 return {"rows": []}
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def get_content(self, resource_id: str) -> Dict[str, Any]:
         """
         Get content by resource ID
@@ -319,11 +329,13 @@ class OpenPagesClient:
         Returns:
             Content data
         """
+        logger.info(f"Getting content for resource ID: {resource_id}")
+        
         # Ensure authentication is initialized
         await self.initialize_auth()
         
         url = f"{self.base_url}/opgrc/api/v2/contents/{resource_id}"
-        logger.info(f"OpenPages API Get Content Request: {url}")
+        logger.debug(f"OpenPages API Get Content Request: {url}")
         
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
@@ -360,6 +372,7 @@ class OpenPagesClient:
                 logger.error(f"Request error getting content: {e}")
                 raise
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def create_content(self, content_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Create new content in OpenPages
@@ -370,12 +383,14 @@ class OpenPagesClient:
         Returns:
             Created content data
         """
+        logger.info(f"Creating content of type: {content_data.get('type_definition_id', 'unknown')}")
+        
         # Ensure authentication is initialized
         await self.initialize_auth()
         
         url = f"{self.base_url}/opgrc/api/v2/contents"
-        logger.info(f"OpenPages API Create Content Request: {url}")
-        logger.info(f"Request Body: {content_data}")
+        logger.debug(f"OpenPages API Create Content Request: {url}")
+        logger.debug(f"Request Body: {content_data}")
         
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
@@ -413,6 +428,7 @@ class OpenPagesClient:
                 logger.error(f"Request error creating content: {e}")
                 raise
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def update_content(self, resource_id: str, content_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update existing content in OpenPages
@@ -424,12 +440,14 @@ class OpenPagesClient:
         Returns:
             Updated content data
         """
+        logger.info(f"Updating content: {resource_id} (type: {content_data.get('type_definition_id', 'unknown')})")
+        
         # Ensure authentication is initialized
         await self.initialize_auth()
         
         url = f"{self.base_url}/opgrc/api/v2/contents/{resource_id}"
-        logger.info(f"OpenPages API Update Content Request: {url}")
-        logger.info(f"Request Body: {content_data}")
+        logger.debug(f"OpenPages API Update Content Request: {url}")
+        logger.debug(f"Request Body: {content_data}")
         
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
@@ -552,6 +570,7 @@ class OpenPagesClient:
                 logger.error(f"Request error getting type definition: {e}")
                 raise
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def delete_content(self, resource_id: str) -> Dict[str, Any]:
         """
         Delete content from OpenPages
@@ -562,11 +581,13 @@ class OpenPagesClient:
         Returns:
             Response data from the delete operation
         """
+        logger.info(f"Deleting content: {resource_id}")
+        
         # Ensure authentication is initialized
         await self.initialize_auth()
         
         url = f"{self.base_url}/opgrc/api/v2/contents/{resource_id}"
-        logger.info(f"OpenPages API Delete Content Request: {url}")
+        logger.debug(f"OpenPages API Delete Content Request: {url}")
         
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:

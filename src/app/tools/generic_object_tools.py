@@ -12,9 +12,10 @@ from mcp.types import TextContent  # type: ignore
 
 from src.app.core.openpages_client import OpenPagesClient
 from src.app.tools.base_tool import BaseTool
+from src.app.observability.logger import get_logger, log_method_call
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class GenericObjectTools(BaseTool):
     """
@@ -91,6 +92,7 @@ class GenericObjectTools(BaseTool):
             logger.error(f"Error getting field definitions: {e}")
             return [TextContent(type="text", text=f"Error retrieving field definitions: {str(e)}")]
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def upsert_object(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
         Create or update an object in OpenPages (upsert operation)
@@ -109,6 +111,8 @@ class GenericObjectTools(BaseTool):
         Returns:
             List of text content with upserted object information
         """
+        logger.info(f"Upserting {self.display_name}: name='{arguments.get('name')}', operation='{arguments.get('operation', 'auto')}'")
+        
         # Extract required fields
         name = arguments.get('name')
         if not name:
@@ -395,6 +399,7 @@ class GenericObjectTools(BaseTool):
                 response_data["description"] = description
             
             # Use base class method to format response based on output format
+            logger.debug(f"upsert_object() completed successfully: INSERT operation for {self.display_name} '{name}' (ID: {resource_id})")
             return self.format_response(response_data, "insert")
         
         except Exception as e:
@@ -599,6 +604,7 @@ class GenericObjectTools(BaseTool):
                 return await self._perform_insert(name, arguments)
             return [TextContent(type="text", text=f"Error updating {self.display_name.lower()}: {str(e)}")]
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def query_objects(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
         Query for objects in OpenPages
@@ -620,6 +626,7 @@ class GenericObjectTools(BaseTool):
         Returns:
             List of text content with objects information
         """
+        logger.info(f"Querying {self.display_name}s with filters")
         name_filter = arguments.get('name')
         owner_filter = arguments.get('owner_filter', False)
         
@@ -876,6 +883,7 @@ class GenericObjectTools(BaseTool):
         return self.format_response(response_data, "query")
     
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def delete_object(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
         Delete an existing object in OpenPages
@@ -888,6 +896,8 @@ class GenericObjectTools(BaseTool):
         Returns:
             List of text content with deletion confirmation
         """
+        logger.info(f"Deleting {self.display_name}")
+        
         # Extract required fields
         resource_id = arguments.get('resource_id')
         path = arguments.get('path')

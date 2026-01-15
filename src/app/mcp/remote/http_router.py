@@ -1,6 +1,13 @@
 """
-API Router for GRC MCP Server
-Defines HTTP endpoints for the MCP server
+HTTP Router for Remote MCP Mode
+
+This module defines the HTTP API endpoints for the MCP server in remote mode, providing:
+- JSON-RPC endpoint for MCP protocol communication
+- Server-Sent Events (SSE) endpoint for mcp-proxy connections
+- Request/response models for JSON-RPC
+
+The router handles both POST requests for JSON-RPC calls and GET requests
+for establishing SSE connections with the mcp-proxy client.
 """
 
 import logging
@@ -18,14 +25,30 @@ router = APIRouter(prefix="/mcp")
 
 # Models
 class JsonRpcRequest(BaseModel):
-    """JSON-RPC request model"""
+    """
+    JSON-RPC 2.0 request model
+    
+    Attributes:
+        jsonrpc: JSON-RPC version (always "2.0")
+        method: Method name to invoke
+        params: Method parameters (optional)
+        id: Request identifier (optional, omit for notifications)
+    """
     jsonrpc: str = "2.0"
     method: str
     params: Optional[Dict[str, Any]] = {}
     id: Optional[str] = None
 
 class JsonRpcResponse(BaseModel):
-    """JSON-RPC response model"""
+    """
+    JSON-RPC 2.0 response model
+    
+    Attributes:
+        jsonrpc: JSON-RPC version (always "2.0")
+        result: Method result (present on success)
+        error: Error object (present on failure)
+        id: Request identifier matching the request
+    """
     jsonrpc: str = "2.0"
     result: Optional[Any] = None
     error: Optional[Dict[str, Any]] = None
@@ -48,7 +71,7 @@ async def jsonrpc_endpoint(request: Request):
     - notifications/subscribe (optional)
     - shutdown
     """
-    from src.app.core.server_instance import get_server
+    from src.app.mcp.remote.server_instance import get_server
     
     mcp_server = get_server()
     if not mcp_server:
@@ -96,7 +119,15 @@ async def jsonrpc_endpoint(request: Request):
 
 # Helper function for SSE streaming
 async def sse_stream():
-    """Generate SSE events for mcp-proxy connection"""
+    """
+    Generate SSE events for mcp-proxy connection
+    
+    Creates a Server-Sent Events (SSE) stream for maintaining a connection
+    with the mcp-proxy client, including heartbeat messages.
+    
+    Yields:
+        SSE-formatted event strings
+    """
     # Send initial connection message
     yield "event: connection\ndata: {\"status\":\"ok\",\"protocol\":\"mcp\",\"version\":\"2025-03-26\"}\n\n"
     

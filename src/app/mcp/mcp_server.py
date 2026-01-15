@@ -111,51 +111,30 @@ class MCPServer:
         
     def _load_tools_schema(self) -> None:
         """
-        Load tools schema from JSON file and dynamically add tools for configured object types
+        Initialize base tools schema and dynamically add tools for configured object types
         """
-        try:
-            # Get the path to the tools_schema.json file
-            schema_path = pathlib.Path(__file__).parent / 'tools_schema.json'
-            
-            if not schema_path.exists():
-                logger.warning(f"Tools schema file not found: {schema_path}")
-                raise FileNotFoundError(f"Tools schema file not found: {schema_path}")
-                
-            # Load the schema from the file
-            with open(schema_path, 'r', encoding='utf-8') as f:
-                try:
-                    self.tools = json.load(f)
-                    logger.info(f"Loaded tools schema from {schema_path}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"Invalid JSON in tools schema file: {e}")
-                    raise
-            
-            # Dynamically add tools for each configured object type
-            self._add_dynamic_tools_to_schema()
-                    
-        except (FileNotFoundError, json.JSONDecodeError, IOError) as e:
-            logger.error(f"Error loading tools schema: {e}")
-            logger.warning("Using fallback minimal schema")
-            # Fallback to a minimal schema
-            self.tools = [
-                {
-                    "name": "echo",
-                    "description": "Echo the input text",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "text": {
-                                "type": "string",
-                                "description": "The text to echo"
-                            }
-                        },
-                        "required": ["text"]
-                    }
+        logger.info("Initializing base tools schema")
+        
+        # Start with base echo tool
+        self.tools = [
+            {
+                "name": "echo",
+                "description": "Echo the input text",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "The text to echo"
+                        }
+                    },
+                    "required": ["text"]
                 }
-            ]
-        except Exception as e:
-            logger.error(f"Unexpected error loading tools schema: {e}")
-            raise RuntimeError(f"Failed to load tools schema: {e}") from e
+            }
+        ]
+        
+        # Dynamically add tools for each configured object type
+        self._add_dynamic_tools_to_schema()
         
     def _add_dynamic_tools_to_schema(self) -> None:
         """
@@ -348,7 +327,17 @@ class MCPServer:
                 break
     
     async def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle initialize request - delegates to request processor"""
+        """
+        Handle initialize request from MCP client
+        
+        Loads base tools schema if not already loaded and delegates to request processor.
+        
+        Args:
+            params: Initialize request parameters from the client
+            
+        Returns:
+            Dict containing server capabilities and information
+        """
         if not self.dynamic_schemas_loaded:
             logger.debug("Loading base tools schema during initialization")
             self._load_tools_schema()
@@ -359,7 +348,15 @@ class MCPServer:
     async def _handle_list_tools_with_schema_loading(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Internal method to handle list_tools with dynamic schema loading
-        This is called by the request processor as a callback
+        
+        This is called by the request processor as a callback to ensure dynamic schemas
+        are loaded before returning the tools list.
+        
+        Args:
+            params: List tools request parameters
+            
+        Returns:
+            Dict containing the list of available tools with their schemas
         """
         if not self.dynamic_schemas_loaded:
             logger.debug("Loading base tools schema")
@@ -377,15 +374,39 @@ class MCPServer:
         }
     
     async def handle_list_tools(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle list_tools request - delegates to request processor"""
+        """
+        Handle list_tools request from MCP client
+        
+        Args:
+            params: List tools request parameters
+            
+        Returns:
+            Dict containing the list of available tools
+        """
         return await self.request_processor.handle_list_tools(params)
     
     async def handle_call_tool(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle call_tool request - delegates to tool handlers"""
+        """
+        Handle call_tool request from MCP client
+        
+        Args:
+            params: Call tool request parameters including tool name and arguments
+            
+        Returns:
+            Dict containing the tool execution result
+        """
         return await self.tool_handlers.handle_call_tool(params)
     
     async def handle_shutdown(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle shutdown request - delegates to request processor"""
+        """
+        Handle shutdown request from MCP client
+        
+        Args:
+            params: Shutdown request parameters
+            
+        Returns:
+            Empty dict acknowledging shutdown
+        """
         return await self.request_processor.handle_shutdown(params)
     
     async def process_request(self, request_data: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:

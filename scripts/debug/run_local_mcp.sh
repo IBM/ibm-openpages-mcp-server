@@ -8,6 +8,6 @@ echo "Starting MCP server in stdio mode..."
 echo "Press Ctrl+C to stop the server"
 
 # Run the server
-python3 "$SCRIPT_DIR/src/app/mcp/run_stdio_mode.py" "$@"
+python3 "$SCRIPT_DIR/src/app/mcp/local/cli.py" "$@"
 
 # Made with Bob
