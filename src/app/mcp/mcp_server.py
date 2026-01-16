@@ -15,6 +15,7 @@ import pathlib
 from typing import Dict, Any, List, Optional, Tuple, Union
 
 from src.app.tools.generic_object_tools import GenericObjectTools
+from src.app.tools.query_tool import QueryTool
 from src.app.core.openpages_client import OpenPagesClient
 from src.app.config.settings import settings, Settings
 from src.app.mcp.schema_builder import SchemaBuilder
@@ -85,6 +86,10 @@ class MCPServer:
                     self.object_tools[tool_prefix] = GenericObjectTools(self.client, obj_config)
                     logger.debug(f"Initialized dynamic tool for {obj_type} with prefix {tool_prefix}")
             
+            # Initialize SQL query tool
+            self.query_tool = QueryTool(self.client)
+            logger.debug("Initialized SQL query tool")
+            
             logger.debug("Tool modules initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize tool modules: {e}")
@@ -92,7 +97,7 @@ class MCPServer:
         
         # Initialize modular components
         self.schema_builder = SchemaBuilder(self.client)
-        self.tool_handlers = ToolHandlers(self.object_tools, self.settings)
+        self.tool_handlers = ToolHandlers(self.object_tools, self.settings, self.query_tool)
         
         # Load tools schema from JSON file
         self._load_tools_schema()
@@ -109,13 +114,106 @@ class MCPServer:
         # Flag to indicate if dynamic schemas have been loaded
         self.dynamic_schemas_loaded: bool = False
         
+    def _build_sql_query_description(self) -> str:
+        """
+        Build dynamic SQL query tool description based on configured object types
+        
+        Returns:
+            Formatted description string with examples from configured object types
+        """
+        # Get configured object types
+        object_types = []
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            type_id = obj_config.get("type_id", "")
+            display_name = obj_config.get("display_name", "")
+            if type_id:
+                desc = f"[{type_id}]"
+                if display_name:
+                    desc += f" - {display_name}"
+                object_types.append(desc)
+        
+        # Build object types section
+        if object_types:
+            object_types_section = "CONFIGURED OBJECT TYPES (available in this instance):\n" + "\n".join(f"- {ot}" for ot in object_types)
+            object_types_section += "\n- Plus any other custom object types defined in your OpenPages instance"
+        else:
+            object_types_section = """EXAMPLE OBJECT TYPES (OpenPages supports many object types - these are common examples):
+- [SOXIssue] - Issues/findings
+- [SOXControl] - Controls
+- [SOXRisk] - Risks
+- [SOXProcess] - Processes
+- [SOXBusEntity] - Business entities
+- [SOXTest] - Tests
+- Any custom object types defined in your OpenPages instance"""
+        
+        # Build example query using first configured object type
+        example_type = self.settings.OPENPAGES_OBJECT_TYPES[0].get("type_id", "SOXIssue") if self.settings.OPENPAGES_OBJECT_TYPES else "SOXIssue"
+        
+        return f"""Execute SQL-like queries against OpenPages using Query Service syntax.
+
+CRITICAL SYNTAX RULES:
+1. ALL entity names (object types and field names) MUST be enclosed in square brackets: [EntityName]
+2. Entity names are case-sensitive and must match exactly
+3. Keywords (SELECT, FROM, WHERE, etc.) are case-insensitive
+
+BASIC STRUCTURE:
+SELECT [field1], [field2], ... FROM [ObjectType] WHERE [conditions] ORDER BY [field] ASC/DESC
+
+{object_types_section}
+
+COMMON FIELDS (always use brackets, available on most object types):
+- [Resource ID] - Unique identifier
+- [Name] - Object name
+- [Description] - Object description
+- [Status] - Current status
+- [Owner] - Object owner
+- [Creation Date] - When created
+- [Last Modification Date] - Last updated
+
+PREFIXED FIELDS (examples - include full prefix in brackets):
+- [OPSS-Iss:Priority] - Example: Issue priority field
+- [OPSS-Iss:Due Date] - Example: Issue due date field
+- Format: [GroupPrefix:FieldName] - Use the exact prefix from your schema
+
+WHERE CLAUSE OPERATORS:
+- Comparison: =, <>, <, >, <=, >=
+- Pattern: LIKE '%text%' (use % for wildcards, not *)
+- NULL checks: IS NULL, IS NOT NULL
+- Lists: IN ('val1', 'val2'), NOT IN (...)
+- Text search: CONTAINS([field], 'text'), NOT CONTAINS([field], 'text')
+- Logical: AND, OR, NOT, parentheses for grouping
+
+EXAMPLES:
+1. Basic: SELECT [Resource ID], [Name] FROM [{example_type}] WHERE [Status] = 'Active'
+2. Pattern: SELECT [Name] FROM [{example_type}] WHERE [Name] LIKE '%Financial%'
+3. Multiple conditions: SELECT [Name], [OPSS-Iss:Priority] FROM [{example_type}] WHERE [Status] = 'Active' AND [OPSS-Iss:Priority] IN ('High', 'Critical') ORDER BY [OPSS-Iss:Due Date] ASC
+4. NULL check: SELECT [Name] FROM [{example_type}] WHERE [Owner] IS NOT NULL
+5. Text search: SELECT [Name] FROM [{example_type}] WHERE CONTAINS([Description], 'compliance')
+
+AGGREGATION:
+- COUNT(*) - Count all records
+- COUNT([field]) - Count non-null values
+- Use with GROUP BY: SELECT [Status], COUNT(*) FROM [{example_type}] GROUP BY [Status]
+
+JOINS (hierarchical relationships):
+- JOIN [ChildType] ON CHILD([ParentType])
+- JOIN [ParentType] ON PARENT([ChildType])
+- OUTER JOIN for optional relationships
+
+SORTING:
+- ORDER BY [field] ASC (ascending, default)
+- ORDER BY [field] DESC (descending)
+- Multiple fields: ORDER BY [field1] DESC, [field2] ASC
+
+Remember: Always enclose entity names in [brackets]!"""
+    
     def _load_tools_schema(self) -> None:
         """
         Initialize base tools schema and dynamically add tools for configured object types
         """
         logger.info("Initializing base tools schema")
         
-        # Start with base echo tool
+        # Start with base tools
         self.tools = [
             {
                 "name": "echo",
@@ -129,6 +227,36 @@ class MCPServer:
                         }
                     },
                     "required": ["text"]
+                }
+            },
+            {
+                "name": "execute_sql_query",
+                "description": self._build_sql_query_description(),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "SQL query statement. MUST enclose all entity names in square brackets [Name]. Use single quotes for string values. Example: SELECT [Resource ID], [Name], [Status] FROM [SOXIssue] WHERE [Status] = 'Active' AND [OPSS-Iss:Priority] = 'High' ORDER BY [Name] LIMIT 10"
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Result offset for pagination (default: 0)",
+                            "minimum": 0
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return (default: 100, max: 500)",
+                            "minimum": 1,
+                            "maximum": 500
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["table", "json", "list"],
+                            "description": "Output format: 'table' (default), 'json', or 'list'"
+                        }
+                    },
+                    "required": ["query"]
                 }
             }
         ]

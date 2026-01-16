@@ -28,16 +28,18 @@ class ToolHandlers:
     the execution of different tool operations.
     """
     
-    def __init__(self, object_tools: Dict[str, Any], settings):
+    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None):
         """
         Initialize tool handlers
         
         Args:
             object_tools: Dictionary of object-specific tool instances
             settings: Application settings
+            query_tool: SQL query tool instance (optional)
         """
         self.object_tools = object_tools
         self.settings = settings
+        self.query_tool = query_tool
     
     @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     async def handle_echo_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -57,6 +59,39 @@ class ToolHandlers:
                 {"type": "text", "text": f"Echo: {text}"}
             ]
         }
+    
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def handle_sql_query_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle the SQL query tool
+        
+        Args:
+            arguments: Tool arguments containing query, offset, limit, and format
+            
+        Returns:
+            Dict containing the query execution result
+        """
+        if not self.query_tool:
+            logger.error("SQL query tool not initialized")
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: SQL query tool not initialized"}
+                ]
+            }
+        
+        logger.info("Executing SQL query tool")
+        try:
+            result = await self.query_tool.execute_query(arguments)
+            return {
+                "result": [{"type": "text", "text": item.text} for item in result]
+            }
+        except Exception as e:
+            logger.error(f"Error executing SQL query: {e}", exc_info=True)
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error executing SQL query: {str(e)}"}
+                ]
+            }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_generic_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -190,7 +225,8 @@ class ToolHandlers:
         try:
             # Map special tool names to their handler methods
             special_tool_handlers = {
-                "echo": self.handle_echo_tool
+                "echo": self.handle_echo_tool,
+                "execute_sql_query": self.handle_sql_query_tool
             }
             
             # Check if this is a special tool

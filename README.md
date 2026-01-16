@@ -192,6 +192,45 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
 >
 > Note that some Docker features like HEALTHCHECK are not supported in Podman's OCI image format.
 
+### SQL Query Tool
+
+The server provides a direct SQL query tool for executing SQL-like queries against OpenPages:
+
+#### execute_sql_query
+- **Description**: Execute SQL-like queries directly against the OpenPages query API
+- **Parameters**:
+  - `query`: SQL-like query statement (required)
+    - Example: `SELECT [Name], [Description] FROM [SOXIssue] WHERE [Status] = "Active" LIMIT 10`
+  - `offset`: Result offset for pagination (optional, default: 0)
+  - `limit`: Maximum number of results (optional, default: 100, max: 500)
+  - `format`: Output format (optional, default: "table")
+    - `table`: Formatted table view
+    - `json`: JSON format
+    - `list`: Detailed list format
+
+**Example Usage:**
+```json
+{
+  "name": "execute_sql_query",
+  "arguments": {
+    "query": "SELECT [Resource ID], [Name], [Description] FROM [SOXIssue] WHERE [Name] LIKE '%Risk%' LIMIT 5",
+    "format": "table"
+  }
+}
+```
+
+**Query Syntax:**
+- **All entity names (object types and field names) must be enclosed in square brackets**: `[EntityName]`
+- Standard SQL operators: `=`, `<>`, `<`, `>`, `<=`, `>=`, `LIKE`, `IS NULL`, `IS NOT NULL`
+- Logical operators: `AND`, `OR`, `NOT`
+- Text search: `CONTAINS()`, `NOT CONTAINS()`
+- IN operator: `IN (value1, value2, ...)`, `NOT IN (...)`
+- Sorting: `ORDER BY [Field] ASC/DESC`
+- Pagination: `LIMIT n` and `OFFSET n`
+- Joins: `JOIN`, `OUTER JOIN` with `PARENT()`, `CHILD()`, `ANCESTOR()` predicates
+- Aggregation: `COUNT(*)`, `COUNT([Field])`
+- Grouping: `GROUP BY [Field]`
+
 ## Available Tools
 
 The server provides generic **Data tools** for any OpenPages object type configured in `src/app/config/object_types.json`. These tools enable data operations (create, read, update, delete) on OpenPages objects.
