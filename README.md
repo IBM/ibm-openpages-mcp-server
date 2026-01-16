@@ -230,6 +230,145 @@ The server provides a direct SQL query tool for executing SQL-like queries again
 - Joins: `JOIN`, `OUTER JOIN` with `PARENT()`, `CHILD()`, `ANCESTOR()` predicates
 - Aggregation: `COUNT(*)`, `COUNT([Field])`
 - Grouping: `GROUP BY [Field]`
+## MCP Resources
+
+The server provides **MCP resources** that expose OpenPages object type schemas to AI agents. Resources enable agents to discover available object types, their fields, data types, validation rules, and enum values dynamically.
+
+### Available Resources
+
+Resources follow the URI pattern: `openpages://schema/{type_id}`
+
+For each configured object type in `object_types.json`, a schema resource is automatically available:
+
+| Resource URI | Description |
+|--------------|-------------|
+| `openpages://schema/SOXControl` | Schema definition for Control objects |
+| `openpages://schema/SOXIssue` | Schema definition for Issue objects |
+| `openpages://schema/SOXRisk` | Schema definition for Risk objects |
+
+### Resource Content Structure
+
+Each schema resource provides comprehensive information about an object type:
+
+```json
+{
+  "type_id": "SOXIssue",
+  "display_name": "Issue",
+  "namespace": "openpages",
+  "path_prefix": "Issue",
+  "description": "Schema definition for Issue objects in OpenPages",
+  "field_count": 25,
+  "fields": [
+    {
+      "name": "Name",
+      "label": "Name",
+      "data_type": "STRING_TYPE",
+      "description": "Issue name",
+      "required": true,
+      "read_only": false
+    },
+    {
+      "name": "OPSS-Iss:Status",
+      "label": "Status",
+      "data_type": "ENUM_TYPE",
+      "description": "Issue status",
+      "required": false,
+      "read_only": false,
+      "enum_values": [
+        {"name": "Open", "label": "Open"},
+        {"name": "Closed", "label": "Closed"}
+      ]
+    }
+  ],
+  "configuration": {
+    "create_fields": {
+      "include_all_fields": false,
+      "fields": ["OPSS-Iss:Status", "OPSS-Iss:Priority"]
+    },
+    "query_filters": {
+      "fields": ["OPSS-Iss:Status", "OPSS-Iss:Priority"]
+    }
+  }
+}
+```
+
+### Using Resources
+
+AI agents can use resources to:
+1. **Discover available object types** via `list_resources`
+2. **Learn field schemas** via `read_resource` with a specific URI
+3. **Construct accurate queries** using correct field names and types
+4. **Validate data** before creating or updating objects
+5. **Understand enum values** for dropdown fields
+
+**Example MCP Resource Request:**
+```json
+{
+  "method": "resources/read",
+
+## Generic Object Management Tool
+
+The server provides a **generic object management tool** (`openpages_manage_object`) that leverages MCP resources for schema-aware CRUD operations. This tool can work with any configured object type without requiring explicit tool definitions per type.
+
+### Tool: `openpages_manage_object`
+
+**Description**: Schema-aware generic tool for managing OpenPages objects. Automatically fetches object schemas from MCP resources, validates field names and types, and performs create, read, update, and delete operations.
+
+**Key Features**:
+- **Dynamic Schema Validation**: Fetches and validates against object schemas from resources
+- **Field Name Mapping**: Supports both simplified ("Status") and full qualified names ("OPSS-Iss:Status")
+- **Enum Validation**: Validates enum field values against schema definitions
+- **Type Checking**: Ensures field values match expected data types
+- **Helpful Error Messages**: Provides clear feedback for invalid fields or values
+
+**Parameters**:
+- `object_type` (required): Type of OpenPages object (e.g., "SOXIssue", "SOXControl", "SOXRisk")
+- `operation` (required): Operation to perform - "create", "read", "update", or "delete"
+- `name` (optional): Object name (required for create, optional for update)
+- `description` (optional): Object description
+- `resource_id` (optional): Resource ID for read/update/delete operations
+- `path` (optional): Full object path (alternative to resource_id)
+- `primary_parent_id` (optional): Parent object ID for create operations
+- `fields` (optional): Dictionary of field values with validation
+
+**Example Usage**:
+
+```json
+{
+  "name": "openpages_manage_object",
+  "arguments": {
+    "object_type": "SOXIssue",
+    "operation": "create",
+    "name": "Security Vulnerability",
+    "description": "Critical security issue found in production",
+    "fields": {
+      "Status": "Open",
+      "Priority": "High",
+      "Severity": "Critical"
+    }
+  }
+}
+```
+
+**Workflow with Resources**:
+1. Agent calls `resources/list` to discover available object types
+2. Agent calls `resources/read` with URI `openpages://schema/SOXIssue` to get field definitions
+3. Agent calls `openpages_manage_object` with validated data
+4. Tool validates fields against schema and performs operation
+
+**Benefits Over Type-Specific Tools**:
+- Single tool for all object types (no need for separate tools per type)
+- Automatic schema validation prevents invalid data
+- Simplified field names for better usability
+- Dynamic discovery of available fields through resources
+- Consistent interface across all object types
+
+  "params": {
+    "uri": "openpages://schema/SOXIssue"
+  }
+}
+```
+
 
 ## Available Tools
 

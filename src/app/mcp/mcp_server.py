@@ -16,10 +16,12 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 
 from src.app.tools.generic_object_tools import GenericObjectTools
 from src.app.tools.query_tool import QueryTool
+from src.app.tools.generic_crud_tool import GenericCRUDTool
 from src.app.core.openpages_client import OpenPagesClient
 from src.app.config.settings import settings, Settings
 from src.app.mcp.schema_builder import SchemaBuilder
 from src.app.mcp.tool_handlers import ToolHandlers
+from src.app.mcp.resource_handlers import ResourceHandlers
 from src.app.mcp.request_processor import RequestProcessor
 
 # Version information
@@ -97,7 +99,13 @@ class MCPServer:
         
         # Initialize modular components
         self.schema_builder = SchemaBuilder(self.client)
-        self.tool_handlers = ToolHandlers(self.object_tools, self.settings, self.query_tool)
+        
+        # Initialize generic CRUD tool with schema validation
+        self.generic_crud_tool = GenericCRUDTool(self.client, self.schema_builder, self.settings)
+        logger.debug("Initialized generic CRUD tool")
+        
+        self.tool_handlers = ToolHandlers(self.object_tools, self.settings, self.query_tool, self.generic_crud_tool)
+        self.resource_handlers = ResourceHandlers(self.schema_builder, self.settings)
         
         # Load tools schema from JSON file
         self._load_tools_schema()
@@ -107,6 +115,7 @@ class MCPServer:
             __version__,
             self.tools,
             self.tool_handlers,
+            self.resource_handlers,
             dynamic_schemas_loaded=False,
             list_tools_callback=self._handle_list_tools_with_schema_loading
         )
@@ -283,6 +292,51 @@ Remember: Always enclose entity names in [brackets]!"""
                         }
                     },
                     "required": ["query"]
+                }
+            },
+            {
+                "name": "openpages_manage_object",
+                "description": "Generic tool to manage OpenPages objects with schema validation. Supports create, read, update, and delete operations on any configured object type. The tool automatically fetches the object schema from resources, validates field names and types, and maps simplified field names to full qualified names.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "object_type": {
+                            "type": "string",
+                            "description": "Type of OpenPages object (e.g., 'SOXIssue', 'SOXControl', 'SOXRisk'). Use resources/list to discover available types.",
+                            "enum": [obj_config.get("type_id") for obj_config in self.settings.OPENPAGES_OBJECT_TYPES if obj_config.get("type_id")]
+                        },
+                        "operation": {
+                            "type": "string",
+                            "enum": ["create", "read", "update", "delete"],
+                            "description": "Operation to perform: 'create' (new object), 'read' (get object), 'update' (modify object), 'delete' (remove object)"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Object name (required for create, optional for update)"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Object description (optional)"
+                        },
+                        "resource_id": {
+                            "type": "string",
+                            "description": "Resource ID for read/update/delete operations (alternative to path)"
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Full object path for read/update/delete operations (alternative to resource_id)"
+                        },
+                        "primary_parent_id": {
+                            "type": "string",
+                            "description": "Parent object ID for create operations (optional)"
+                        },
+                        "fields": {
+                            "type": "object",
+                            "description": "Dictionary of field values. Use simplified field names (e.g., 'Status') or full names (e.g., 'OPSS-Iss:Status'). The tool validates against the object schema from resources. Use resources/read with URI 'openpages://schema/{object_type}' to discover available fields.",
+                            "additionalProperties": True
+                        }
+                    },
+                    "required": ["object_type", "operation"]
                 }
             }
         ]

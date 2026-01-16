@@ -36,6 +36,7 @@ class RequestProcessor:
         server_version: str,
         tools: list,
         tool_handlers,
+        resource_handlers=None,
         dynamic_schemas_loaded: bool = False,
         list_tools_callback: Optional[Callable] = None
     ):
@@ -46,12 +47,14 @@ class RequestProcessor:
             server_version: Version of the MCP server
             tools: List of available tools
             tool_handlers: ToolHandlers instance for executing tools
+            resource_handlers: ResourceHandlers instance for managing resources
             dynamic_schemas_loaded: Flag indicating if dynamic schemas are loaded
             list_tools_callback: Optional callback for list_tools to trigger schema loading
         """
         self.server_version = server_version
         self.tools = tools
         self.tool_handlers = tool_handlers
+        self.resource_handlers = resource_handlers
         self.dynamic_schemas_loaded = dynamic_schemas_loaded
         self.list_tools_callback = list_tools_callback
     
@@ -108,10 +111,10 @@ class RequestProcessor:
                 },
                 "resources": {
                     "list": {
-                        "enabled": False
+                        "enabled": True if self.resource_handlers else False
                     },
                     "read": {
-                        "enabled": False
+                        "enabled": True if self.resource_handlers else False
                     }
                 },
                 "prompts": {
@@ -220,6 +223,34 @@ class RequestProcessor:
                 }
                 result = formatted_response
                 logger.debug("Tool API call completed")
+            elif method in ["list_resources", "resources/list"]:
+                if not self.resource_handlers:
+                    logger.error("Resources not enabled - resource_handlers not initialized")
+                    return {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32601,
+                            "message": "Resources not enabled"
+                        },
+                        "id": request_id
+                    }, False
+                logger.debug("Listing resources")
+                result = await self.resource_handlers.handle_list_resources(params)
+                logger.debug("List resources completed")
+            elif method in ["read_resource", "resources/read"]:
+                if not self.resource_handlers:
+                    logger.error("Resources not enabled - resource_handlers not initialized")
+                    return {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32601,
+                            "message": "Resources not enabled"
+                        },
+                        "id": request_id
+                    }, False
+                logger.debug("Reading resource")
+                result = await self.resource_handlers.handle_read_resource(params)
+                logger.debug("Read resource completed")
             elif method == "shutdown":
                 result = await self.handle_shutdown(params)
                 response = {
