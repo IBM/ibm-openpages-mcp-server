@@ -190,20 +190,46 @@ EXAMPLES:
 4. NULL check: SELECT [Name] FROM [{example_type}] WHERE [Owner] IS NOT NULL
 5. Text search: SELECT [Name] FROM [{example_type}] WHERE CONTAINS([Description], 'compliance')
 
-AGGREGATION:
+SELECT FEATURES:
+- Specific fields: SELECT [Field1], [Field2]
+- All fields: SELECT *
+- Qualified fields: SELECT [Table].[Field] or [Table].*
+- COUNT aggregation: COUNT(*), COUNT([Field]), COUNT([Table].[Field])
+
+FROM CLAUSE:
+- Simple: FROM [ObjectType]
+- With alias: FROM [ObjectType] AS [alias]
+- Multiple tables with joins (see JOINS below)
+
+AGGREGATION & GROUPING:
 - COUNT(*) - Count all records
 - COUNT([field]) - Count non-null values
-- Use with GROUP BY: SELECT [Status], COUNT(*) FROM [{example_type}] GROUP BY [Status]
+- GROUP BY: SELECT [Status], COUNT(*) FROM [{example_type}] GROUP BY [Status]
+- Can group by multiple fields: GROUP BY [Field1], [Field2]
 
 JOINS (hierarchical relationships):
-- JOIN [ChildType] ON CHILD([ParentType])
-- JOIN [ParentType] ON PARENT([ChildType])
-- OUTER JOIN for optional relationships
+- CHILD: JOIN [ChildType] ON CHILD([ParentType])
+- PARENT: JOIN [ParentType] ON PARENT([ChildType])
+- ANCESTOR: JOIN [AncestorType] ON ANCESTOR([ChildType], level)
+  - level is optional integer (e.g., 2 for grandparent)
+- OUTER JOIN: Use OUTER JOIN for optional relationships
+- Example: FROM [SOXIssue] JOIN [SOXControl] ON CHILD([SOXIssue])
 
 SORTING:
 - ORDER BY [field] ASC (ascending, default)
 - ORDER BY [field] DESC (descending)
 - Multiple fields: ORDER BY [field1] DESC, [field2] ASC
+- Can sort by qualified fields: ORDER BY [Table].[Field] ASC
+
+UNION QUERIES:
+- Combine results from multiple queries
+- UNION SELECT [fields] FROM [Type2] WHERE [conditions]
+- Must have same number and type of columns
+
+ADVANCED FEATURES:
+- Qualified column references: [TableName].[FieldName]
+- Table aliases: FROM [ObjectType] AS [alias]
+- Parentheses in WHERE for complex logic: WHERE ([A] = 1 OR [B] = 2) AND [C] = 3
 
 Remember: Always enclose entity names in [brackets]!"""
     
