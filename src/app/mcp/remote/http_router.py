@@ -128,13 +128,23 @@ async def sse_stream():
     Yields:
         SSE-formatted event strings
     """
-    # Send initial connection message
-    yield "event: connection\ndata: {\"status\":\"ok\",\"protocol\":\"mcp\",\"version\":\"2025-03-26\"}\n\n"
-    
-    # Keep the connection alive with heartbeat messages
-    while True:
-        await asyncio.sleep(30)  # Send heartbeat every 30 seconds
-        yield "event: heartbeat\ndata: {\"time\":\"" + str(asyncio.get_event_loop().time()) + "\"}\n\n"
+    try:
+        # Send initial connection message
+        yield "event: connection\ndata: {\"status\":\"ok\",\"protocol\":\"mcp\",\"version\":\"2025-03-26\"}\n\n"
+        
+        # Keep the connection alive with heartbeat messages
+        while True:
+            await asyncio.sleep(30)  # Send heartbeat every 30 seconds
+            yield "event: heartbeat\ndata: {\"time\":\"" + str(asyncio.get_event_loop().time()) + "\"}\n\n"
+    except asyncio.CancelledError:
+        # Handle client disconnection gracefully
+        logger.info("SSE stream cancelled - client disconnected")
+        raise
+    except Exception as e:
+        logger.error(f"Error in SSE stream: {e}")
+        raise
+    finally:
+        logger.debug("SSE stream closed")
 
 # GET endpoint for mcp-proxy connection with SSE support
 @router.get("")
