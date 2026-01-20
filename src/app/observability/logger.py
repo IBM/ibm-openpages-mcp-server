@@ -232,7 +232,7 @@ def setup_logging(
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         service_name: Name of the service for log identification
         json_format: Whether to use JSON format (True) or plain text (False)
-        log_file: Optional file path to write logs to
+        log_file: Optional file path to write logs to (relative paths are resolved from project root)
     """
     
     # Get root logger
@@ -259,7 +259,17 @@ def setup_logging(
     
     # Add file handler if specified
     if log_file:
-        file_handler = logging.FileHandler(log_file)
+        # Convert relative paths to absolute paths relative to project root
+        log_path = Path(log_file)
+        if not log_path.is_absolute():
+            # Get project root (4 levels up from this file)
+            project_root = Path(__file__).parent.parent.parent.parent
+            log_path = project_root / log_file
+        
+        # Ensure the log directory exists
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        file_handler = logging.FileHandler(str(log_path))
         file_handler.setLevel(getattr(logging, level.upper()))
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)

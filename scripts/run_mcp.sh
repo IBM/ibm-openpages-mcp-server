@@ -4,6 +4,17 @@
 # Usage: ./run_mcp.sh [mode]
 #   mode: remote (default) or local
 
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Get the project root (parent of scripts directory)
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
+# Change to project root directory
+cd "$PROJECT_ROOT" || {
+    echo "ERROR: Failed to change to project root directory: $PROJECT_ROOT"
+    exit 1
+}
+
 # Determine mode from argument or default to remote
 MODE="${1:-remote}"
 
@@ -12,8 +23,11 @@ if [ "$MODE" != "remote" ] && [ "$MODE" != "local" ]; then
     exit 1
 fi
 
+# Capitalize first letter of mode for display (compatible with older bash)
+MODE_DISPLAY=$(echo "$MODE" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')
+
 echo "========================================"
-echo "GRC MCP Server - ${MODE^} Mode"
+echo "GRC MCP Server - ${MODE_DISPLAY} Mode"
 echo "========================================"
 echo ""
 
@@ -61,7 +75,7 @@ pip install -r requirements.txt > /dev/null 2>&1
 
 echo ""
 echo "========================================"
-echo "Starting MCP Server in ${MODE^} Mode..."
+echo "Starting MCP Server in ${MODE_DISPLAY} Mode..."
 echo "========================================"
 echo ""
 

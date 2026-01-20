@@ -4,6 +4,20 @@ REM This script checks for dependencies and runs the server
 REM Usage: run_mcp.bat [mode]
 REM   mode: remote (default) or local
 
+REM Get the directory where this script is located
+set SCRIPT_DIR=%~dp0
+REM Remove trailing backslash
+set SCRIPT_DIR=%SCRIPT_DIR:~0,-1%
+REM Get the project root (parent of scripts directory)
+for %%I in ("%SCRIPT_DIR%\..") do set PROJECT_ROOT=%%~fI
+
+REM Change to project root directory
+cd /d "%PROJECT_ROOT%" || (
+    echo ERROR: Failed to change to project root directory: %PROJECT_ROOT%
+    pause
+    exit /b 1
+)
+
 REM Determine mode from argument or default to remote
 set MODE=%1
 if "%MODE%"=="" set MODE=remote
