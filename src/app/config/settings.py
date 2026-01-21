@@ -20,6 +20,12 @@ import pathlib
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Dict, Any, List
 
+# Get the project root directory (where main.py is located)
+# This file is at: project_root/src/app/config/settings.py
+# So we go up 3 levels to get to project root
+PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent.parent
+ENV_FILE_PATH = PROJECT_ROOT / ".env"
+
 class Settings(BaseSettings):
     """
     Application settings for GRC MCP Server
@@ -113,7 +119,7 @@ class Settings(BaseSettings):
     OBJECT_TYPES_CONFIG_PATH: str = "object_types.json"
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_FILE_PATH),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",  # Ignore extra fields from environment
