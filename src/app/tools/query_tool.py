@@ -59,10 +59,18 @@ class QueryTool(BaseTool):
         if not query:
             return [TextContent(type="text", text="Error: Query statement is required")]
         
-        # Extract optional parameters
-        offset = arguments.get('offset', 0)
-        limit = arguments.get('limit', 100)
-        output_format = arguments.get('format', 'table').lower()
+        # Extract optional parameters with proper defaults
+        offset = arguments.get('offset')
+        if offset is None:
+            offset = 0
+        limit = arguments.get('limit')
+        if limit is None:
+            limit = 20
+        output_format = arguments.get('format')
+        if output_format is None:
+            output_format = 'table'
+        else:
+            output_format = output_format.lower()
         
         # Validate parameters
         if not isinstance(offset, int) or offset < 0:
@@ -98,7 +106,30 @@ class QueryTool(BaseTool):
                 
         except Exception as e:
             logger.error(f"Error executing query: {e}")
-            return [TextContent(type="text", text=f"Error executing query: {str(e)}")]
+            error_message = str(e)
+            
+            # If it's an invalid field error, try to provide helpful field suggestions
+            if "Invalid Field" in error_message or "OP-60005" in error_message:
+                # Try to extract the object type from the query
+                import re
+                from_match = re.search(r'FROM\s+\[([^\]]+)\]', query, re.IGNORECASE)
+                if from_match:
+                    object_type = from_match.group(1)
+                    try:
+                        # Fetch the schema to get valid field names
+                        type_def = await self.client.get_type_definition(object_type)
+                        if type_def and 'field_definitions' in type_def:
+                            field_names = [f"[{field['name']}]" for field in type_def.get('field_definitions', []) if field.get('name')]
+                            # Limit to first 20 fields to keep message manageable
+                            field_list = ", ".join(field_names[:20])
+                            if len(field_names) > 20:
+                                field_list += f", ... and {len(field_names) - 20} more fields"
+                            
+                            error_message += f"\n\nValid fields for [{object_type}]:\n{field_list}\n\nPlease retry your query using one of these field names."
+                    except Exception as schema_error:
+                        logger.debug(f"Could not fetch schema for helpful error: {schema_error}")
+            
+            return [TextContent(type="text", text=f"Error executing query: {error_message}")]
     
     def _format_table_response(self, rows: List[Dict[str, Any]], query: str, row_count: int) -> List[TextContent]:
         """

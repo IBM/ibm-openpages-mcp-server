@@ -196,7 +196,7 @@ The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC plat
 
 The server provides a direct SQL query tool for executing SQL-like queries against OpenPages:
 
-#### execute_sql_query
+#### execute_openpages_query
 - **Description**: Execute SQL-like queries directly against the OpenPages query API
 - **Parameters**:
   - `query`: SQL-like query statement (required)
@@ -211,7 +211,7 @@ The server provides a direct SQL query tool for executing SQL-like queries again
 **Example Usage:**
 ```json
 {
-  "name": "execute_sql_query",
+  "name": "execute_openpages_query",
   "arguments": {
     "query": "SELECT [Resource ID], [Name], [Description] FROM [SOXIssue] WHERE [Name] LIKE '%Risk%' LIMIT 5",
     "format": "table"

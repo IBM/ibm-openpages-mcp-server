@@ -7,6 +7,7 @@ manages the execution lifecycle including error handling and response formatting
 
 The ToolHandlers class supports:
 - Echo tool for testing
+- SQL-like query tool for executing queries against OpenPages
 - Generic object tools (upsert, query, delete) for any configured object type
 - Dynamic tool routing based on naming conventions
 - Namespace support for tool organization
@@ -28,7 +29,7 @@ class ToolHandlers:
     the execution of different tool operations.
     """
     
-    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None, generic_crud_tool=None):
+    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None):
         """
         Initialize tool handlers
         
@@ -36,12 +37,10 @@ class ToolHandlers:
             object_tools: Dictionary of object-specific tool instances
             settings: Application settings
             query_tool: SQL query tool instance (optional)
-            generic_crud_tool: Generic CRUD tool instance (optional)
         """
         self.object_tools = object_tools
         self.settings = settings
         self.query_tool = query_tool
-        self.generic_crud_tool = generic_crud_tool
     
     @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     async def handle_echo_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -92,53 +91,6 @@ class ToolHandlers:
             return {
                 "result": [
                     {"type": "text", "text": f"Error executing SQL query: {str(e)}"}
-                ]
-            }
-    
-    @log_method_call(log_args=True, level=logging.DEBUG)
-    async def handle_generic_crud_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Handle the generic CRUD tool
-        
-        Args:
-            arguments: Tool arguments containing object_type, operation, and data fields
-            
-        Returns:
-            Dict containing the operation result
-        """
-        if not self.generic_crud_tool:
-            logger.error("Generic CRUD tool not initialized")
-            return {
-                "result": [
-                    {"type": "text", "text": "Error: Generic CRUD tool not initialized"}
-                ]
-            }
-        
-        logger.info("Executing generic CRUD tool")
-        try:
-            result = await self.generic_crud_tool.manage_object(
-                object_type=arguments.get("object_type"),
-                operation=arguments.get("operation"),
-                name=arguments.get("name"),
-                description=arguments.get("description"),
-                resource_id=arguments.get("resource_id"),
-                path=arguments.get("path"),
-                primary_parent_id=arguments.get("primary_parent_id"),
-                fields=arguments.get("fields")
-            )
-            
-            # Format result as text
-            import json
-            result_text = json.dumps(result, indent=2)
-            
-            return {
-                "result": [{"type": "text", "text": result_text}]
-            }
-        except Exception as e:
-            logger.error(f"Error executing generic CRUD tool: {e}", exc_info=True)
-            return {
-                "result": [
-                    {"type": "text", "text": f"Error: {str(e)}"}
                 ]
             }
     
@@ -275,8 +227,7 @@ class ToolHandlers:
             # Map special tool names to their handler methods
             special_tool_handlers = {
                 "echo": self.handle_echo_tool,
-                "execute_sql_query": self.handle_sql_query_tool,
-                "openpages_manage_object": self.handle_generic_crud_tool
+                "execute_openpages_query": self.handle_sql_query_tool
             }
             
             # Check if this is a special tool
@@ -286,7 +237,7 @@ class ToolHandlers:
             
             # Handle all other tools using the generic handler
             logger.debug(f"Routing to generic tool handler: {name}")
-            return await self.handle_generic_tool(name, arguments)
+            # return await self.handle_generic_tool(name, arguments)
                 
         except Exception as e:
             logger.error(f"Error calling tool {name}: {e}", exc_info=True, extra_fields={

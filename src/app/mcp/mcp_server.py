@@ -12,11 +12,10 @@ import os
 import json
 import logging
 import pathlib
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Dict, Any, List, Literal, Optional, Tuple, Union
 
 from src.app.tools.generic_object_tools import GenericObjectTools
 from src.app.tools.query_tool import QueryTool
-from src.app.tools.generic_crud_tool import GenericCRUDTool
 from src.app.core.openpages_client import OpenPagesClient
 from src.app.config.settings import settings, Settings
 from src.app.mcp.schema_builder import SchemaBuilder
@@ -100,11 +99,7 @@ class MCPServer:
         # Initialize modular components
         self.schema_builder = SchemaBuilder(self.client)
         
-        # Initialize generic CRUD tool with schema validation
-        self.generic_crud_tool = GenericCRUDTool(self.client, self.schema_builder, self.settings)
-        logger.debug("Initialized generic CRUD tool")
-        
-        self.tool_handlers = ToolHandlers(self.object_tools, self.settings, self.query_tool, self.generic_crud_tool)
+        self.tool_handlers = ToolHandlers(self.object_tools, self.settings, self.query_tool)
         self.resource_handlers = ResourceHandlers(self.schema_builder, self.settings)
         
         # Load tools schema from JSON file
@@ -155,92 +150,119 @@ class MCPServer:
 - [SOXTest] - Tests
 - Any custom object types defined in your OpenPages instance"""
         
-        # Build example query using first configured object type
-        example_type = self.settings.OPENPAGES_OBJECT_TYPES[0].get("type_id", "SOXIssue") if self.settings.OPENPAGES_OBJECT_TYPES else "SOXIssue"
-        
-        return f"""Execute SQL-like queries against OpenPages using Query Service syntax.
+        return f"""Purpose
+- Execute SQL-like queries against OpenPages using Query Service syntax.
 
-CRITICAL SYNTAX RULES:
-1. ALL entity names (object types and field names) MUST be enclosed in square brackets: [EntityName]
-2. Entity names are case-sensitive and must match exactly
-3. Keywords (SELECT, FROM, WHERE, etc.) are case-insensitive
+Mandatory preconditions
+- Do not call execute_openpages_query unless you have loaded the exact object type schema for this session using:
+  - resources/list to confirm the object type exists.
+  - resources/read with URI openpages://schema/{{ObjectType}} to load and review the field names.
 
-BASIC STRUCTURE:
-SELECT [field1], [field2], ... FROM [ObjectType] WHERE [conditions] ORDER BY [field] ASC/DESC
+How to discover field names
+- Use resources/list to see available object type schemas.
+- Use resources/read with URI openpages://schema/{{ObjectType}} to get the complete field list.
+- The schema provides the exact field names and any prefixes (for example, fields may appear as [OPSS-Iss:Status] rather than [Status]).
+- You must use those exact names in your query. If a requested field is not found in the schema, ask the user for clarification or propose alternatives that are present in the schema.
+- Label-Aware Inference: The agent may use labels (and configured synonyms) to infer candidate object types and fields from user intent. Before calling this tool, the agent must load and validate the schema via resources/list and resources/read, and translate labels to exact, bracketed system names.
+- Ambiguity Resolution: If multiple objects or fields share similar labels, the agent must resolve the selection deterministically or ask the user to clarify. The final SQL must use bracketed, case-exact system names only.
+- Preconditions: Do not execute if schema has not been loaded in this session. Do not embed limits in SQL; use limit/offset parameters.
+
+Common fields guidance (explicit)
+- The "COMMON FIELDS" notion is non-authoritative, for examples only. Never assume fields like [Status], [Owner] exist on any object type without verifying them in the schema.
+- Many fields are prefixed and vary by object type. Do not guess or fabricate prefixed variants (e.g., do not assume [OPSS-Iss:Status]); you must use the names exactly as shown in the schema.
+- You may only use a "common" field in a query after verifying it exists for the target object type in this session's loaded schema.
+
+Critical syntax rules
+- All entity names (object types and field names) must be enclosed in square brackets: [EntityName].
+- Entity names are case-sensitive and must match the schema exactly.
+- Use single quotes for string values.
+- Use the tool's limit and offset parameters for pagination; do not embed LIMIT or TOP clauses in SQL.
+
+Basic query structure
+- SELECT [Field1], [Field2], ...
+- FROM [ObjectType]
+- WHERE [conditions]
+- ORDER BY [Field] ASC/DESC
 
 {object_types_section}
 
-COMMON FIELDS (always use brackets, available on most object types):
-- [Resource ID] - Unique identifier
-- [Name] - Object name
-- [Description] - Object description
-- [Status] - Current status
-- [Owner] - Object owner
-- [Creation Date] - When created
-- [Last Modification Date] - Last updated
+Select features
+- Select specific fields: SELECT [Field1], [Field2]
+- Select all fields: SELECT *
+- Qualified fields: SELECT [Table].[Field] or [Table].*
+- Aggregations: COUNT(*), COUNT([Field]), COUNT([Table].[Field])
 
-PREFIXED FIELDS (examples - include full prefix in brackets):
-- [OPSS-Iss:Priority] - Example: Issue priority field
-- [OPSS-Iss:Due Date] - Example: Issue due date field
-- Format: [GroupPrefix:FieldName] - Use the exact prefix from your schema
-
-WHERE CLAUSE OPERATORS:
+Where clause operators
 - Comparison: =, <>, <, >, <=, >=
-- Pattern: LIKE '%text%' (use % for wildcards, not *)
+- Pattern: LIKE '%text%' (use % for wildcards)
 - NULL checks: IS NULL, IS NOT NULL
 - Lists: IN ('val1', 'val2'), NOT IN (...)
 - Text search: CONTAINS([field], 'text'), NOT CONTAINS([field], 'text')
-- Logical: AND, OR, NOT, parentheses for grouping
+- Logical: AND, OR, NOT; use parentheses for grouping
 
-EXAMPLES:
-1. Basic: SELECT [Resource ID], [Name] FROM [{example_type}] WHERE [Status] = 'Active'
-2. Pattern: SELECT [Name] FROM [{example_type}] WHERE [Name] LIKE '%Financial%'
-3. Multiple conditions: SELECT [Name], [OPSS-Iss:Priority] FROM [{example_type}] WHERE [Status] = 'Active' AND [OPSS-Iss:Priority] IN ('High', 'Critical') ORDER BY [OPSS-Iss:Due Date] ASC
-4. NULL check: SELECT [Name] FROM [{example_type}] WHERE [Owner] IS NOT NULL
-5. Text search: SELECT [Name] FROM [{example_type}] WHERE CONTAINS([Description], 'compliance')
-
-SELECT FEATURES:
-- Specific fields: SELECT [Field1], [Field2]
-- All fields: SELECT *
-- Qualified fields: SELECT [Table].[Field] or [Table].*
-- COUNT aggregation: COUNT(*), COUNT([Field]), COUNT([Table].[Field])
-
-FROM CLAUSE:
+From clause
 - Simple: FROM [ObjectType]
-- With alias: FROM [ObjectType] AS [alias]
-- Multiple tables with joins (see JOINS below)
+- Aliases: FROM [ObjectType] AS [alias]
+- Multiple tables with hierarchical joins
 
-AGGREGATION & GROUPING:
-- COUNT(*) - Count all records
-- COUNT([field]) - Count non-null values
-- GROUP BY: SELECT [Status], COUNT(*) FROM [{example_type}] GROUP BY [Status]
-- Can group by multiple fields: GROUP BY [Field1], [Field2]
-
-JOINS (hierarchical relationships):
+Joins (hierarchical relationships)
 - CHILD: JOIN [ChildType] ON CHILD([ParentType])
 - PARENT: JOIN [ParentType] ON PARENT([ChildType])
-- ANCESTOR: JOIN [AncestorType] ON ANCESTOR([ChildType], level)
-  - level is optional integer (e.g., 2 for grandparent)
-- OUTER JOIN: Use OUTER JOIN for optional relationships
-- Example: FROM [SOXIssue] JOIN [SOXControl] ON CHILD([SOXIssue])
+- ANCESTOR: JOIN [AncestorType] ON ANCESTOR([ChildType], level) where level is optional integer
+- OUTER JOIN is supported for optional relationships
+- Example pattern (illustrative only; verify actual field names via schema): FROM [SOXIssue] JOIN [SOXControl] ON CHILD([SOXIssue])
 
-SORTING:
-- ORDER BY [field] ASC (ascending, default)
-- ORDER BY [field] DESC (descending)
-- Multiple fields: ORDER BY [field1] DESC, [field2] ASC
-- Can sort by qualified fields: ORDER BY [Table].[Field] ASC
+Aggregation and grouping
+- Example: SELECT [Status], COUNT(*) FROM [SOXControl] GROUP BY [Status]
+- You can group by multiple fields: GROUP BY [Field1], [Field2]
 
-UNION QUERIES:
-- Combine results from multiple queries
-- UNION SELECT [fields] FROM [Type2] WHERE [conditions]
-- Must have same number and type of columns
+Sorting
+- ORDER BY [Field] ASC (ascending, default) or DESC (descending)
+- You can sort by qualified fields: ORDER BY [Table].[Field] ASC
+- Verify the sort field exists in the schema before using it
 
-ADVANCED FEATURES:
-- Qualified column references: [TableName].[FieldName]
-- Table aliases: FROM [ObjectType] AS [alias]
-- Parentheses in WHERE for complex logic: WHERE ([A] = 1 OR [B] = 2) AND [C] = 3
+Union queries
+- Combine results from multiple queries: UNION SELECT [fields] FROM [Type2] WHERE [conditions]
+- The unioned queries must have the same number and compatible types of columns
 
-Remember: Always enclose entity names in [brackets]!"""
+Pre-execution checklist
+- Confirm the exact object type with the user (e.g., [SOXIssue]).
+- Use resources/list to validate the object type exists.
+- Use resources/read openpages://schema/{{ObjectType}} to load the schema.
+- Select the fields to return and verify each field exists in the schema (including any "common" fields).
+- Confirm and verify the sort field (e.g., [Creation Date] vs. [Last Modification Date]) in the schema.
+- Build the query using bracketed, case-exact names from the schema.
+- Pass limit and offset via execute_openpages_query parameters (e.g., limit=20, offset=0); do not embed pagination in SQL.
+
+Error handling and recovery
+- If a query fails due to "invalid field" or similar schema-related errors:
+  - Immediately invalidate any cached schema for that object type.
+  - Re-read the schema using resources/read.
+  - Rebuild the query using only verified fields and re-execute.
+- If the requested field is not present in the schema:
+  - Ask the user for clarification or propose alternative fields that do exist.
+- Report the cause of errors and show the corrected query text.
+
+Reporting requirements (best practice)
+- Before execution (when appropriate), show the intended SELECT, FROM, WHERE, ORDER BY using verified field names for user review.
+- After execution, include the executed query text, the limit and offset used, and the sort field.
+- If any requested "common" field was not available, note what alternative was used and why.
+
+Examples (illustrative only; always replace with exact names from the loaded schema)
+- Basic: SELECT [Resource ID], [Name] FROM [SOXControl] WHERE [Status] = 'Active'
+- Pattern: SELECT [Name] FROM [SOXControl] WHERE [Name] LIKE '%Financial%'
+- Multiple conditions: SELECT [Name], [OPSS-Iss:Priority] FROM [SOXIssue] WHERE [Status] = 'Open' AND [OPSS-Iss:Priority] IN ('High', 'Critical') ORDER BY [OPSS-Iss:Due Date] ASC
+- NULL check: SELECT [Name] FROM [SOXIssue] WHERE [Owner] IS NOT NULL
+- Text search: SELECT [Name] FROM [SOXRisk] WHERE CONTAINS([Description], 'compliance')
+
+Warning about examples
+- The examples above are not guarantees of field availability and may not match your instance. Always verify fields in the schema before using them. Replace all field names in examples with the exact, case-sensitive names from your loaded schema.
+
+Tool parameters
+- query: The SQL-like query statement. All entity names must be enclosed in square brackets and strings must use single quotes.
+- offset: Result offset for pagination (default 0).
+- limit: Maximum number of results to return (default 20, max 500).
+- format: 'table' (default), 'json', or 'list'."""
     
     def _load_tools_schema(self) -> None:
         """
@@ -265,14 +287,14 @@ Remember: Always enclose entity names in [brackets]!"""
                 }
             },
             {
-                "name": "execute_sql_query",
+                "name": "execute_openpages_query",
                 "description": self._build_sql_query_description(),
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "SQL query statement. MUST enclose all entity names in square brackets [Name]. Use single quotes for string values. Example: SELECT [Resource ID], [Name], [Status] FROM [SOXIssue] WHERE [Status] = 'Active' AND [OPSS-Iss:Priority] = 'High' ORDER BY [Name] LIMIT 10"
+                            "description": "SQL query statement. MUST enclose all entity names in square brackets [Name]. Use single quotes for string values. Example: SELECT [Resource ID], [Name] FROM [SOXIssue] ORDER BY [Creation Date] DESC"
                         },
                         "offset": {
                             "type": "integer",
@@ -281,7 +303,7 @@ Remember: Always enclose entity names in [brackets]!"""
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum number of results to return (default: 100, max: 500)",
+                            "description": "Maximum number of results to return (default: 20, max: 500)",
                             "minimum": 1,
                             "maximum": 500
                         },
@@ -293,56 +315,11 @@ Remember: Always enclose entity names in [brackets]!"""
                     },
                     "required": ["query"]
                 }
-            },
-            {
-                "name": "openpages_manage_object",
-                "description": "Generic tool to manage OpenPages objects with schema validation. Supports create, read, update, and delete operations on any configured object type. The tool automatically fetches the object schema from resources, validates field names and types, and maps simplified field names to full qualified names.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "object_type": {
-                            "type": "string",
-                            "description": "Type of OpenPages object (e.g., 'SOXIssue', 'SOXControl', 'SOXRisk'). Use resources/list to discover available types.",
-                            "enum": [obj_config.get("type_id") for obj_config in self.settings.OPENPAGES_OBJECT_TYPES if obj_config.get("type_id")]
-                        },
-                        "operation": {
-                            "type": "string",
-                            "enum": ["create", "read", "update", "delete"],
-                            "description": "Operation to perform: 'create' (new object), 'read' (get object), 'update' (modify object), 'delete' (remove object)"
-                        },
-                        "name": {
-                            "type": "string",
-                            "description": "Object name (required for create, optional for update)"
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Object description (optional)"
-                        },
-                        "resource_id": {
-                            "type": "string",
-                            "description": "Resource ID for read/update/delete operations (alternative to path)"
-                        },
-                        "path": {
-                            "type": "string",
-                            "description": "Full object path for read/update/delete operations (alternative to resource_id)"
-                        },
-                        "primary_parent_id": {
-                            "type": "string",
-                            "description": "Parent object ID for create operations (optional)"
-                        },
-                        "fields": {
-                            "type": "object",
-                            "description": "Dictionary of field values. Use simplified field names (e.g., 'Status') or full names (e.g., 'OPSS-Iss:Status'). The tool validates against the object schema from resources. Use resources/read with URI 'openpages://schema/{object_type}' to discover available fields.",
-                            "additionalProperties": True
-                        }
-                    },
-                    "required": ["object_type", "operation"]
-                }
             }
         ]
         
         # Dynamically add tools for each configured object type
-        self._add_dynamic_tools_to_schema()
+        # self._add_dynamic_tools_to_schema()
         
     def _add_dynamic_tools_to_schema(self) -> None:
         """

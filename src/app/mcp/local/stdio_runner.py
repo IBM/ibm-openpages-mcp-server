@@ -3,6 +3,9 @@ OpenPages MCP Server Runner - Stdio Mode
 
 This module provides the entry point for running the MCP server in stdio (local) mode.
 It handles stdin/stdout communication for the JSON-RPC protocol.
+
+CRITICAL: In stdio mode, stdout is reserved exclusively for JSON-RPC messages.
+All logging MUST go to stderr to avoid interfering with the MCP protocol.
 """
 
 import os
@@ -16,12 +19,7 @@ from src.app.utils import configure_logging
 from src.app.mcp.mcp_server import MCPServer, __version__
 from src.app.config.settings import Settings, settings
 
-# Configure logging to stderr only (no stdout pollution)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stderr
-)
+# Logger will be configured by configure_logging() in run_stdio_server()
 logger = logging.getLogger(__name__)
 
 async def run_stdio_server(custom_settings: Optional[Settings] = None) -> None:
@@ -36,8 +34,8 @@ async def run_stdio_server(custom_settings: Optional[Settings] = None) -> None:
     # Use provided settings or default settings
     app_settings = custom_settings if custom_settings else settings
     
-    # Configure logging based on settings
-    configure_logging(app_settings.LOG_LEVEL)
+    # Configure logging to stderr (CRITICAL: stdout must be reserved for JSON-RPC messages only)
+    configure_logging(app_settings.LOG_LEVEL, use_stderr=True)
     
     logger.info(f"MCP server v{__version__} starting in stdio mode...")
     logger.info(f"Debug mode: {app_settings.DEBUG}")
@@ -50,7 +48,19 @@ async def run_stdio_server(custom_settings: Optional[Settings] = None) -> None:
     
     try:
         # Create server instance with the custom settings
-        server = MCPServer(custom_settings=app_settings)
+        try:
+            server = MCPServer(custom_settings=app_settings)
+        except RuntimeError as init_error:
+            # Server initialization failed (likely due to missing credentials)
+            # Create a minimal server that can respond with errors
+            auth_failed = True
+            auth_error_message = f"Server initialization failed: {str(init_error)}. Please check your configuration in the .env file."
+            logger.error(f"Server initialization failed: {init_error}")
+            logger.warning("Server will continue running but all requests will return configuration error")
+            # We can't proceed without a server instance, so we need to handle this differently
+            # For now, we'll exit with an error
+            logger.critical("Cannot start server without valid configuration")
+            raise
         
         # Initialize client authentication
         try:

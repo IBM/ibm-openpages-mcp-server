@@ -425,18 +425,18 @@ class SchemaBuilder:
                 enum_fields.append(display_name)
         
         # Add common fields
-        common_fields_mapping = {
-            "SOXIssue": ["Priority [OPSS-Iss]", "Owner", "Due Date [OPSS-Iss]"],
-            "Model": ["Owner", "Last Modified Date", "Creation Date"],
-            "SOXControl": ["Owner", "Control Frequency", "Automation Status"],
-            "SOXRisk": ["Owner", "Risk Level", "Impact"]
-        }
+        # common_fields_mapping = {
+        #     "SOXIssue": ["Priority [OPSS-Iss]", "Owner", "Due Date [OPSS-Iss]"],
+        #     "Model": ["Owner", "Last Modified Date", "Creation Date"],
+        #     "SOXControl": ["Owner", "Control Frequency", "Automation Status"],
+        #     "SOXRisk": ["Owner", "Risk Level", "Impact"]
+        # }
         
-        for obj_type, fields in common_fields_mapping.items():
-            if obj_type in object_type:
-                for field in fields:
-                    if field not in field_names:
-                        field_names.append(field)
+        # for obj_type, fields in common_fields_mapping.items():
+        #     if obj_type in object_type:
+        #         for field in fields:
+        #             if field not in field_names:
+        #                 field_names.append(field)
         
         # Sort field names
         field_names.sort()

@@ -3,6 +3,9 @@ Local MCP Server Runner
 
 Provides a convenience function to run the MCP server in local (stdio) mode.
 This is used by main.py when running in local mode.
+
+CRITICAL: In stdio mode, stdout is reserved exclusively for JSON-RPC messages.
+All logging MUST go to stderr to avoid interfering with the MCP protocol.
 """
 
 import asyncio
@@ -11,7 +14,7 @@ from src.app.mcp.local.stdio_runner import run_stdio_server
 from src.app.utils import configure_logging
 from src.app.config.settings import settings
 
-# Configure logging
+# Logger will be configured by configure_logging() in run_local_server()
 logger = logging.getLogger(__name__)
 
 def run_local_server(debug_mode=False):
@@ -25,13 +28,13 @@ def run_local_server(debug_mode=False):
     # Force local mode
     settings.SERVER_MODE = "local"
     
-    # Configure logging based on debug mode
+    # Configure logging to stderr (CRITICAL: stdout must be reserved for JSON-RPC messages only)
     if debug_mode:
         settings.DEBUG = True
-        configure_logging("DEBUG")
+        configure_logging("DEBUG", use_stderr=True)
         logger.info("Debug mode enabled for local MCP server")
     else:
-        configure_logging(settings.LOG_LEVEL)
+        configure_logging(settings.LOG_LEVEL, use_stderr=True)
     
     # Run the server using the stdio_runner
     try:

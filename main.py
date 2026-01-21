@@ -33,12 +33,14 @@ from src.app.observability.middleware import (
     ObservabilityMiddleware,
 )
 
-# Setup structured logging
+# Setup structured logging for remote mode (default)
+# This will be reconfigured in local mode to use stderr
 setup_logging(
     level=settings.LOG_LEVEL,
     service_name=settings.APP_NAME,
     json_format=(settings.LOG_FORMAT == "json"),
     log_file=settings.LOG_FILE,
+    use_stderr=False,  # Remote mode uses stdout
 )
 
 logger = get_logger(__name__)
@@ -176,9 +178,16 @@ if __name__ == "__main__":
     
     # Run in appropriate mode
     if args.mode == "local":
+        # Reconfigure logging for local mode to use stderr (CRITICAL for stdio protocol)
+        setup_logging(
+            level="DEBUG" if args.debug else settings.LOG_LEVEL,
+            service_name=settings.APP_NAME,
+            json_format=(settings.LOG_FORMAT == "json"),
+            log_file=None,  # Disable file logging in local mode to avoid path issues
+            use_stderr=True,  # Local mode MUST use stderr
+        )
         # Run local MCP server with stdio transport
-        logger.info("Starting local MCP server with stdio transport")
-        run_local_server()
+        run_local_server(debug_mode=args.debug)
     else:
         # Run remote MCP server with HTTP
         logger.info(f"Starting remote MCP server on {args.host}:{args.port}")

@@ -310,13 +310,14 @@ class OpenPagesClient:
                 logger.error(f"HTTP status error during query: {e}")
                 logger.error(f"Response status: {e.response.status_code}")
                 logger.error(f"Response body: {e.response.text}")
-                # Return a mock empty result instead of raising an error
-                return {"rows": []}
+                # Re-raise the error with a more descriptive message
+                error_message = f"OpenPages API error ({e.response.status_code}): {e.response.text}"
+                raise RuntimeError(error_message) from e
             except httpx.RequestError as e:
                 # Network-related errors
                 logger.error(f"Request error during query: {e}")
-                # Return a mock empty result instead of raising an error
-                return {"rows": []}
+                # Re-raise the error with a more descriptive message
+                raise RuntimeError(f"Network error during query: {str(e)}") from e
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def get_content(self, resource_id: str) -> Dict[str, Any]:
