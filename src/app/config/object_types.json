@@ -1,7 +1,9 @@
 {
   "global_settings": {
     "output_format": "json",
-    "output_format_description": "Global output format for all tool responses. Options: 'text' (human-readable, default) or 'json' (structured, machine-readable for agents)"
+    "output_format_description": "Global output format for all tool responses. Options: 'text' (human-readable, default) or 'json' (structured, machine-readable for agents)",
+    "namespace": "openpages",
+    "namespace_description": "Global namespace prefix for generic tools (e.g., delete_object becomes openpages_delete_object)"
   },
   "object_types": [
     {

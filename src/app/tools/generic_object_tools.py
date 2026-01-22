@@ -858,17 +858,11 @@ class GenericObjectTools(BaseTool):
                 # Convert field names to snake_case for JSON consistency
                 json_field_name = field_name.replace(' ', '_').replace('-', '_').lower()
                 object_data[json_field_name] = field_value
-                
-                # Also keep original field names for backward compatibility
-                object_data[field_name] = field_value
             
             # Add computed fields
-            resource_id = object_data.get('Resource ID') or object_data.get('resource_id')
+            resource_id = object_data.get('resource_id')
             if resource_id:
                 object_data['task_view_url'] = self.get_task_view_url(resource_id)
-                object_data['resource_id'] = resource_id
-            
-            object_data['name'] = object_data.get('Name') or object_data.get('name', 'N/A')
             
             items.append(object_data)
         
