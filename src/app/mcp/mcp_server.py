@@ -1,7 +1,7 @@
 """
 OpenPages MCP Server Implementation
 
-This module implements a Machine Comprehension Protocol (MCP) server
+This module implements a Model Context Protocol (MCP) server
 that interfaces with IBM OpenPages to provide tools for managing issues,
 controls, and other OpenPages objects.
 
@@ -34,9 +34,8 @@ class MCPServer:
     """
     MCP Server implementation
     
-    This class implements a Machine Comprehension Protocol (MCP) server that interfaces
-    with IBM OpenPages. It provides tools for managing issues, controls, and other
-    OpenPages objects through a JSON-RPC interface.
+    This class implements a Model Context Protocol (MCP) server that interfaces
+    with IBM OpenPages. It provides tools for OpenPages objects, such as issues, controls, etc through a JSON-RPC interface.
     
     Supports both local (stdio) and remote (HTTP) transport modes.
     """
@@ -151,129 +150,61 @@ class MCPServer:
 - Any custom object types defined in your OpenPages instance"""
         
         return f"""Purpose
-- Execute SQL-like queries against OpenPages using Query Service syntax.
+Execute SQL-like queries against OpenPages using Query Service syntax.
 
-Mandatory preconditions
-- Do not call execute_openpages_query unless you have loaded the exact object type schema for this session using:
-  - resources/list to confirm the object type exists.
-  - resources/read with URI openpages://schema/{{ObjectType}} to load and review the field names.
+MANDATORY WORKFLOW (follow in order)
+1. Read openpages://schema/query_grammar (FIRST TIME ONLY)
+   - Complete query syntax, operators, keywords, joins, examples
+   - Required for understanding hierarchical relationships (PARENT, CHILD, ANCESTOR)
 
-How to discover field names
-- Use resources/list to see available object type schemas.
-- Use resources/read with URI openpages://schema/{{ObjectType}} to get the complete field list.
-- The schema provides the exact field names and any prefixes (for example, fields may appear as [OPSS-Iss:Status] rather than [Status]).
-- You must use those exact names in your query. If a requested field is not found in the schema, ask the user for clarification or propose alternatives that are present in the schema.
-- Label-Aware Inference: The agent may use labels (and configured synonyms) to infer candidate object types and fields from user intent. Before calling this tool, the agent must load and validate the schema via resources/list and resources/read, and translate labels to exact, bracketed system names.
-- Ambiguity Resolution: If multiple objects or fields share similar labels, the agent must resolve the selection deterministically or ask the user to clarify. The final SQL must use bracketed, case-exact system names only.
-- Preconditions: Do not execute if schema has not been loaded in this session. Do not embed limits in SQL; use limit/offset parameters.
+2. Read openpages://schema/{{ObjectType}} (EVERY QUERY)
+   - Get exact field names and data types for the target object type
+   - Field names may include namespace prefixes (e.g., [OPSS-Iss:Status])
+   - Use resources/list first to discover available object types
 
-Common fields guidance (explicit)
-- The "COMMON FIELDS" notion is non-authoritative, for examples only. Never assume fields like [Status], [Owner] exist on any object type without verifying them in the schema.
-- Many fields are prefixed and vary by object type. Do not guess or fabricate prefixed variants (e.g., do not assume [OPSS-Iss:Status]); you must use the names exactly as shown in the schema.
-- You may only use a "common" field in a query after verifying it exists for the target object type in this session's loaded schema.
+3. Construct query using ONLY schema-validated names
+   - All entity names must be in square brackets: [ObjectType], [FieldName]
+   - Names are case-sensitive and must match schema exactly
+   - Never assume field names exist without schema verification
 
-Critical syntax rules
-- All entity names (object types and field names) must be enclosed in square brackets: [EntityName].
-- Entity names are case-sensitive and must match the schema exactly.
-- Use single quotes for string values.
-- Use the tool's limit and offset parameters for pagination; do not embed LIMIT or TOP clauses in SQL.
-
-Basic query structure
-- SELECT [Field1], [Field2], ...
-- FROM [ObjectType]
-- WHERE [conditions]
-- ORDER BY [Field] ASC/DESC
+4. Execute query with pagination parameters
+   - Use limit and offset parameters (not SQL LIMIT/TOP clauses)
+   - Default limit: 20, maximum: 500
 
 {object_types_section}
 
-Select features
-- Select specific fields: SELECT [Field1], [Field2]
-- Select all fields: SELECT *
-- Qualified fields: SELECT [Table].[Field] or [Table].*
-- Aggregations: COUNT(*), COUNT([Field]), COUNT([Table].[Field])
+CRITICAL RULES
+- Square brackets required: [ObjectType], [FieldName]
+- Case-sensitive: Must match schema exactly
+- Schema validation: Verify ALL field names before use
+- No assumptions: Never guess field names or prefixes
+- Pagination: Use tool parameters, not SQL clauses
 
-Where clause operators
-- Comparison: =, <>, <, >, <=, >=
-- Pattern: LIKE '%text%' (use % for wildcards)
-- NULL checks: IS NULL, IS NOT NULL
-- Lists: IN ('val1', 'val2'), NOT IN (...)
-- Text search: CONTAINS([field], 'text'), NOT CONTAINS([field], 'text')
-- Logical: AND, OR, NOT; use parentheses for grouping
+HIERARCHICAL JOINS (see query_grammar for details)
+- PARENT([FromType]): Get parent objects
+- CHILD([FromType]): Get child objects
+- ANCESTOR([FromType], level): Get ancestor objects
+- Rule: Type inside function must match FROM clause type
+- Example: FROM [ChildType] JOIN [ParentType] ON PARENT([ChildType])
 
-From clause
-- Simple: FROM [ObjectType]
-- Aliases: FROM [ObjectType] AS [alias]
-- Multiple tables with hierarchical joins
+SCHEMA-DRIVEN APPROACH
+- Object types: Discover via resources/list
+- Field names: Get from openpages://schema/{{ObjectType}}
+- Query syntax: Reference openpages://schema/query_grammar
+- Never hardcode or assume names
 
-Joins (hierarchical relationships)
-CRITICAL: The function in the ON clause (PARENT/CHILD/ANCESTOR) must reference the object type in the FROM clause, NOT the joined type.
+LABEL-AWARE INFERENCE
+- May infer object types/fields from user labels
+- MUST validate via resources/list and resources/read
+- MUST translate labels to exact bracketed system names
+- If ambiguous, ask user to clarify
 
-- To get parent objects: JOIN [ParentType] ON PARENT([ChildTypeFromFROM])
-  This means: "Get the parent SOXControl objects of the SOXIssue objects"
-
-- To get child objects: JOIN [ChildType] ON CHILD([ParentTypeFromFROM])
-  This means: "Get the child SOXIssue objects of the SOXControl objects"
-
-- To get ancestor objects: JOIN [AncestorType] ON ANCESTOR([DescendantTypeFromFROM], level)
-  Level is optional integer for how many levels up to traverse
-
-- OUTER JOIN is supported for optional relationships
-
-Rule of thumb: The object type inside PARENT(), CHILD(), or ANCESTOR() must always be the object type from the FROM clause.
-
-Aggregation and grouping
-- GROUP BY clause is ONLY required when using aggregation functions (COUNT, SUM, AVG, MIN, MAX).
-- Example with aggregation: SELECT [Status], COUNT(*) FROM [SOXControl] GROUP BY [Status]
-- You can group by multiple fields: GROUP BY [Field1], [Field2]
-- CRITICAL: Do NOT use GROUP BY without aggregation functions. If you want unique values, use SELECT DISTINCT instead.
-
-Sorting
-- ORDER BY [Field] ASC (ascending, default) or DESC (descending)
-- You can sort by qualified fields: ORDER BY [Table].[Field] ASC
-- Verify the sort field exists in the schema before using it
-
-Union queries
-- Combine results from multiple queries: UNION SELECT [fields] FROM [Type2] WHERE [conditions]
-- The unioned queries must have the same number and compatible types of columns
-
-Pre-execution checklist
-- Confirm the exact object type with the user (e.g., [SOXIssue]).
-- Use resources/list to validate the object type exists.
-- Use resources/read openpages://schema/{{ObjectType}} to load the schema.
-- Select the fields to return and verify each field exists in the schema (including any "common" fields).
-- Confirm and verify the sort field (e.g., [Creation Date] vs. [Last Modification Date]) in the schema.
-- Build the query using bracketed, case-exact names from the schema.
-- Pass limit and offset via execute_openpages_query parameters (e.g., limit=20, offset=0); do not embed pagination in SQL.
-
-Error handling and recovery
-- If a query fails due to "invalid field" or similar schema-related errors:
-  - Immediately invalidate any cached schema for that object type.
-  - Re-read the schema using resources/read.
-  - Rebuild the query using only verified fields and re-execute.
-- If the requested field is not present in the schema:
-  - Ask the user for clarification or propose alternative fields that do exist.
-- Report the cause of errors and show the corrected query text.
-
-Reporting requirements (best practice)
-- Before execution (when appropriate), show the intended SELECT, FROM, WHERE, ORDER BY using verified field names for user review.
-- After execution, include the executed query text, the limit and offset used, and the sort field.
-- If any requested "common" field was not available, note what alternative was used and why.
-
-Examples (illustrative only; always replace with exact names from the loaded schema)
-- Basic: SELECT [Resource ID], [Name] FROM [SOXControl] WHERE [Status] = 'Active'
-- Pattern: SELECT [Name] FROM [SOXControl] WHERE [Name] LIKE '%Financial%'
-- Multiple conditions: SELECT [Name], [OPSS-Iss:Priority] FROM [SOXIssue] WHERE [Status] = 'Open' AND [OPSS-Iss:Priority] IN ('High', 'Critical') ORDER BY [OPSS-Iss:Due Date] ASC
-- NULL check: SELECT [Name] FROM [SOXIssue] WHERE [Owner] IS NOT NULL
-- Text search: SELECT [Name] FROM [SOXRisk] WHERE CONTAINS([Description], 'compliance')
-
-Warning about examples
-- The examples above are not guarantees of field availability and may not match your instance. Always verify fields in the schema before using them. Replace all field names in examples with the exact, case-sensitive names from your loaded schema.
-
-Tool parameters
-- query: The SQL-like query statement. All entity names must be enclosed in square brackets and strings must use single quotes.
-- offset: Result offset for pagination (default 0).
-- limit: Maximum number of results to return (default 20, max 500).
-- format: 'table' (default), 'json', or 'list'."""
+ERROR RECOVERY
+- Invalid field error → Re-read schema, rebuild query
+- Field not in schema → Ask user for clarification or propose alternatives
+- Always report error cause and show corrected query
+"""
+        return description
     
     def _load_tools_schema(self) -> None:
         """

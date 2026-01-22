@@ -110,12 +110,8 @@ class RequestProcessor:
                     }
                 },
                 "resources": {
-                    "list": {
-                        "enabled": True if self.resource_handlers else False
-                    },
-                    "read": {
-                        "enabled": True if self.resource_handlers else False
-                    }
+                    "subscribe": True if self.resource_handlers else False,
+                    "listChanged": True if self.resource_handlers else False
                 },
                 "prompts": {
                     "list": {

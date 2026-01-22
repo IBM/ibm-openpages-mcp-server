@@ -48,7 +48,7 @@ class ResourceHandlers:
         Handle list_resources request
         
         Returns a list of available object type schema resources based on
-        the configured object types in settings.
+        the configured object types in settings, plus the query grammar resource.
         
         Args:
             params: Parameters from the list_resources request
@@ -59,6 +59,15 @@ class ResourceHandlers:
         logger.info("Handling list_resources request")
         
         resources = []
+        
+        # Add the query grammar resource first
+        resources.append({
+            "uri": "openpages://schema/query_grammar",
+            "name": "OpenPages Query Grammar",
+            "description": "Complete SQL-like query language grammar for OpenPages including syntax rules, operators, joins, and examples",
+            "mimeType": "text/plain"
+        })
+        logger.debug("Added query grammar resource")
         
         # Create a resource for each configured object type
         for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
@@ -118,6 +127,19 @@ class ResourceHandlers:
             raise ValueError(f"Invalid resource URI format: {uri}. Expected: openpages://schema/{{type_id}}")
         
         type_id = uri.replace("openpages://schema/", "")
+        
+        # Handle query grammar resource specially
+        if type_id == "query_grammar":
+            logger.debug("Returning query grammar resource")
+            return {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "text/plain",
+                        "text": self._build_query_grammar_content()
+                    }
+                ]
+            }
         
         # Find the object configuration
         obj_config = None
@@ -264,9 +286,22 @@ class ResourceHandlers:
         logger.debug(f"Built schema content for {type_id} with {len(fields)} fields ({len(relationship_fields)} relationships, {len(hierarchical_relationships)} hierarchical)")
         return schema_content
     
+    def _get_configured_type_ids(self) -> set:
+        """
+        Get set of all configured object type IDs
+        
+        Returns:
+            Set of type IDs from OPENPAGES_OBJECT_TYPES configuration
+        """
+        return {config.get("type_id") for config in self.settings.OPENPAGES_OBJECT_TYPES
+                if config.get("type_id")}
+    
     def _extract_hierarchical_relationships(self, type_def: Dict[str, Any], type_id: str) -> List[Dict[str, Any]]:
         """
         Extract hierarchical (parent-child) relationships from type definition associations
+        
+        Only includes associations where the target type is also configured in OPENPAGES_OBJECT_TYPES.
+        This ensures that schemas only reference types that are available in the current configuration.
         
         The associations API returns a flat array where each item has:
         - name: The associated object type name
@@ -278,9 +313,12 @@ class ResourceHandlers:
             type_id: Current object type ID
             
         Returns:
-            List of hierarchical relationship definitions
+            List of hierarchical relationship definitions (filtered to configured types only)
         """
         relationships = []
+        
+        # Get set of configured type IDs for filtering
+        configured_types = self._get_configured_type_ids()
         
         # Get associations from type definition (it's a flat array)
         associations = type_def.get("associations", [])
@@ -302,6 +340,11 @@ class ResourceHandlers:
             if not associated_type:
                 continue
             
+            # CRITICAL: Only include associations where the target type is configured
+            if associated_type not in configured_types:
+                logger.debug(f"Skipping association to unconfigured type: {associated_type} (from {type_id})")
+                continue
+            
             if relationship_type == "Parent":
                 relationships.append({
                     "direction": "parent",
@@ -317,6 +360,7 @@ class ResourceHandlers:
                     "description": f"This {type_id} can have {associated_type} objects as children"
                 })
         
+        logger.debug(f"Extracted {len(relationships)} hierarchical relationships for {type_id} (filtered to configured types)")
         return relationships
     
     def _format_schema_as_text(self, schema_content: Dict[str, Any]) -> str:
@@ -623,5 +667,532 @@ class ResourceHandlers:
         
         lines.append("")  # Blank line between fields
         return lines
+    
+    def _build_query_grammar_content(self) -> str:
+        """
+        Build comprehensive query grammar documentation from ANTLR grammar files
+        
+        Returns:
+            Formatted text documentation of the OpenPages SQL-like query language
+        """
+        lines = []
+        
+        # Header
+        lines.append("=" * 80)
+        lines.append("OPENPAGES QUERY LANGUAGE GRAMMAR")
+        lines.append("=" * 80)
+        lines.append("")
+        lines.append("OpenPages provides a SQL-like query language for retrieving and filtering")
+        lines.append("objects. This grammar is defined using ANTLR v3 and supports a subset of")
+        lines.append("SQL with OpenPages-specific extensions for hierarchical relationships.")
+        lines.append("")
+        
+        # Overview
+        lines.append("## OVERVIEW")
+        lines.append("")
+        lines.append("The OpenPages Query Language allows you to:")
+        lines.append("- SELECT fields from object types")
+        lines.append("- Filter results using WHERE clauses")
+        lines.append("- Join related objects using hierarchical relationships (PARENT, CHILD, ANCESTOR)")
+        lines.append("- Sort results with ORDER BY")
+        lines.append("- Group results with GROUP BY")
+        lines.append("- Perform text searches with CONTAINS")
+        lines.append("- Use UNION to combine multiple queries")
+        lines.append("")
+        
+        # Basic Query Structure
+        lines.append("## BASIC QUERY STRUCTURE")
+        lines.append("")
+        lines.append("```")
+        lines.append("SELECT <select_list>")
+        lines.append("FROM <table_reference>")
+        lines.append("[WHERE <search_condition>]")
+        lines.append("[GROUP BY <group_by_specification>]")
+        lines.append("[ORDER BY <sort_specification>]")
+        lines.append("```")
+        lines.append("")
+        lines.append("Multiple queries can be combined with UNION:")
+        lines.append("```")
+        lines.append("SELECT ... FROM ... WHERE ...")
+        lines.append("UNION SELECT ... FROM ... WHERE ...")
+        lines.append("```")
+        lines.append("")
+        
+        # Keywords
+        lines.append("## KEYWORDS (Case-Insensitive)")
+        lines.append("")
+        lines.append("### Query Structure")
+        lines.append("- SELECT: Specify fields to retrieve")
+        lines.append("- FROM: Specify object type(s) to query")
+        lines.append("- WHERE: Filter results")
+        lines.append("- ORDER BY: Sort results")
+        lines.append("- GROUP BY: Group results")
+        lines.append("- UNION: Combine multiple queries")
+        lines.append("")
+        lines.append("### Join Operations")
+        lines.append("- JOIN: Join related objects")
+        lines.append("- OUTER JOIN: Left outer join (includes objects without relationships)")
+        lines.append("- ON: Specify join condition")
+        lines.append("- AS: Alias for table names")
+        lines.append("")
+        lines.append("### Hierarchical Predicates")
+        lines.append("- PARENT: Join to parent objects")
+        lines.append("- CHILD: Join to child objects")
+        lines.append("- ANCESTOR: Join to ancestor objects (with optional level)")
+        lines.append("")
+        lines.append("### Logical Operators")
+        lines.append("- AND: Logical AND")
+        lines.append("- OR: Logical OR")
+        lines.append("- NOT: Logical NOT")
+        lines.append("")
+        lines.append("### Comparison Operators")
+        lines.append("- = : Equal to")
+        lines.append("- <> : Not equal to")
+        lines.append("- < : Less than")
+        lines.append("- > : Greater than")
+        lines.append("- <= : Less than or equal to")
+        lines.append("- >= : Greater than or equal to")
+        lines.append("")
+        lines.append("### String Operators")
+        lines.append("- LIKE: Pattern matching (use % as wildcard)")
+        lines.append("- NOT LIKE: Negated pattern matching")
+        lines.append("- CONTAINS: Full-text search")
+        lines.append("- NOT CONTAINS: Negated full-text search")
+        lines.append("")
+        lines.append("### Null Operators")
+        lines.append("- IS NULL: Check for null values")
+        lines.append("- IS NOT NULL: Check for non-null values")
+        lines.append("")
+        lines.append("### List Operators")
+        lines.append("- IN: Value in list")
+        lines.append("- NOT IN: Value not in list")
+        lines.append("")
+        lines.append("### Sorting")
+        lines.append("- ASC: Ascending order (default)")
+        lines.append("- DESC: Descending order")
+        lines.append("")
+        lines.append("### Aggregation")
+        lines.append("- COUNT: Count records")
+        lines.append("")
+        
+        # Data Types and Literals
+        lines.append("## DATA TYPES AND LITERALS")
+        lines.append("")
+        lines.append("### String Literals")
+        lines.append("- Enclosed in single quotes: 'example'")
+        lines.append("- Escape single quotes with backslash: 'can\\'t'")
+        lines.append("- Example: [Name] = 'Risk Assessment'")
+        lines.append("")
+        lines.append("### Numeric Literals")
+        lines.append("- Integer: 42, -10, 0")
+        lines.append("- Decimal: 3.14, -0.5, 100.00")
+        lines.append("- Example: [Risk Score] >= 7.5")
+        lines.append("")
+        lines.append("### Boolean Literals")
+        lines.append("- TRUE or true")
+        lines.append("- FALSE or false")
+        lines.append("- Example: [Active] = TRUE")
+        lines.append("")
+        lines.append("### Date Literals")
+        lines.append("- Format: DATE 'YYYY-MM-DD'")
+        lines.append("- Example: [Due Date] > DATE '2024-01-01'")
+        lines.append("")
+        lines.append("### Entity References (Object Types and Fields)")
+        lines.append("- Enclosed in square brackets: [ObjectType] or [FieldName]")
+        lines.append("- Can include namespace: [Namespace:FieldName]")
+        lines.append("- Example: SELECT [Name], [Description] FROM [ObjectType]")
+        lines.append("- IMPORTANT: Use actual object type and field names from schemas")
+        lines.append("  Read openpages://schema/{ObjectType} to get exact names")
+        lines.append("")
+        
+        # Select List
+        lines.append("## SELECT LIST")
+        lines.append("")
+        lines.append("NOTE: Replace [ObjectType] and [FieldName] with actual names from schemas")
+        lines.append("")
+        lines.append("### Select All Fields")
+        lines.append("```")
+        lines.append("SELECT * FROM [ObjectType]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Select Specific Fields")
+        lines.append("```")
+        lines.append("SELECT [Field1], [Field2], [Field3] FROM [ObjectType]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Select with Table Qualifier")
+        lines.append("```")
+        lines.append("SELECT [alias].[Field1], [alias].[Field2] FROM [ObjectType] AS [alias]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Select All Fields from Specific Table")
+        lines.append("```")
+        lines.append("SELECT [alias].* FROM [ObjectType] AS [alias]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Count Aggregation")
+        lines.append("```")
+        lines.append("SELECT COUNT([FieldName]) FROM [ObjectType]")
+        lines.append("SELECT COUNT([alias].[FieldName]) FROM [ObjectType] AS [alias]")
+        lines.append("SELECT COUNT([alias].*) FROM [ObjectType] AS [alias]")
+        lines.append("SELECT COUNT(*) FROM [ObjectType]")
+        lines.append("```")
+        lines.append("")
+        
+        # FROM Clause
+        lines.append("## FROM CLAUSE")
+        lines.append("")
+        lines.append("NOTE: Replace [ObjectType], [ParentType], [ChildType] with actual names from resources/list")
+        lines.append("")
+        lines.append("### Simple Table Reference")
+        lines.append("```")
+        lines.append("FROM [ObjectType]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Table with Alias")
+        lines.append("```")
+        lines.append("FROM [ObjectType] AS [alias]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Join with Parent")
+        lines.append("```")
+        lines.append("FROM [ChildType] JOIN [ParentType] ON PARENT([ChildType])")
+        lines.append("```")
+        lines.append("Pattern: The type inside PARENT() must match the FROM clause type")
+        lines.append("")
+        lines.append("### Join with Child")
+        lines.append("```")
+        lines.append("FROM [ParentType] JOIN [ChildType] ON CHILD([ParentType])")
+        lines.append("```")
+        lines.append("Pattern: The type inside CHILD() must match the FROM clause type")
+        lines.append("")
+        lines.append("### Join with Ancestor (with level)")
+        lines.append("```")
+        lines.append("FROM [DescendantType] JOIN [AncestorType] ON ANCESTOR([DescendantType], 2)")
+        lines.append("```")
+        lines.append("Pattern: The type inside ANCESTOR() must match the FROM clause type")
+        lines.append("")
+        lines.append("### Outer Join")
+        lines.append("```")
+        lines.append("FROM [ParentType] OUTER JOIN [ChildType] ON CHILD([ParentType])")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Multiple Joins")
+        lines.append("```")
+        lines.append("FROM [Type1] AS [t1]")
+        lines.append("  JOIN [Type2] AS [t2] ON PARENT([t1])")
+        lines.append("  JOIN [Type3] AS [t3] ON PARENT([t2])")
+        lines.append("```")
+        lines.append("")
+        
+        # WHERE Clause
+        lines.append("## WHERE CLAUSE")
+        lines.append("")
+        lines.append("NOTE: Replace [FieldName] with actual field names from object schemas")
+        lines.append("")
+        lines.append("### Comparison Predicates")
+        lines.append("```")
+        lines.append("WHERE [FieldName] = 'value'")
+        lines.append("WHERE [NumericField] >= 7.5")
+        lines.append("WHERE [DateField] < DATE '2024-12-31'")
+        lines.append("WHERE [BooleanField] = TRUE")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Pattern Matching")
+        lines.append("```")
+        lines.append("WHERE [FieldName] LIKE 'prefix%'")
+        lines.append("WHERE [FieldName] NOT LIKE '%substring%'")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Null Checks")
+        lines.append("```")
+        lines.append("WHERE [FieldName] IS NULL")
+        lines.append("WHERE [FieldName] IS NOT NULL")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Text Search")
+        lines.append("```")
+        lines.append("WHERE CONTAINS([TextField], 'search term')")
+        lines.append("WHERE NOT CONTAINS([TextField], 'excluded term')")
+        lines.append("```")
+        lines.append("")
+        lines.append("### List Membership")
+        lines.append("```")
+        lines.append("WHERE [FieldName] IN ('value1', 'value2', 'value3')")
+        lines.append("WHERE [FieldName] NOT IN ('excluded1', 'excluded2')")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Logical Combinations")
+        lines.append("```")
+        lines.append("WHERE [Field1] = 'value1' AND [Field2] = 'value2'")
+        lines.append("WHERE [Field1] = 'value1' OR [Field1] = 'value2'")
+        lines.append("WHERE [Field1] = 'value' AND ([Field2] = 'val1' OR [Field2] = 'val2')")
+        lines.append("```")
+        lines.append("")
+        
+        # ORDER BY Clause
+        lines.append("## ORDER BY CLAUSE")
+        lines.append("")
+        lines.append("NOTE: Replace [FieldName] with actual field names from schemas")
+        lines.append("")
+        lines.append("### Single Column")
+        lines.append("```")
+        lines.append("ORDER BY [FieldName]")
+        lines.append("ORDER BY [FieldName] ASC")
+        lines.append("ORDER BY [FieldName] DESC")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Multiple Columns")
+        lines.append("```")
+        lines.append("ORDER BY [Field1] DESC, [Field2] ASC")
+        lines.append("ORDER BY [Field1], [Field2] DESC")
+        lines.append("```")
+        lines.append("")
+        lines.append("### With Table Qualifier")
+        lines.append("```")
+        lines.append("ORDER BY [alias].[Field1], [alias].[Field2]")
+        lines.append("```")
+        lines.append("")
+        
+        # GROUP BY Clause
+        lines.append("## GROUP BY CLAUSE")
+        lines.append("")
+        lines.append("NOTE: Replace [ObjectType] and [FieldName] with actual names from schemas")
+        lines.append("")
+        lines.append("### Single Column")
+        lines.append("```")
+        lines.append("SELECT [FieldName], COUNT(*) FROM [ObjectType] GROUP BY [FieldName]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Multiple Columns")
+        lines.append("```")
+        lines.append("SELECT [Field1], [Field2], COUNT(*)")
+        lines.append("FROM [ObjectType]")
+        lines.append("GROUP BY [Field1], [Field2]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### With Table Qualifier")
+        lines.append("```")
+        lines.append("SELECT [alias].[FieldName], COUNT([alias].*)")
+        lines.append("FROM [ObjectType] AS [alias]")
+        lines.append("GROUP BY [alias].[FieldName]")
+        lines.append("```")
+        lines.append("")
+        
+        # Complete Examples
+        lines.append("## COMPLETE QUERY EXAMPLES")
+        lines.append("")
+        lines.append("IMPORTANT: These are syntax patterns. Replace [ObjectType] and [FieldName]")
+        lines.append("with actual names from your schemas (use resources/list and resources/read).")
+        lines.append("")
+        lines.append("### Example 1: Simple Query")
+        lines.append("```")
+        lines.append("SELECT [Field1], [Field2], [Field3]")
+        lines.append("FROM [ObjectType]")
+        lines.append("WHERE [Field3] = 'value'")
+        lines.append("ORDER BY [Field1]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Example 2: Query with Join")
+        lines.append("```")
+        lines.append("SELECT [child].[Field1], [parent].[Field1]")
+        lines.append("FROM [ChildType] AS [child]")
+        lines.append("  JOIN [ParentType] AS [parent] ON PARENT([child])")
+        lines.append("WHERE [child].[Field2] = 'value'")
+        lines.append("ORDER BY [child].[Field1]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Example 3: Complex Filter")
+        lines.append("```")
+        lines.append("SELECT [Field1], [Field2], [Field3], [Field4]")
+        lines.append("FROM [ObjectType]")
+        lines.append("WHERE ([Field2] = 'value1' OR [Field2] = 'value2')")
+        lines.append("  AND [Field3] IN ('val1', 'val2')")
+        lines.append("  AND [Field4] < DATE '2024-12-31'")
+        lines.append("ORDER BY [Field3] DESC, [Field4] ASC")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Example 4: Hierarchical Query")
+        lines.append("```")
+        lines.append("SELECT [t1].[Field1], [t2].[Field1], [t3].[Field1]")
+        lines.append("FROM [Type1] AS [t1]")
+        lines.append("  JOIN [Type2] AS [t2] ON PARENT([t1])")
+        lines.append("  JOIN [Type3] AS [t3] ON PARENT([t2])")
+        lines.append("WHERE [t1].[Field2] = 'value'")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Example 5: Aggregation Query")
+        lines.append("```")
+        lines.append("SELECT [Field1], [Field2], COUNT(*)")
+        lines.append("FROM [ObjectType]")
+        lines.append("WHERE [Field1] <> 'excluded_value'")
+        lines.append("GROUP BY [Field1], [Field2]")
+        lines.append("ORDER BY [Field1], [Field2]")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Example 6: Text Search")
+        lines.append("```")
+        lines.append("SELECT [Field1], [Field2]")
+        lines.append("FROM [ObjectType]")
+        lines.append("WHERE CONTAINS([Field2], 'search term')")
+        lines.append("  AND [Field3] = 'value'")
+        lines.append("```")
+        lines.append("")
+        lines.append("### Example 7: Union Query")
+        lines.append("```")
+        lines.append("SELECT [Field1], [Field2] FROM [ObjectType] WHERE [Field3] = 'value1'")
+        lines.append("UNION SELECT [Field1], [Field2] FROM [ObjectType] WHERE [Field2] = 'value2'")
+        lines.append("```")
+        lines.append("")
+        
+        # Grammar Rules
+        lines.append("## FORMAL GRAMMAR RULES")
+        lines.append("")
+        lines.append("### Query Structure")
+        lines.append("```")
+        lines.append("all_queries ::= query (query)*")
+        lines.append("")
+        lines.append("query ::= SELECT select_list from_clause [where_clause] [group_by_clause] [order_by_clause]")
+        lines.append("        | UNION SELECT select_list from_clause [where_clause] [group_by_clause] [order_by_clause]")
+        lines.append("")
+        lines.append("select_list ::= select_sublist (',' select_sublist)*")
+        lines.append("              | '*'")
+        lines.append("")
+        lines.append("select_sublist ::= column_reference")
+        lines.append("                 | qualifier '.' '*'")
+        lines.append("")
+        lines.append("column_reference ::= column_name")
+        lines.append("                   | qualifier '.' column_name")
+        lines.append("                   | COUNT '(' column_name ')'")
+        lines.append("                   | COUNT '(' qualifier '.' column_name ')'")
+        lines.append("                   | COUNT '(' qualifier '.' '*' ')'")
+        lines.append("                   | COUNT '(' '*' ')'")
+        lines.append("```")
+        lines.append("")
+        lines.append("### FROM Clause")
+        lines.append("```")
+        lines.append("from_clause ::= FROM table_reference")
+        lines.append("")
+        lines.append("table_reference ::= one_table (table_join)*")
+        lines.append("")
+        lines.append("one_table ::= table_name")
+        lines.append("            | table_name AS correlation_name")
+        lines.append("")
+        lines.append("table_join ::= JOIN one_table join_specification")
+        lines.append("             | OUTER JOIN one_table join_specification")
+        lines.append("")
+        lines.append("join_specification ::= ON join_predicate '(' one_table ')'")
+        lines.append("                     | ON join_predicate '(' one_table ',' level ')'")
+        lines.append("")
+        lines.append("join_predicate ::= CHILD | PARENT | ANCESTOR")
+        lines.append("")
+        lines.append("level ::= INTEGER_LITERAL")
+        lines.append("```")
+        lines.append("")
+        lines.append("### WHERE Clause")
+        lines.append("```")
+        lines.append("where_clause ::= WHERE search_condition")
+        lines.append("")
+        lines.append("search_condition ::= sub_search_condition ((AND | OR) sub_search_condition)*")
+        lines.append("")
+        lines.append("sub_search_condition ::= predicate")
+        lines.append("                       | '(' search_condition ')'")
+        lines.append("")
+        lines.append("predicate ::= comparison_predicate")
+        lines.append("            | like_predicate")
+        lines.append("            | null_predicate")
+        lines.append("            | text_search_predicate")
+        lines.append("            | in_predicate")
+        lines.append("")
+        lines.append("comparison_predicate ::= value_expression comparison_op literal")
+        lines.append("")
+        lines.append("comparison_op ::= '=' | '<>' | '<' | '>' | '<=' | '>='")
+        lines.append("")
+        lines.append("like_predicate ::= value_expression LIKE string_literal")
+        lines.append("                 | value_expression 'NOT LIKE' string_literal")
+        lines.append("")
+        lines.append("null_predicate ::= value_expression 'IS NULL'")
+        lines.append("                 | value_expression 'IS NOT NULL'")
+        lines.append("")
+        lines.append("text_search_predicate ::= CONTAINS '(' value_expression ',' string_literal ')'")
+        lines.append("                        | 'NOT CONTAINS' '(' value_expression ',' string_literal ')'")
+        lines.append("")
+        lines.append("in_predicate ::= value_expression IN '(' literal_list ')'")
+        lines.append("               | value_expression 'NOT IN' '(' literal_list ')'")
+        lines.append("")
+        lines.append("literal_list ::= literal (',' literal)*")
+        lines.append("")
+        lines.append("value_expression ::= column_reference")
+        lines.append("")
+        lines.append("literal ::= num_literal | string_literal | date_literal | boolean_literal")
+        lines.append("```")
+        lines.append("")
+        lines.append("### ORDER BY and GROUP BY")
+        lines.append("```")
+        lines.append("order_by_clause ::= ORDER BY sort_specification (',' sort_specification)*")
+        lines.append("")
+        lines.append("sort_specification ::= column_reference [ASC | DESC]")
+        lines.append("")
+        lines.append("group_by_clause ::= GROUP BY group_by_specification (',' group_by_specification)*")
+        lines.append("")
+        lines.append("group_by_specification ::= column_name")
+        lines.append("                         | qualifier '.' column_name")
+        lines.append("```")
+        lines.append("")
+        
+        # Best Practices
+        lines.append("## BEST PRACTICES")
+        lines.append("")
+        lines.append("1. **Always use square brackets** for object types and field names")
+        lines.append("   - Correct: [ObjectType], [FieldName]")
+        lines.append("   - Incorrect: ObjectType, FieldName")
+        lines.append("   - Get actual names from schemas using resources/read")
+        lines.append("")
+        lines.append("2. **Use table aliases** for complex queries with joins")
+        lines.append("   - Makes queries more readable")
+        lines.append("   - Required when selecting from multiple tables")
+        lines.append("")
+        lines.append("3. **Be specific with field selection**")
+        lines.append("   - Select only needed fields instead of using *")
+        lines.append("   - Improves query performance")
+        lines.append("")
+        lines.append("4. **Use appropriate operators**")
+        lines.append("   - Use LIKE for pattern matching, not = with wildcards")
+        lines.append("   - Use CONTAINS for full-text search")
+        lines.append("   - Use IN for multiple value checks")
+        lines.append("")
+        lines.append("5. **Optimize WHERE clauses**")
+        lines.append("   - Put most restrictive conditions first")
+        lines.append("   - Use parentheses to clarify complex logic")
+        lines.append("")
+        lines.append("6. **Understand hierarchical relationships**")
+        lines.append("   - PARENT: Direct parent only")
+        lines.append("   - CHILD: Direct children only")
+        lines.append("   - ANCESTOR: Any ancestor (use level parameter to limit)")
+        lines.append("")
+        lines.append("7. **Use OUTER JOIN when needed**")
+        lines.append("   - Include objects even if they don't have the relationship")
+        lines.append("   - Similar to SQL LEFT OUTER JOIN")
+        lines.append("")
+        
+        # Limitations
+        lines.append("## LIMITATIONS AND NOTES")
+        lines.append("")
+        lines.append("1. **No subqueries**: Subqueries in WHERE clauses are not supported")
+        lines.append("2. **Limited aggregation**: Only COUNT is supported")
+        lines.append("3. **No HAVING clause**: Cannot filter on aggregated results")
+        lines.append("4. **No arithmetic**: Cannot perform calculations in SELECT or WHERE")
+        lines.append("5. **Case sensitivity**: Field values are case-sensitive in comparisons")
+        lines.append("6. **Date format**: Dates must use ISO format (YYYY-MM-DD)")
+        lines.append("7. **Wildcard in LIKE**: Use % as wildcard, not *")
+        lines.append("")
+        
+        # Footer
+        lines.append("=" * 80)
+        lines.append("END OF OPENPAGES QUERY LANGUAGE GRAMMAR")
+        lines.append("=" * 80)
+        lines.append("")
+        
+        return "\n".join(lines)
 
 # Made with Bob

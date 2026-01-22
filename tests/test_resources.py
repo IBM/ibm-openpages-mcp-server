@@ -149,17 +149,24 @@ async def test_list_resources(resource_handlers):
     result = await resource_handlers.handle_list_resources({})
     
     assert "resources" in result
-    assert len(result["resources"]) == 2
+    assert len(result["resources"]) == 3  # Query grammar + 2 object types
     
-    # Check first resource (Issue)
-    issue_resource = result["resources"][0]
+    # Check query grammar resource (first)
+    grammar_resource = result["resources"][0]
+    assert grammar_resource["uri"] == "openpages://schema/query_grammar"
+    assert grammar_resource["name"] == "OpenPages Query Grammar"
+    assert "query language grammar" in grammar_resource["description"]
+    assert grammar_resource["mimeType"] == "text/plain"
+    
+    # Check Issue resource (second)
+    issue_resource = result["resources"][1]
     assert issue_resource["uri"] == "openpages://schema/SOXIssue"
     assert issue_resource["name"] == "Issue Schema"
     assert "Issue objects" in issue_resource["description"]
     assert issue_resource["mimeType"] == "application/json"
     
-    # Check second resource (Control)
-    control_resource = result["resources"][1]
+    # Check Control resource (third)
+    control_resource = result["resources"][2]
     assert control_resource["uri"] == "openpages://schema/SOXControl"
     assert control_resource["name"] == "Control Schema"
     assert "Control objects" in control_resource["description"]
