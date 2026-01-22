@@ -237,7 +237,7 @@ class ToolHandlers:
             
             # Handle all other tools using the generic handler
             logger.debug(f"Routing to generic tool handler: {name}")
-            # return await self.handle_generic_tool(name, arguments)
+            return await self.handle_generic_tool(name, arguments)
                 
         except Exception as e:
             logger.error(f"Error calling tool {name}: {e}", exc_info=True, extra_fields={
