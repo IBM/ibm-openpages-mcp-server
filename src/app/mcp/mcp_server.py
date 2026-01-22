@@ -206,15 +206,26 @@ From clause
 - Multiple tables with hierarchical joins
 
 Joins (hierarchical relationships)
-- CHILD: JOIN [ChildType] ON CHILD([ParentType])
-- PARENT: JOIN [ParentType] ON PARENT([ChildType])
-- ANCESTOR: JOIN [AncestorType] ON ANCESTOR([ChildType], level) where level is optional integer
+CRITICAL: The function in the ON clause (PARENT/CHILD/ANCESTOR) must reference the object type in the FROM clause, NOT the joined type.
+
+- To get parent objects: JOIN [ParentType] ON PARENT([ChildTypeFromFROM])
+  This means: "Get the parent SOXControl objects of the SOXIssue objects"
+
+- To get child objects: JOIN [ChildType] ON CHILD([ParentTypeFromFROM])
+  This means: "Get the child SOXIssue objects of the SOXControl objects"
+
+- To get ancestor objects: JOIN [AncestorType] ON ANCESTOR([DescendantTypeFromFROM], level)
+  Level is optional integer for how many levels up to traverse
+
 - OUTER JOIN is supported for optional relationships
-- Example pattern (illustrative only; verify actual field names via schema): FROM [SOXIssue] JOIN [SOXControl] ON CHILD([SOXIssue])
+
+Rule of thumb: The object type inside PARENT(), CHILD(), or ANCESTOR() must always be the object type from the FROM clause.
 
 Aggregation and grouping
-- Example: SELECT [Status], COUNT(*) FROM [SOXControl] GROUP BY [Status]
+- GROUP BY clause is ONLY required when using aggregation functions (COUNT, SUM, AVG, MIN, MAX).
+- Example with aggregation: SELECT [Status], COUNT(*) FROM [SOXControl] GROUP BY [Status]
 - You can group by multiple fields: GROUP BY [Field1], [Field2]
+- CRITICAL: Do NOT use GROUP BY without aggregation functions. If you want unique values, use SELECT DISTINCT instead.
 
 Sorting
 - ORDER BY [Field] ASC (ascending, default) or DESC (descending)
@@ -319,7 +330,7 @@ Tool parameters
         ]
         
         # Dynamically add tools for each configured object type
-        # self._add_dynamic_tools_to_schema()
+        self._add_dynamic_tools_to_schema()
         
     def _add_dynamic_tools_to_schema(self) -> None:
         """

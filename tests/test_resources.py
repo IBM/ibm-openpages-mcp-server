@@ -86,6 +86,15 @@ def mock_schema_builder():
                     {"name": "Medium", "localized_label": "Medium"},
                     {"name": "Low", "localized_label": "Low"}
                 ]
+            },
+            {
+                "name": "OPSS-Iss:Assoc-Control",
+                "localized_label": "Associated Controls",
+                "data_type": "MULTI_VALUE_ID_TYPE",
+                "description": "Controls associated with this issue",
+                "required": False,
+                "read_only": False,
+                "target_type": "SOXControl"
             }
         ]
     }
@@ -230,41 +239,57 @@ async def test_read_resource_schema_fetch_failure(resource_handlers, mock_schema
 
 @pytest.mark.asyncio
 async def test_schema_content_structure(resource_handlers):
-    """Test the structure of schema content"""
+    """Test the structure of schema content in new LLM-friendly format"""
     params = {"uri": "openpages://schema/SOXIssue"}
     result = await resource_handlers.handle_read_resource(params)
     
-    # Parse the JSON text content
-    import json
-    schema_content = json.loads(result["contents"][0]["text"])
+    # Get the text content
+    text_content = result["contents"][0]["text"]
     
-    # Verify schema structure
-    assert schema_content["type_id"] == "SOXIssue"
-    assert schema_content["display_name"] == "Issue"
-    assert schema_content["namespace"] == "openpages"
-    assert schema_content["path_prefix"] == "Issue"
-    assert "description" in schema_content
-    assert "field_count" in schema_content
-    assert "fields" in schema_content
-    assert "configuration" in schema_content
+    # Verify the new structured format contains key sections
+    assert "OPENPAGES OBJECT TYPE SCHEMA: Issue" in text_content
+    assert "## METADATA" in text_content
+    assert "Type ID: SOXIssue" in text_content
+    assert "Display Name: Issue" in text_content
+    assert "Namespace: openpages" in text_content
+    assert "Path Prefix: Issue" in text_content
+    assert "Total Fields: 4" in text_content  # Updated to 4 (includes relationship field)
+    assert "Relationship Fields: 1" in text_content
     
-    # Verify fields
-    fields = schema_content["fields"]
-    assert len(fields) == 3  # Name, Status, Priority
+    # Verify field sections
+    assert "## FIELDS" in text_content
+    assert "### Required Fields" in text_content
+    assert "### Enumerated Fields" in text_content
     
-    # Check Name field
-    name_field = next(f for f in fields if f["name"] == "Name")
-    assert name_field["label"] == "Name"
-    assert name_field["data_type"] == "STRING_TYPE"
-    assert name_field["required"] is True
+    # Verify specific fields are present
+    assert "**Name**" in text_content
+    assert "**Status**" in text_content
+    assert "**Priority**" in text_content
     
-    # Check Status field with enum values
-    status_field = next(f for f in fields if f["name"] == "OPSS-Iss:Status")
-    assert status_field["label"] == "Status"
-    assert status_field["data_type"] == "ENUM_TYPE"
-    assert "enum_values" in status_field
-    assert len(status_field["enum_values"]) == 2
-    assert status_field["enum_values"][0]["name"] == "Open"
+    # Verify enum values are listed
+    assert "Allowed Values:" in text_content
+    assert "- Open" in text_content
+    assert "- Closed" in text_content
+    assert "- High" in text_content
+    assert "- Medium" in text_content
+    assert "- Low" in text_content
+    
+    # Verify relationships section
+    assert "## RELATIONSHIPS" in text_content
+    assert "**Associated Controls**" in text_content
+    assert "MULTI_VALUE_ID_TYPE" in text_content
+    assert "[Multiple]" in text_content
+    
+    # Verify configuration section
+    assert "## CONFIGURATION" in text_content
+    assert "### Create Operation Settings" in text_content
+    assert "### Query Operation Settings" in text_content
+    
+    # Verify usage guidance
+    assert "## USAGE GUIDANCE" in text_content
+    assert "### Field Name Format" in text_content
+    assert "### Data Type Mapping" in text_content
+    assert "### Working with Relationships" in text_content
 
 
 @pytest.mark.asyncio
@@ -273,22 +298,21 @@ async def test_configuration_in_schema(resource_handlers):
     params = {"uri": "openpages://schema/SOXIssue"}
     result = await resource_handlers.handle_read_resource(params)
     
-    import json
-    schema_content = json.loads(result["contents"][0]["text"])
+    # Get the text content
+    text_content = result["contents"][0]["text"]
     
-    # Verify configuration
-    config = schema_content["configuration"]
-    assert "create_fields" in config
-    assert "query_filters" in config
+    # Verify configuration sections are present
+    assert "## CONFIGURATION" in text_content
+    assert "### Create Operation Settings" in text_content
+    assert "### Query Operation Settings" in text_content
     
-    # Check create_fields
-    create_fields = config["create_fields"]
-    assert create_fields["include_all_fields"] is False
-    assert "OPSS-Iss:Status" in create_fields["fields"]
-    assert "OPSS-Iss:Priority" in create_fields["fields"]
+    # Check create_fields configuration
+    assert "Include All Fields: False" in text_content
+    assert "Allowed Fields for Creation:" in text_content
+    assert "OPSS-Iss:Status" in text_content
+    assert "OPSS-Iss:Priority" in text_content
     
-    # Check query_filters
-    query_filters = config["query_filters"]
-    assert "OPSS-Iss:Status" in query_filters["fields"]
+    # Check query_filters configuration
+    assert "Available Filter Fields:" in text_content
 
 # Made with Bob

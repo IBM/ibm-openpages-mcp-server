@@ -40,13 +40,13 @@ class SchemaBuilder:
     
     async def get_type_definition(self, type_name: str) -> Optional[Dict[str, Any]]:
         """
-        Get and cache type definition from OpenPages
+        Get and cache type definition from OpenPages, including associations
         
         Args:
             type_name: Name of the type to retrieve (e.g., "SOXIssue", "SOXControl")
             
         Returns:
-            Dict containing the type definition or None if there was an error
+            Dict containing the type definition with associations or None if there was an error
         """
         if not type_name:
             logger.error("Invalid type_name: empty string")
@@ -64,7 +64,16 @@ class SchemaBuilder:
             if not type_def:
                 logger.warning(f"Empty type definition returned for {type_name}")
                 return None
-                
+            
+            # Fetch associations separately
+            logger.info(f"Fetching type associations for {type_name}")
+            associations = await self.client.get_type_associations(type_name)
+            
+            # Add associations to type definition
+            if associations:
+                type_def["associations"] = associations
+                logger.debug(f"Added associations to type definition for {type_name}")
+            
             # Cache the result
             self.type_definitions[type_name] = type_def
             logger.debug(f"Cached type definition for {type_name}")

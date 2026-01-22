@@ -131,6 +131,23 @@ class QueryTool(BaseTool):
             
             return [TextContent(type="text", text=f"Error executing query: {error_message}")]
     
+    def _get_openpages_url(self, resource_id: str) -> str:
+        """
+        Generate OpenPages UI URL for a given resource ID
+        
+        Args:
+            resource_id: The Resource ID of the object
+            
+        Returns:
+            Full URL to view the object in OpenPages UI
+        """
+        # Get base URL from client (remove /opgrc/api/v2 suffix if present)
+        base_url = self.client.base_url
+        if '/opgrc/api' in base_url:
+            base_url = base_url.split('/opgrc/api')[0]
+        
+        return f"{base_url}/app/jspview/react/grc/task-view/{resource_id}"
+    
     def _format_table_response(self, rows: List[Dict[str, Any]], query: str, row_count: int) -> List[TextContent]:
         """
         Format query results as a table
@@ -153,6 +170,11 @@ class QueryTool(BaseTool):
         if not columns:
             return [TextContent(type="text", text="Error: No columns found in query results")]
         
+        # Add OpenPages URL column if Resource ID is present
+        has_resource_id = 'Resource ID' in columns
+        if has_resource_id:
+            columns.append('OpenPages URL')
+        
         # Build the response text
         response_text = f"Query Results ({row_count} row{'s' if row_count != 1 else ''}):\n\n"
         response_text += f"Query: {query}\n\n"
@@ -165,8 +187,16 @@ class QueryTool(BaseTool):
         # Add rows
         for row in rows:
             values = []
+            resource_id = None
+            
             for field in row.get('fields', []):
+                field_name = field.get('name')
                 value = field.get('value')
+                
+                # Capture Resource ID for URL generation
+                if field_name == 'Resource ID':
+                    resource_id = str(value) if value is not None else None
+                
                 # Handle different value types
                 if value is None:
                     values.append("NULL")
@@ -175,6 +205,12 @@ class QueryTool(BaseTool):
                     values.append(value.get('name', str(value)))
                 else:
                     values.append(str(value))
+            
+            # Add OpenPages URL if we have a Resource ID
+            if has_resource_id and resource_id:
+                values.append(self._get_openpages_url(resource_id))
+            elif has_resource_id:
+                values.append("N/A")
             
             response_text += " | ".join(values) + "\n"
         
@@ -203,9 +239,15 @@ class QueryTool(BaseTool):
         for idx, row in enumerate(rows, 1):
             response_text += f"## Row {idx}\n"
             
+            resource_id = None
+            
             for field in row.get('fields', []):
                 field_name = field.get('name', 'Unknown')
                 value = field.get('value')
+                
+                # Capture Resource ID for URL generation
+                if field_name == 'Resource ID':
+                    resource_id = str(value) if value is not None else None
                 
                 # Handle different value types
                 if value is None:
@@ -217,6 +259,10 @@ class QueryTool(BaseTool):
                     display_value = str(value)
                 
                 response_text += f"- **{field_name}**: {display_value}\n"
+            
+            # Add OpenPages URL if we have a Resource ID
+            if resource_id:
+                response_text += f"- **OpenPages URL**: {self._get_openpages_url(resource_id)}\n"
             
             response_text += "\n"
         
@@ -239,15 +285,25 @@ class QueryTool(BaseTool):
         
         for row in rows:
             row_data = {}
+            resource_id = None
+            
             for field in row.get('fields', []):
                 field_name = field.get('name', 'Unknown')
                 value = field.get('value')
+                
+                # Capture Resource ID for URL generation
+                if field_name == 'Resource ID':
+                    resource_id = str(value) if value is not None else None
                 
                 # Handle enum types
                 if isinstance(value, dict) and 'name' in value:
                     row_data[field_name] = value['name']
                 else:
                     row_data[field_name] = value
+            
+            # Add OpenPages URL if we have a Resource ID
+            if resource_id:
+                row_data['OpenPages URL'] = self._get_openpages_url(resource_id)
             
             results.append(row_data)
         
