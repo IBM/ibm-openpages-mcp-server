@@ -136,13 +136,20 @@ Seven comprehensive examples covering:
 - Using OUTER JOIN when needed
 
 ### 13. Limitations and Notes
+- **DISTINCT keyword is NOT supported** - Cannot use SELECT DISTINCT
 - No subqueries
 - Limited aggregation (COUNT only)
 - No HAVING clause
 - No arithmetic operations
+- No window functions
+- No CTEs (WITH clause)
+- No TOP/LIMIT clauses (use tool's limit parameter instead)
+- No OFFSET clause (use tool's offset parameter instead)
 - Case sensitivity considerations
 - Date format requirements
 - Wildcard usage in LIKE
+
+**Important**: If you need unique results, retrieve the data and perform deduplication in your application code. The OpenPages query grammar does not include the DISTINCT keyword in its ANTLR grammar definition.
 
 ## Grammar Source
 

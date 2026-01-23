@@ -179,6 +179,20 @@ CRITICAL RULES
 - Schema validation: Verify ALL field names before use
 - No assumptions: Never guess field names or prefixes
 - Pagination: Use tool parameters, not SQL clauses
+- STRICT GRAMMAR ADHERENCE: Use ONLY keywords defined in query_grammar resource
+
+UNSUPPORTED SQL KEYWORDS (will cause query failure)
+- DISTINCT - Not supported in OpenPages query syntax
+- TOP/LIMIT - Use tool's limit parameter instead
+- OFFSET - Use tool's offset parameter instead
+- HAVING - Not supported
+- UNION - Limited support, see query_grammar
+- Subqueries - Not supported
+- Window functions - Not supported
+- CTEs (WITH clause) - Not supported
+
+If you need unique results, retrieve data and deduplicate in application code.
+ALWAYS verify keyword support in query_grammar resource before using.
 
 HIERARCHICAL JOINS (see query_grammar for details)
 - PARENT([FromType]): Get parent objects
