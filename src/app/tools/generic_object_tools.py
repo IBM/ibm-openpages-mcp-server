@@ -686,9 +686,9 @@ class GenericObjectTools(BaseTool):
                 for field_def in field_definitions:
                     field_name = field_def.get('name')
                     if field_name and not field_def.get('read_only', False):
-                        sql_field = f'[{field_name}]'
-                        if sql_field not in selected_fields:
-                            selected_fields.append(sql_field)
+                        openpages_field = f'[{field_name}]'
+                        if openpages_field not in selected_fields:
+                            selected_fields.append(openpages_field)
         except Exception as e:
             logger.warning(f"Could not fetch field definitions: {e}. Using default field mapping.")
             field_mapping = {}
@@ -696,7 +696,7 @@ class GenericObjectTools(BaseTool):
         # Process additional fields
         for field in additional_fields:
             # Check if the field is already in the required fields
-            sql_field = None
+            openpages_field = None
             
             # Extract the field name without the group if present
             # Format is "Name [Group]"
@@ -708,20 +708,20 @@ class GenericObjectTools(BaseTool):
                 # Try to find the full field name with group prefix
                 full_field_name = f"{group_name}:{field_name}"
                 if full_field_name in field_mapping:
-                    sql_field = field_mapping[full_field_name]
+                    openpages_field = field_mapping[full_field_name]
                     
             # If not found with group, try direct match
-            if not sql_field and field_name in field_mapping:
-                sql_field = field_mapping[field_name]
+            if not openpages_field and field_name in field_mapping:
+                openpages_field = field_mapping[field_name]
             # Try case-insensitive match
-            elif not sql_field and field_name.lower() in {k.lower(): v for k, v in field_mapping.items()}:
+            elif not openpages_field and field_name.lower() in {k.lower(): v for k, v in field_mapping.items()}:
                 for k, v in field_mapping.items():
                     if k.lower() == field_name.lower():
-                        sql_field = v
+                        openpages_field = v
                         break
                         
-            if sql_field and sql_field not in selected_fields:
-                selected_fields.append(sql_field)
+            if openpages_field and openpages_field not in selected_fields:
+                selected_fields.append(openpages_field)
         
         # Build query with selected fields
         query = f"""
@@ -754,17 +754,17 @@ class GenericObjectTools(BaseTool):
                 filter_field_lower = filter_field.lower()
                 
                 # 1. Try direct match (case-insensitive)
-                for field_name, sql_field in field_mapping.items():
+                for field_name, openpages_field in field_mapping.items():
                     if field_name.lower() == filter_field_lower:
-                        resolved_field = sql_field.replace('[', '').replace(']', '')
+                        resolved_field = openpages_field.replace('[', '').replace(']', '')
                         break
                 
                 # 2. Try matching with simple name (without prefix)
                 if not resolved_field:
-                    for field_name, sql_field in field_mapping.items():
+                    for field_name, openpages_field in field_mapping.items():
                         simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
                         if simple_name.lower() == filter_field_lower:
-                            resolved_field = sql_field.replace('[', '').replace(']', '')
+                            resolved_field = openpages_field.replace('[', '').replace(']', '')
                             break
                 
                 # 3. Try matching with field name from "Name [Group]" format

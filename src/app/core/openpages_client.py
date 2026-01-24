@@ -248,7 +248,7 @@ class OpenPagesClient:
         Execute a query against OpenPages
         
         Args:
-            statement: SQL-like query statement
+            statement: OpenPages query statement
             offset: Result offset
             limit: Maximum number of results
             

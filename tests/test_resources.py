@@ -53,6 +53,7 @@ def mock_schema_builder():
     # Mock type definition for SOXIssue
     issue_type_def = {
         "type_id": "SOXIssue",
+        "localizedLabel": "Issue",
         "field_definitions": [
             {
                 "name": "Name",
@@ -102,6 +103,7 @@ def mock_schema_builder():
     # Mock type definition for SOXControl
     control_type_def = {
         "type_id": "SOXControl",
+        "localizedLabel": "Control",
         "field_definitions": [
             {
                 "name": "Name",
@@ -258,6 +260,7 @@ async def test_schema_content_structure(resource_handlers):
     assert "## METADATA" in text_content
     assert "Type ID: SOXIssue" in text_content
     assert "Display Name: Issue" in text_content
+    assert "Label: Issue" in text_content
     assert "Namespace: openpages" in text_content
     assert "Path Prefix: Issue" in text_content
     assert "Total Fields: 4" in text_content  # Updated to 4 (includes relationship field)

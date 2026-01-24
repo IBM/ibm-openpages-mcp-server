@@ -1,5 +1,5 @@
 """
-Tests for the SQL Query Tool
+Tests for the OpenPages Query Tool
 """
 
 import pytest
