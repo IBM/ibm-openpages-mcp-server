@@ -1,10 +1,11 @@
 """
-SQL Query Tool for OpenPages MCP Server
-Provides a tool for executing SQL-like queries against OpenPages
+OpenPages Query Tool for OpenPages MCP Server
+Provides a tool for executing queries against OpenPages using the OpenPages query language
 """
 
 import logging
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 
 from mcp.types import TextContent  # type: ignore
 
@@ -16,11 +17,125 @@ from src.app.observability.logger import get_logger, log_method_call
 logger = get_logger(__name__)
 
 
+class QueryValidator:
+    """
+    Validates OpenPages queries for security and correctness
+    
+    Based on the OpenPages query grammar which supports:
+    - SELECT queries with standard SQL-like syntax
+    - Hierarchical relationships (PARENT, CHILD, ANCESTOR, DESCENDANT)
+    - Standard operators (=, <>, <, >, <=, >=, LIKE, CONTAINS, IN, IS NULL)
+    """
+    
+    # Maximum query length (10KB)
+    MAX_QUERY_LENGTH = 10000
+    
+    # OpenPages query grammar allows these keywords
+    ALLOWED_KEYWORDS = {
+        # Query structure
+        'SELECT', 'FROM', 'WHERE', 'ORDER', 'BY', 'GROUP', 'HAVING',
+        # Joins and relationships
+        'JOIN', 'INNER', 'LEFT', 'RIGHT', 'OUTER', 'ON',
+        'PARENT', 'CHILD', 'ANCESTOR', 'DESCENDANT',
+        # Operators and logic
+        'AND', 'OR', 'NOT', 'IN', 'LIKE', 'CONTAINS', 'BETWEEN',
+        'IS', 'NULL', 'TRUE', 'FALSE',
+        # Comparison
+        'ASC', 'DESC',
+        # Aggregation
+        'COUNT',
+        # Set operations
+        'UNION', 'ALL',
+        # Aliases
+        'AS'
+    }
+    
+    # Keywords that are NOT allowed in OpenPages query grammar
+    # (These are SQL keywords that could be dangerous or are not supported)
+    BLOCKED_KEYWORDS = {
+        # Data modification (not supported in OpenPages query grammar)
+        'INSERT', 'UPDATE', 'DELETE', 'DROP', 'TRUNCATE', 'ALTER',
+        'CREATE', 'REPLACE', 'MERGE', 'UPSERT',
+        # Schema operations
+        'TABLE', 'INDEX', 'VIEW', 'TRIGGER', 'PROCEDURE', 'FUNCTION',
+        'DATABASE', 'SCHEMA',
+        # Transaction control
+        'COMMIT', 'ROLLBACK', 'SAVEPOINT',
+        # Access control
+        'GRANT', 'REVOKE', 'DENY',
+        # System operations
+        'EXEC', 'EXECUTE', 'CALL', 'DECLARE', 'SET',
+        # Unsupported query features
+        'DISTINCT',  # Not supported in OpenPages grammar
+        'INTERSECT', 'EXCEPT', 'MINUS'  # Set operations not supported
+    }
+    
+    @staticmethod
+    def validate_query(query: str) -> Optional[str]:
+        """
+        Validate a query string for security and correctness
+        
+        Args:
+            query: The query string to validate
+            
+        Returns:
+            None if valid, error message string if invalid
+        """
+        if not query or not isinstance(query, str):
+            return "Query must be a non-empty string"
+        
+        # Check length
+        if len(query) > QueryValidator.MAX_QUERY_LENGTH:
+            return f"Query exceeds maximum length of {QueryValidator.MAX_QUERY_LENGTH} characters"
+        
+        # Normalize query for checking (uppercase, remove extra whitespace)
+        normalized_query = ' '.join(query.upper().split())
+        
+        # Must start with SELECT (OpenPages query grammar requirement)
+        if not normalized_query.startswith('SELECT'):
+            return "Query must start with SELECT (OpenPages query grammar only supports SELECT queries)"
+        
+        # Check for blocked keywords
+        words = re.findall(r'\b[A-Z]+\b', normalized_query)
+        for word in words:
+            if word in QueryValidator.BLOCKED_KEYWORDS:
+                return f"Blocked keyword detected: {word}. OpenPages query grammar does not support this operation."
+        
+        # Basic syntax validation - must have FROM clause
+        if ' FROM ' not in normalized_query:
+            return "Query must include FROM clause"
+        
+        # Check for balanced brackets (entity names must be in square brackets)
+        open_brackets = query.count('[')
+        close_brackets = query.count(']')
+        if open_brackets != close_brackets:
+            return f"Unbalanced square brackets: {open_brackets} opening, {close_brackets} closing"
+        
+        # Check for suspicious patterns that might indicate injection attempts
+        suspicious_patterns = [
+            r'--',  # SQL comments
+            r'/\*',  # Multi-line comments
+            r';\s*SELECT',  # Query chaining
+            r';\s*DROP',  # Dangerous chaining
+            r';\s*DELETE',  # Dangerous chaining
+            r';\s*UPDATE',  # Dangerous chaining
+            r'xp_',  # SQL Server extended procedures
+            r'sp_',  # SQL Server stored procedures
+        ]
+        
+        for pattern in suspicious_patterns:
+            if re.search(pattern, query, re.IGNORECASE):
+                return f"Suspicious pattern detected: {pattern}"
+        
+        # All checks passed
+        return None
+
+
 class QueryTool(BaseTool):
     """
-    Tool for executing SQL-like queries against OpenPages
+    Tool for executing queries against OpenPages using the OpenPages query language
     
-    This class provides a direct interface to execute SQL-like queries
+    This class provides a direct interface to execute queries
     against the OpenPages query API, allowing for flexible data retrieval
     without being tied to specific object types.
     """
@@ -37,15 +152,15 @@ class QueryTool(BaseTool):
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def execute_query(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """
-        Execute a SQL-like query against OpenPages
+        Execute a query against OpenPages using the OpenPages query language
         
-        Uses OpenPages Query Service syntax based on ANSI SQL with specific adaptations
+        Uses OpenPages Query Service syntax with specific adaptations
         for the OpenPages object model. All entity names (object types and field names)
         must be enclosed in square brackets.
         
         Args:
             arguments: Tool arguments
-                - query: SQL-like query statement (required)
+                - query: OpenPages query language statement (required)
                   Example: "SELECT [Resource ID], [Name] FROM [SOXIssue] WHERE [Status] = 'Active'"
                 - offset: Result offset (optional, default: 0)
                 - limit: Maximum number of results (optional, default: 100, max: 500)
@@ -58,6 +173,13 @@ class QueryTool(BaseTool):
         query = arguments.get('query')
         if not query:
             return [TextContent(type="text", text="Error: Query statement is required")]
+        
+        # Validate query for security
+        validation_error = QueryValidator.validate_query(query)
+        if validation_error:
+            logger.warning(f"Query validation failed: {validation_error}")
+            logger.warning(f"Rejected query: {query[:200]}...")
+            return [TextContent(type="text", text=f"Query validation error: {validation_error}")]
         
         # Extract optional parameters with proper defaults
         offset = arguments.get('offset')

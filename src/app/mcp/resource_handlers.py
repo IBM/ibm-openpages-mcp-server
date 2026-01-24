@@ -64,10 +64,19 @@ class ResourceHandlers:
         resources.append({
             "uri": "openpages://schema/query_grammar",
             "name": "OpenPages Query Grammar",
-            "description": "Complete SQL-like query language grammar for OpenPages including syntax rules, operators, joins, and examples",
+            "description": "Complete OpenPages query language grammar including syntax rules, operators, joins, and examples",
             "mimeType": "text/plain"
         })
         logger.debug("Added query grammar resource")
+        
+        # Add the object types catalog resource
+        resources.append({
+            "uri": "openpages://catalog/object_types",
+            "name": "Object Types Catalog",
+            "description": "Catalog of all available OpenPages object types with their IDs, names, labels, descriptions, and schema URIs. Use this to discover which object types are available before querying.",
+            "mimeType": "application/json"
+        })
+        logger.debug("Added object types catalog resource")
         
         # Create a resource for each configured object type
         for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
@@ -120,11 +129,25 @@ class ResourceHandlers:
         
         logger.info(f"Handling read_resource request for URI: {uri}")
         
+        # Handle catalog resources
+        if uri == "openpages://catalog/object_types":
+            logger.debug("Returning object types catalog resource")
+            catalog_text = await self._build_object_types_catalog()
+            return {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "application/json",
+                        "text": catalog_text
+                    }
+                ]
+            }
+        
         # Parse the URI to extract the type_id
         # Expected format: openpages://schema/{type_id}
         if not uri.startswith("openpages://schema/"):
             logger.error(f"Invalid resource URI format: {uri}")
-            raise ValueError(f"Invalid resource URI format: {uri}. Expected: openpages://schema/{{type_id}}")
+            raise ValueError(f"Invalid resource URI format: {uri}. Expected: openpages://schema/{{type_id}} or openpages://catalog/object_types")
         
         type_id = uri.replace("openpages://schema/", "")
         
@@ -169,7 +192,7 @@ class ResourceHandlers:
                 {
                     "uri": uri,
                     "mimeType": "application/json",
-                    "text": self._format_schema_as_text(schema_content)
+                    "text": self._format_schema_as_json(schema_content)
                 }
             ]
         }
@@ -194,12 +217,31 @@ class ResourceHandlers:
         Returns:
             Dict containing structured schema information
         """
-        display_name = obj_config.get("display_name", type_id)
         path_prefix = obj_config.get("path_prefix", "")
         namespace = obj_config.get("namespace", "openpages")
         
+        # Extract label and description from type definition
+        label = type_def.get("localizedLabel")
+        display_name = type_def.get("localizedLabel") or type_id  # Fallback to type_id if no label
+        api_description = type_def.get("description", "")
+        
         # Extract field definitions
         field_definitions = type_def.get("field_definitions", [])
+        
+        # Get set of configured type IDs for filtering relationship fields
+        configured_types = self._get_configured_type_ids()
+        
+        # Get create_fields configuration to filter which fields to include in schema
+        create_fields_config = obj_config.get("create_fields", {})
+        include_all_fields = create_fields_config.get("include_all_fields", True)
+        configured_field_names = create_fields_config.get("fields", [])
+        
+        # System fields that are always included
+        system_fields = ["Resource ID", "Name", "Description", "Title", "Location",
+                        "Created By", "Creation Date", "Last Modified By", "Last Modification Date"]
+        
+        # Build a set of configured field names (case-insensitive) for quick lookup
+        configured_field_names_lower = {f.lower() for f in configured_field_names}
         
         # Build field list with detailed information
         fields = []
@@ -208,6 +250,31 @@ class ResourceHandlers:
         for field in field_definitions:
             field_name = field.get("name")
             if not field_name:
+                continue
+            
+            # Check if field should be included based on configuration
+            is_system_field = field_name in system_fields
+            is_required_field = field.get("required", False)
+            is_configured_field = field_name.lower() in configured_field_names_lower
+            
+            # Determine if this field should be included in the schema
+            should_include = False
+            if is_system_field:
+                # Always include system fields
+                should_include = True
+            elif is_required_field:
+                # Always include required fields
+                should_include = True
+            elif include_all_fields:
+                # Include all fields if configured to do so
+                should_include = True
+            elif is_configured_field:
+                # Include if explicitly configured
+                should_include = True
+            
+            # Skip fields that shouldn't be included
+            if not should_include:
+                logger.debug(f"Skipping unconfigured field '{field_name}' for {type_id} (not required, not configured)")
                 continue
             
             data_type = field.get("data_type", "STRING_TYPE")
@@ -221,11 +288,7 @@ class ResourceHandlers:
                 "read_only": field.get("read_only", False)
             }
             
-            # Check if this is a relationship field (exclude system fields like Resource ID)
-            is_system_field = field_name in ["Resource ID", "Name", "Description", "Location",
-                                             "Created By", "Creation Date", "Last Modified By",
-                                             "Last Modification Date"]
-            
+            # Check if this is a relationship field
             is_relationship = (data_type in ["ID_TYPE", "MULTI_VALUE_ID_TYPE"] or \
                              "association" in field_name.lower() or \
                              "assoc" in field_name.lower() or \
@@ -241,8 +304,21 @@ class ResourceHandlers:
                 target_type = field.get("target_type") or field.get("associated_type")
                 if target_type:
                     field_info["target_type"] = target_type
-                
-                relationship_fields.append(field_info)
+                    
+                    # CRITICAL: Only include relationship fields where target type is configured
+                    if target_type not in configured_types:
+                        logger.debug(f"Skipping relationship field '{field_name}' to unconfigured type: {target_type} (from {type_id})")
+                        # Don't add to relationship_fields, but still add to general fields list
+                        # so the field is documented but not highlighted as an active relationship
+                        field_info["is_relationship"] = False
+                        field_info.pop("relationship_type", None)
+                        field_info.pop("target_type", None)
+                    else:
+                        relationship_fields.append(field_info)
+                else:
+                    # No target type specified, include it but log a warning
+                    logger.debug(f"Relationship field '{field_name}' has no target_type specified")
+                    relationship_fields.append(field_info)
             
             # Add enum values if available
             enum_values = field.get("enum_values", [])
@@ -271,7 +347,7 @@ class ResourceHandlers:
             "display_name": display_name,
             "namespace": namespace,
             "path_prefix": path_prefix,
-            "description": f"Schema definition for {display_name} objects in OpenPages",
+            "description": api_description,  # Object type's description from API
             "field_count": len(fields),
             "fields": fields,
             "relationship_fields": relationship_fields,
@@ -282,6 +358,11 @@ class ResourceHandlers:
                 "query_filters": obj_config.get("query_filters", {})
             }
         }
+        
+        # Add label if available from type definition
+        if label:
+            schema_content["label"] = label
+            logger.debug(f"Added label '{label}' to schema content for {type_id}")
         
         logger.debug(f"Built schema content for {type_id} with {len(fields)} fields ({len(relationship_fields)} relationships, {len(hierarchical_relationships)} hierarchical)")
         return schema_content
@@ -363,6 +444,35 @@ class ResourceHandlers:
         logger.debug(f"Extracted {len(relationships)} hierarchical relationships for {type_id} (filtered to configured types)")
         return relationships
     
+    def _format_schema_as_json(self, schema_content: Dict[str, Any]) -> str:
+        """
+        Format schema content as JSON for efficient LLM consumption
+        
+        Returns the structured schema as JSON, which is more efficient for LLMs
+        to parse and extract specific information compared to text format.
+        
+        Args:
+            schema_content: Structured schema content
+            
+        Returns:
+            JSON string representation of the schema
+        """
+        import json
+        
+        # Add usage guidance to the schema
+        schema_with_guidance = {
+            **schema_content,
+            "usage_instructions": {
+                "field_names": "Always use exact field names as shown in 'name' property, enclosed in square brackets for queries",
+                "field_types": "Respect data_type constraints when creating/updating objects",
+                "required_fields": "Fields with required=true must be provided when creating objects",
+                "read_only_fields": "Fields with read_only=true cannot be set during create/update",
+                "enum_fields": "For ENUM_TYPE fields, use exact values from enum_values array"
+            }
+        }
+        
+        return json.dumps(schema_with_guidance, indent=2)
+    
     def _format_schema_as_text(self, schema_content: Dict[str, Any]) -> str:
         """
         Format schema content as LLM-friendly structured text
@@ -388,6 +498,11 @@ class ResourceHandlers:
         lines.append("## METADATA")
         lines.append(f"Type ID: {schema_content['type_id']}")
         lines.append(f"Display Name: {schema_content['display_name']}")
+        
+        # Add label if available
+        if schema_content.get('label'):
+            lines.append(f"Label: {schema_content['label']}")
+        
         lines.append(f"Namespace: {schema_content['namespace']}")
         lines.append(f"Path Prefix: {schema_content['path_prefix']}")
         lines.append(f"Description: {schema_content['description']}")
@@ -668,12 +783,62 @@ class ResourceHandlers:
         lines.append("")  # Blank line between fields
         return lines
     
+    async def _build_object_types_catalog(self) -> str:
+        """
+        Build a catalog of available object types with their metadata
+        
+        Returns:
+            JSON string containing catalog of object types
+        """
+        import json
+        
+        catalog = {
+            "description": "Catalog of available OpenPages object types in this instance",
+            "usage": "Use this resource to discover which object types are available, then read their individual schemas using the schema_uri",
+            "object_types": []
+        }
+        
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            type_id = obj_config.get("type_id")
+            
+            if not type_id:
+                continue
+            
+            object_type_entry = {
+                "id": type_id,
+                "schema_uri": f"openpages://schema/{type_id}",
+            }
+            
+            # Get label and description from Content API type definition
+            try:
+                logger.info(f"Fetching type definition for {type_id} to get label and description")
+                type_def = await self.schema_builder.get_type_definition(type_id)
+                if type_def:
+                    logger.debug(f"Type definition keys for {type_id}: {list(type_def.keys())}")
+                    # Use localizedLabel for both name and label (e.g., "Control")
+                    localized_label = type_def.get('localizedLabel', type_id)
+                    object_type_entry["name"] = localized_label
+                    object_type_entry["label"] = localized_label
+                    # Use actual description from API (e.g., "Unified Object Type")
+                    object_type_entry["description"] = type_def.get('description', '')
+                    object_type_entry["usage"] = f"To query, update, or create {localized_label} objects, first read the schema at openpages://schema/{type_id} to get exact field names and types"
+                    logger.debug(f"✅ Fetched type definition for {type_id} with values: {object_type_entry}")
+                else:
+                    logger.warning(f"✗ Type definition returned None for {type_id}")
+            except Exception as e:
+                logger.error(f"✗ Exception while fetching label for {type_id}: {e}", exc_info=True)
+                # Label is optional, continue without it
+            
+            catalog["object_types"].append(object_type_entry)
+        
+        return json.dumps(catalog, indent=2)
+    
     def _build_query_grammar_content(self) -> str:
         """
         Build comprehensive query grammar documentation from ANTLR grammar files
         
         Returns:
-            Formatted text documentation of the OpenPages SQL-like query language
+            Formatted text documentation of the OpenPages query language
         """
         lines = []
         
@@ -682,9 +847,9 @@ class ResourceHandlers:
         lines.append("OPENPAGES QUERY LANGUAGE GRAMMAR")
         lines.append("=" * 80)
         lines.append("")
-        lines.append("OpenPages provides a SQL-like query language for retrieving and filtering")
-        lines.append("objects. This grammar is defined using ANTLR v3 and supports a subset of")
-        lines.append("SQL with OpenPages-specific extensions for hierarchical relationships.")
+        lines.append("OpenPages provides a query language for retrieving and filtering")
+        lines.append("objects. This grammar is defined using ANTLR v3 and includes")
+        lines.append("OpenPages-specific extensions for hierarchical relationships.")
         lines.append("")
         
         # Overview
@@ -1172,14 +1337,14 @@ class ResourceHandlers:
         lines.append("")
         lines.append("7. **Use OUTER JOIN when needed**")
         lines.append("   - Include objects even if they don't have the relationship")
-        lines.append("   - Similar to SQL LEFT OUTER JOIN")
+        lines.append("   - Similar to LEFT OUTER JOIN in standard query languages")
         lines.append("")
         
         # Limitations
         lines.append("## LIMITATIONS AND NOTES")
         lines.append("")
-        lines.append("### Unsupported SQL Keywords")
-        lines.append("The following standard SQL keywords are NOT supported and will cause query failures:")
+        lines.append("### Unsupported Keywords")
+        lines.append("The following keywords are NOT supported and will cause query failures:")
         lines.append("")
         lines.append("1. **DISTINCT**: Cannot use SELECT DISTINCT to get unique results")
         lines.append("   - Workaround: Retrieve data and deduplicate in application code")
@@ -1210,7 +1375,7 @@ class ResourceHandlers:
         lines.append("ALWAYS verify keyword support in this grammar before using. Only use keywords")
         lines.append("explicitly documented in the KEYWORDS section above. The OpenPages query")
         lines.append("language is based on a strict ANTLR v3 grammar that defines exactly which")
-        lines.append("SQL features are supported.")
+        lines.append("query features are supported.")
         lines.append("")
         
         # Footer
@@ -1222,3 +1387,4 @@ class ResourceHandlers:
         return "\n".join(lines)
 
 # Made with Bob
+

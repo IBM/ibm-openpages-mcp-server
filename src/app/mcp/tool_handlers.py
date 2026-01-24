@@ -7,7 +7,7 @@ manages the execution lifecycle including error handling and response formatting
 
 The ToolHandlers class supports:
 - Echo tool for testing
-- SQL-like query tool for executing queries against OpenPages
+- OpenPages query tool for executing queries against OpenPages
 - Generic object tools (upsert, query, delete) for any configured object type
 - Dynamic tool routing based on naming conventions
 - Namespace support for tool organization
@@ -29,18 +29,20 @@ class ToolHandlers:
     the execution of different tool operations.
     """
     
-    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None):
+    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None, resource_handlers=None):
         """
         Initialize tool handlers
         
         Args:
             object_tools: Dictionary of object-specific tool instances
             settings: Application settings
-            query_tool: SQL query tool instance (optional)
+            query_tool: OpenPages query tool instance (optional)
+            resource_handlers: ResourceHandlers instance for schema access (optional)
         """
         self.object_tools = object_tools
         self.settings = settings
         self.query_tool = query_tool
+        self.resource_handlers = resource_handlers
     
     @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     async def handle_echo_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -62,9 +64,9 @@ class ToolHandlers:
         }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def handle_sql_query_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_openpages_query_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Handle the SQL query tool
+        Handle the OpenPages query tool
         
         Args:
             arguments: Tool arguments containing query, offset, limit, and format
@@ -73,24 +75,24 @@ class ToolHandlers:
             Dict containing the query execution result
         """
         if not self.query_tool:
-            logger.error("SQL query tool not initialized")
+            logger.error("OpenPages query tool not initialized")
             return {
                 "result": [
-                    {"type": "text", "text": "Error: SQL query tool not initialized"}
+                    {"type": "text", "text": "Error: OpenPages query tool not initialized"}
                 ]
             }
         
-        logger.info("Executing SQL query tool")
+        logger.info("Executing OpenPages query tool")
         try:
             result = await self.query_tool.execute_query(arguments)
             return {
                 "result": [{"type": "text", "text": item.text} for item in result]
             }
         except Exception as e:
-            logger.error(f"Error executing SQL query: {e}", exc_info=True)
+            logger.error(f"Error executing OpenPages query: {e}", exc_info=True)
             return {
                 "result": [
-                    {"type": "text", "text": f"Error executing SQL query: {str(e)}"}
+                    {"type": "text", "text": f"Error executing OpenPages query: {str(e)}"}
                 ]
             }
     
@@ -196,6 +198,118 @@ class ToolHandlers:
                 ]
             }
     
+    # TODO: Temporarily disabled - schema tools will be re-enabled later
+    # @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
+    # async def handle_get_schema_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    #     """
+    #     Handle the get_schema tool - retrieves schema for a specific object type
+    #
+    #     Args:
+    #         arguments: Tool arguments containing 'object_type' field
+    #
+    #     Returns:
+    #         Dict containing the schema as JSON text
+    #     """
+    #     if not self.resource_handlers:
+    #         logger.error("Resource handlers not initialized")
+    #         return {
+    #             "result": [
+    #                 {"type": "text", "text": "Error: Resource handlers not initialized"}
+    #             ]
+    #         }
+    #
+    #     object_type = arguments.get("object_type", "")
+    #     if not object_type:
+    #         return {
+    #             "result": [
+    #                 {"type": "text", "text": "Error: object_type parameter is required"}
+    #             ]
+    #         }
+    #
+    #     logger.info(f"Getting schema for object type: {object_type}")
+    #     try:
+    #         # Use resource handler to read the schema
+    #         result = await self.resource_handlers.handle_read_resource({
+    #             "uri": f"openpages://schema/{object_type}"
+    #         })
+    #
+    #         # Extract the text content from the resource result
+    #         if "contents" in result and len(result["contents"]) > 0:
+    #             schema_text = result["contents"][0].get("text", "")
+    #             return {
+    #                 "result": [{"type": "text", "text": schema_text}]
+    #             }
+    #         else:
+    #             return {
+    #                 "result": [
+    #                     {"type": "text", "text": f"Error: No schema found for {object_type}"}
+    #                 ]
+    #             }
+    #     except Exception as e:
+    #         logger.error(f"Error getting schema for {object_type}: {e}", exc_info=True)
+    #         return {
+    #             "result": [
+    #                 {"type": "text", "text": f"Error getting schema: {str(e)}"}
+    #             ]
+    #         }
+    #
+    # @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
+    # async def handle_list_schemas_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    #     """
+    #     Handle the list_schemas tool - lists all available object type schemas
+    #
+    #     Args:
+    #         arguments: Tool arguments (currently unused)
+    #
+    #     Returns:
+    #         Dict containing the list of available schemas
+    #     """
+    #     if not self.resource_handlers:
+    #         logger.error("Resource handlers not initialized")
+    #         return {
+    #             "result": [
+    #                 {"type": "text", "text": "Error: Resource handlers not initialized"}
+    #             ]
+    #         }
+    #
+    #     logger.info("Listing available schemas")
+    #     try:
+    #         # Use resource handler to list resources
+    #         result = await self.resource_handlers.handle_list_resources({})
+    #
+    #         # Format the resources list as text
+    #         if "resources" in result:
+    #             resources = result["resources"]
+    #             schema_list = []
+    #             for resource in resources:
+    #                 uri = resource.get("uri", "")
+    #                 name = resource.get("name", "")
+    #                 description = resource.get("description", "")
+    #                 if uri.startswith("openpages://schema/"):
+    #                     schema_list.append(f"- {name}: {uri}\n  {description}")
+    #
+    #             if schema_list:
+    #                 text = "Available OpenPages Object Type Schemas:\n\n" + "\n\n".join(schema_list)
+    #             else:
+    #                 text = "No schemas available"
+    #
+    #             return {
+    #                 "result": [{"type": "text", "text": text}]
+    #             }
+    #         else:
+    #             return {
+    #                 "result": [
+    #                     {"type": "text", "text": "Error: No resources found"}
+    #                 ]
+    #             }
+    #     except Exception as e:
+    #         logger.error(f"Error listing schemas: {e}", exc_info=True)
+    #         return {
+    #             "result": [
+    #                 {"type": "text", "text": f"Error listing schemas: {str(e)}"}
+    #             ]
+    #         }
+    
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_call_tool(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -227,7 +341,10 @@ class ToolHandlers:
             # Map special tool names to their handler methods
             special_tool_handlers = {
                 "echo": self.handle_echo_tool,
-                "execute_openpages_query": self.handle_sql_query_tool
+                "execute_openpages_query": self.handle_openpages_query_tool,
+                # TODO: Temporarily disabled - schema tools will be re-enabled later
+                # "get_schema": self.handle_get_schema_tool,
+                # "list_schemas": self.handle_list_schemas_tool
             }
             
             # Check if this is a special tool
