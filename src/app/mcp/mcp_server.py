@@ -312,30 +312,29 @@ ERROR RECOVERY
                     "required": ["text"]
                 }
             },
-            # TODO: Temporarily disabled - schema tools will be re-enabled later
-            # {
-            #     "name": "list_schemas",
-            #     "description": "List all available OpenPages object type schemas. Use this to discover what object types are available and their schema URIs before querying.",
-            #     "inputSchema": {
-            #         "type": "object",
-            #         "properties": {},
-            #         "required": []
-            #     }
-            # },
-            # {
-            #     "name": "get_schema",
-            #     "description": "Get the complete schema for a specific OpenPages object type. ⚠️ CRITICAL: You MUST call this tool BEFORE constructing ANY query to get exact field names. Field names vary by instance and may include namespace prefixes (e.g., [OPSS-Iss:Status]). DO NOT assume field names - always verify against the schema.",
-            #     "inputSchema": {
-            #         "type": "object",
-            #         "properties": {
-            #             "object_type": {
-            #                 "type": "string",
-            #                 "description": "The object type ID to get schema for (e.g., 'SOXRisk', 'SOXIssue', 'SOXControl'). Use list_schemas to see available types."
-            #             }
-            #         },
-            #         "required": ["object_type"]
-            #     }
-            # },
+            {
+                "name": "list_resources",
+                "description": "List all available OpenPages resources including object type schemas and query grammar. Use this to discover what resources are available before accessing them. This tool provides the same information as the resources/list endpoint for MCP clients that cannot use that endpoint.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "get_resource",
+                "description": "Get a resource by its URI. Resources include object type schemas (openpages://schema/{ObjectType}) and query grammar (openpages://schema/query_grammar). ⚠️ CRITICAL: You MUST call this tool to get exact field names BEFORE constructing ANY query. Field names vary by instance and may include namespace prefixes (e.g., [OPSS-Iss:Status]). DO NOT assume field names - always verify against the schema. This tool provides the same information as the resources/read endpoint for MCP clients that cannot use that endpoint.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "uri": {
+                            "type": "string",
+                            "description": "The resource URI to retrieve. Examples: 'openpages://schema/SOXRisk', 'openpages://schema/query_grammar', 'openpages://catalog/object_types'. Use list_resources to see available URIs."
+                        }
+                    },
+                    "required": ["uri"]
+                }
+            },
             {
                 "name": "execute_openpages_query",
                 "description": self._build_openpages_query_description(),

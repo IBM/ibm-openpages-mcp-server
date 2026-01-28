@@ -198,6 +198,139 @@ class ToolHandlers:
                 ]
             }
     
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def handle_list_resources_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle the list_resources tool - provides a listing of all available resources
+        
+        This tool allows MCP clients that cannot use the resources/list endpoint
+        to discover available resources through the tools interface.
+        
+        Args:
+            arguments: Tool arguments (currently unused, but kept for consistency)
+            
+        Returns:
+            Dict containing the list of available resources
+        """
+        if not self.resource_handlers:
+            logger.error("Resource handlers not initialized")
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: Resource handlers not initialized"}
+                ]
+            }
+        
+        logger.info("Executing list_resources tool")
+        try:
+            # Call the resource handler's list method
+            result = await self.resource_handlers.handle_list_resources({})
+            
+            # Format the response as a readable summary
+            resources = result.get("resources", [])
+            
+            lines = []
+            lines.append("Available OpenPages Resources")
+            lines.append("=" * 80)
+            lines.append("")
+            
+            for resource in resources:
+                name = resource.get("name", "")
+                uri = resource.get("uri", "")
+                description = resource.get("description", "")
+                
+                lines.append(f"Name: {name}")
+                lines.append(f"URI: {uri}")
+                lines.append(f"Description: {description}")
+                lines.append("")
+            
+            lines.append("=" * 80)
+            lines.append(f"Total resources: {len(resources)}")
+            lines.append("")
+            lines.append("Use the get_resource tool with a URI to retrieve the full content of a resource.")
+            
+            summary_text = "\n".join(lines)
+            
+            return {
+                "result": [
+                    {"type": "text", "text": summary_text}
+                ]
+            }
+        except Exception as e:
+            logger.error(f"Error listing resources: {e}", exc_info=True)
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error listing resources: {str(e)}"}
+                ]
+            }
+    
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def handle_get_resource_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle the get_resource tool - retrieves a resource by URI
+        
+        This tool allows MCP clients that cannot use the resources/read endpoint
+        to access resource content through the tools interface.
+        
+        Args:
+            arguments: Tool arguments containing 'uri' field
+            
+        Returns:
+            Dict containing the resource content
+        """
+        if not self.resource_handlers:
+            logger.error("Resource handlers not initialized")
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: Resource handlers not initialized"}
+                ]
+            }
+        
+        uri = arguments.get("uri")
+        if not uri:
+            logger.error("Missing 'uri' parameter in get_resource tool")
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: Missing required parameter 'uri'"}
+                ]
+            }
+        
+        logger.info(f"Executing get_resource tool for URI: {uri}")
+        try:
+            # Call the resource handler's read method
+            result = await self.resource_handlers.handle_read_resource({"uri": uri})
+            
+            # Extract the content from the result
+            if "contents" in result and len(result["contents"]) > 0:
+                content = result["contents"][0]
+                text_content = content.get("text", "")
+                
+                return {
+                    "result": [
+                        {"type": "text", "text": text_content}
+                    ]
+                }
+            else:
+                logger.warning(f"No content found for URI: {uri}")
+                return {
+                    "result": [
+                        {"type": "text", "text": f"No content found for URI: {uri}"}
+                    ]
+                }
+        except ValueError as e:
+            logger.error(f"Invalid URI or resource not found: {e}")
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: {str(e)}"}
+                ]
+            }
+        except Exception as e:
+            logger.error(f"Error getting resource: {e}", exc_info=True)
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error getting resource: {str(e)}"}
+                ]
+            }
+    
     # TODO: Temporarily disabled - schema tools will be re-enabled later
     # @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     # async def handle_get_schema_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -342,9 +475,8 @@ class ToolHandlers:
             special_tool_handlers = {
                 "echo": self.handle_echo_tool,
                 "execute_openpages_query": self.handle_openpages_query_tool,
-                # TODO: Temporarily disabled - schema tools will be re-enabled later
-                # "get_schema": self.handle_get_schema_tool,
-                # "list_schemas": self.handle_list_schemas_tool
+                "list_resources": self.handle_list_resources_tool,
+                "get_resource": self.handle_get_resource_tool,
             }
             
             # Check if this is a special tool
