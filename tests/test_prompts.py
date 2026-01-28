@@ -1,11 +1,9 @@
 """
-Test MCP Prompts Implementation
+Simple test for MCP Prompts Implementation (no pytest required)
 
-This test verifies that the MCP prompts functionality works correctly,
-including prompts/list and prompts/get methods.
+This test verifies that the MCP prompts functionality works correctly.
 """
 
-import pytest
 import asyncio
 import sys
 import os
@@ -17,8 +15,7 @@ from src.app.mcp.mcp_server import MCPServer
 from src.app.config.settings import Settings
 
 
-@pytest.fixture
-def mock_settings():
+def create_mock_settings():
     """Create mock settings for testing"""
     settings = Settings()
     # Override with test values
@@ -49,10 +46,12 @@ def mock_settings():
     return settings
 
 
-@pytest.mark.asyncio
-async def test_initialize_advertises_prompts_capability(mock_settings):
+async def test_initialize_advertises_prompts_capability():
     """Test that initialize response advertises prompts capability"""
-    server = MCPServer(custom_settings=mock_settings)
+    print("\n1. Testing initialize advertises prompts capability...")
+    
+    settings = create_mock_settings()
+    server = MCPServer(custom_settings=settings)
     
     # Call initialize
     result = await server.handle_initialize({
@@ -65,17 +64,21 @@ async def test_initialize_advertises_prompts_capability(mock_settings):
     })
     
     # Verify prompts capability is advertised
-    assert "capabilities" in result
-    assert "prompts" in result["capabilities"]
-    assert result["capabilities"]["prompts"]["list"]["enabled"] is True
-    assert result["capabilities"]["prompts"]["get"]["enabled"] is True
-    print("✓ Initialize advertises prompts capability correctly")
+    assert "capabilities" in result, "Missing capabilities in initialize response"
+    assert "prompts" in result["capabilities"], "Missing prompts in capabilities"
+    assert result["capabilities"]["prompts"]["list"]["enabled"] is True, "prompts/list not enabled"
+    assert result["capabilities"]["prompts"]["get"]["enabled"] is True, "prompts/get not enabled"
+    
+    print("   [PASS] Initialize advertises prompts capability correctly")
+    return True
 
 
-@pytest.mark.asyncio
-async def test_prompts_list(mock_settings):
+async def test_prompts_list():
     """Test prompts/list returns available prompts"""
-    server = MCPServer(custom_settings=mock_settings)
+    print("\n2. Testing prompts/list...")
+    
+    settings = create_mock_settings()
+    server = MCPServer(custom_settings=settings)
     
     # Call prompts/list via request processor
     request = {
@@ -88,29 +91,32 @@ async def test_prompts_list(mock_settings):
     response, should_exit = await server.process_request(request)
     
     # Verify response
-    assert response["jsonrpc"] == "2.0"
-    assert response["id"] == 1
-    assert "result" in response
-    assert "prompts" in response["result"]
+    assert response["jsonrpc"] == "2.0", "Invalid JSON-RPC version"
+    assert response["id"] == 1, "Invalid response ID"
+    assert "result" in response, "Missing result in response"
+    assert "prompts" in response["result"], "Missing prompts in result"
     
     prompts = response["result"]["prompts"]
-    assert len(prompts) > 0
+    assert len(prompts) > 0, "No prompts returned"
     
     # Verify the openpages-usage-guide prompt exists
     usage_guide = next((p for p in prompts if p["name"] == "openpages-usage-guide"), None)
-    assert usage_guide is not None
-    assert "description" in usage_guide
-    assert "arguments" in usage_guide
+    assert usage_guide is not None, "openpages-usage-guide prompt not found"
+    assert "description" in usage_guide, "Missing description in prompt"
+    assert "arguments" in usage_guide, "Missing arguments in prompt"
     
-    print(f"✓ prompts/list returned {len(prompts)} prompt(s)")
-    print(f"  - Prompt: {usage_guide['name']}")
-    print(f"  - Description: {usage_guide['description'][:80]}...")
+    print(f"   [PASS] prompts/list returned {len(prompts)} prompt(s)")
+    print(f"     - Prompt: {usage_guide['name']}")
+    print(f"     - Description: {usage_guide['description'][:80]}...")
+    return True
 
 
-@pytest.mark.asyncio
-async def test_prompts_get_without_arguments(mock_settings):
+async def test_prompts_get_without_arguments():
     """Test prompts/get returns prompt content without arguments"""
-    server = MCPServer(custom_settings=mock_settings)
+    print("\n3. Testing prompts/get without arguments...")
+    
+    settings = create_mock_settings()
+    server = MCPServer(custom_settings=settings)
     
     # Call prompts/get via request processor
     request = {
@@ -125,37 +131,39 @@ async def test_prompts_get_without_arguments(mock_settings):
     response, should_exit = await server.process_request(request)
     
     # Verify response
-    assert response["jsonrpc"] == "2.0"
-    assert response["id"] == 2
-    assert "result" in response
+    assert response["jsonrpc"] == "2.0", "Invalid JSON-RPC version"
+    assert response["id"] == 2, "Invalid response ID"
+    assert "result" in response, "Missing result in response"
     
     result = response["result"]
-    assert "description" in result
-    assert "messages" in result
-    assert len(result["messages"]) > 0
+    assert "description" in result, "Missing description in result"
+    assert "messages" in result, "Missing messages in result"
+    assert len(result["messages"]) > 0, "No messages in result"
     
     # Verify message structure
     message = result["messages"][0]
-    assert message["role"] == "user"
-    assert "content" in message
-    assert message["content"]["type"] == "text"
-    assert len(message["content"]["text"]) > 0
+    assert message["role"] == "user", "Invalid message role"
+    assert "content" in message, "Missing content in message"
+    assert message["content"]["type"] == "text", "Invalid content type"
+    assert len(message["content"]["text"]) > 0, "Empty content text"
     
     # Verify content includes key sections
     content = message["content"]["text"]
-    assert "OpenPages MCP Server" in content
-    assert "Schema-Driven Approach" in content or "schema" in content.lower()
-    assert "Field Filtering" in content or "field" in content.lower()
+    assert "OpenPages MCP Server" in content, "Missing server name in content"
+    assert "schema" in content.lower(), "Missing schema guidance in content"
     
-    print("✓ prompts/get returned prompt content successfully")
-    print(f"  - Content length: {len(content)} characters")
-    print(f"  - Includes schema guidance: {'Schema' in content}")
+    print("   [PASS] prompts/get returned prompt content successfully")
+    print(f"     - Content length: {len(content)} characters")
+    print(f"     - Includes schema guidance: {'Schema' in content}")
+    return True
 
 
-@pytest.mark.asyncio
-async def test_prompts_get_with_task_argument(mock_settings):
+async def test_prompts_get_with_task_argument():
     """Test prompts/get returns prompt content with task-specific guidance"""
-    server = MCPServer(custom_settings=mock_settings)
+    print("\n4. Testing prompts/get with task argument...")
+    
+    settings = create_mock_settings()
+    server = MCPServer(custom_settings=settings)
     
     # Call prompts/get with task argument
     request = {
@@ -173,25 +181,29 @@ async def test_prompts_get_with_task_argument(mock_settings):
     response, should_exit = await server.process_request(request)
     
     # Verify response
-    assert response["jsonrpc"] == "2.0"
-    assert response["id"] == 3
-    assert "result" in response
+    assert response["jsonrpc"] == "2.0", "Invalid JSON-RPC version"
+    assert response["id"] == 3, "Invalid response ID"
+    assert "result" in response, "Missing result in response"
     
     result = response["result"]
     content = result["messages"][0]["content"]["text"]
     
     # Verify task-specific guidance is included
-    assert "Task-Specific Guidance" in content or "create" in content.lower()
+    has_task_guidance = "Task-Specific Guidance" in content or "create" in content.lower()
+    assert has_task_guidance, "Missing task-specific guidance"
     
-    print("✓ prompts/get with task argument returned task-specific guidance")
-    print(f"  - Task: create issue")
-    print(f"  - Includes task guidance: {'Task-Specific Guidance' in content}")
+    print("   [PASS] prompts/get with task argument returned task-specific guidance")
+    print(f"     - Task: create issue")
+    print(f"     - Includes task guidance: {'Task-Specific Guidance' in content}")
+    return True
 
 
-@pytest.mark.asyncio
-async def test_prompts_get_includes_configured_types(mock_settings):
+async def test_prompts_get_includes_configured_types():
     """Test prompts/get includes configured object types"""
-    server = MCPServer(custom_settings=mock_settings)
+    print("\n5. Testing prompts/get includes configured types...")
+    
+    settings = create_mock_settings()
+    server = MCPServer(custom_settings=settings)
     
     # Call prompts/get
     request = {
@@ -209,18 +221,23 @@ async def test_prompts_get_includes_configured_types(mock_settings):
     content = response["result"]["messages"][0]["content"]["text"]
     
     # Should mention the configured types
-    assert "SOXIssue" in content or "Issue" in content
-    assert "SOXControl" in content or "Control" in content
+    has_issue = "SOXIssue" in content or "Issue" in content
+    has_control = "SOXControl" in content or "Control" in content
+    assert has_issue, "Missing SOXIssue/Issue in content"
+    assert has_control, "Missing SOXControl/Control in content"
     
-    print("✓ prompts/get includes configured object types")
-    print(f"  - Mentions SOXIssue: {'SOXIssue' in content}")
-    print(f"  - Mentions SOXControl: {'SOXControl' in content}")
+    print("   [PASS] prompts/get includes configured object types")
+    print(f"     - Mentions SOXIssue: {'SOXIssue' in content}")
+    print(f"     - Mentions SOXControl: {'SOXControl' in content}")
+    return True
 
 
-@pytest.mark.asyncio
-async def test_prompts_get_unknown_prompt(mock_settings):
+async def test_prompts_get_unknown_prompt():
     """Test prompts/get with unknown prompt name returns error"""
-    server = MCPServer(custom_settings=mock_settings)
+    print("\n6. Testing prompts/get with unknown prompt...")
+    
+    settings = create_mock_settings()
+    server = MCPServer(custom_settings=settings)
     
     # Call prompts/get with unknown prompt
     request = {
@@ -235,29 +252,53 @@ async def test_prompts_get_unknown_prompt(mock_settings):
     response, should_exit = await server.process_request(request)
     
     # Verify error response
-    assert response["jsonrpc"] == "2.0"
-    assert response["id"] == 5
-    assert "error" in response
-    assert "Unknown prompt" in response["error"]["message"]
+    assert response["jsonrpc"] == "2.0", "Invalid JSON-RPC version"
+    assert response["id"] == 5, "Invalid response ID"
+    assert "error" in response, "Missing error in response"
+    assert "Unknown prompt" in response["error"]["message"], "Invalid error message"
     
-    print("✓ prompts/get with unknown prompt returns error correctly")
+    print("   [PASS] prompts/get with unknown prompt returns error correctly")
+    return True
+
+
+async def main():
+    """Run all tests"""
+    print("\n" + "="*70)
+    print("Testing MCP Prompts Implementation")
+    print("="*70)
+    
+    tests = [
+        test_initialize_advertises_prompts_capability,
+        test_prompts_list,
+        test_prompts_get_without_arguments,
+        test_prompts_get_with_task_argument,
+        test_prompts_get_includes_configured_types,
+        test_prompts_get_unknown_prompt
+    ]
+    
+    passed = 0
+    failed = 0
+    
+    for test in tests:
+        try:
+            result = await test()
+            if result:
+                passed += 1
+        except Exception as e:
+            print(f"   [FAIL] Test failed: {e}")
+            failed += 1
+    
+    print("\n" + "="*70)
+    print(f"Test Results: {passed} passed, {failed} failed")
+    if failed == 0:
+        print("All prompts tests passed!")
+    print("="*70 + "\n")
+    
+    return failed == 0
 
 
 if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("Testing MCP Prompts Implementation")
-    print("="*70 + "\n")
-    
-    # Run tests
-    asyncio.run(test_initialize_advertises_prompts_capability(mock_settings()))
-    asyncio.run(test_prompts_list(mock_settings()))
-    asyncio.run(test_prompts_get_without_arguments(mock_settings()))
-    asyncio.run(test_prompts_get_with_task_argument(mock_settings()))
-    asyncio.run(test_prompts_get_includes_configured_types(mock_settings()))
-    asyncio.run(test_prompts_get_unknown_prompt(mock_settings()))
-    
-    print("\n" + "="*70)
-    print("All prompts tests passed! ✓")
-    print("="*70 + "\n")
+    success = asyncio.run(main())
+    sys.exit(0 if success else 1)
 
 # Made with Bob

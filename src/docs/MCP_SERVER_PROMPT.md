@@ -70,7 +70,17 @@ Execute complex queries using OpenPages query language:
 
 Schemas only include fields based on configuration:
 
-1. **System fields** - Always included (Resource ID, Name, Description, etc.)
+1. **System fields** - Always included for all object types:
+   - `Resource ID` - Unique identifier for the object
+   - `Name` - Object name
+   - `Description` - Object description
+   - `Title` - Object title
+   - `Location` - Object location in hierarchy
+   - `Created By` - User who created the object
+   - `Creation Date` - When the object was created
+   - `Last Modified By` - User who last modified the object
+   - `Last Modification Date` - When the object was last modified
+
 2. **Required fields** - Always included, even if not configured
 3. **Configured fields** - Included when `include_all_fields: false` and listed in configuration
 4. **All fields** - Included when `include_all_fields: true`
@@ -163,6 +173,7 @@ Schemas only include relationships to configured object types:
 
 2. Read openpages://schema/SOXIssue
    → Get exact field names:
+     - System fields: Resource ID, Name, Description, Creation Date, etc.
      - Required: Name, OPSS-Iss:Status
      - Optional: OPSS-Iss:Priority, OPSS-Iss:Severity, OPSS-Iss:Owner
 
@@ -190,10 +201,13 @@ Schemas only include relationships to configured object types:
    → Get control field names: OPSS-Ctl:Status
 
 4. Use openpages_query tool:
-   query: "SELECT [Resource ID], [Name], [OPSS-Iss:Status], [OPSS-Iss:Priority] 
-           FROM [SOXIssue] 
+   query: "SELECT [Resource ID], [Name], [Creation Date], [OPSS-Iss:Status], [OPSS-Iss:Priority]
+           FROM [SOXIssue]
            JOIN [SOXControl] ON PARENT([SOXIssue])
-           WHERE [OPSS-Iss:Status] = 'Open'"
+           WHERE [OPSS-Iss:Status] = 'Open'
+           ORDER BY [Creation Date] DESC"
+   
+   Note: Use [Creation Date] not [Create Date] - system field names must be exact!
 ```
 
 ### Workflow 3: Handle Filtered Relationships

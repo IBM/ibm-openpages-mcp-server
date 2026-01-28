@@ -42,8 +42,8 @@ class PromptHandlers:
         Load the prompt content from MCP_SERVER_PROMPT.md
         """
         try:
-            # Get the path to the prompt file
-            prompt_file = pathlib.Path(__file__).parent.parent.parent.parent / "docs" / "MCP_SERVER_PROMPT.md"
+            # Get the path to the prompt file in src/docs
+            prompt_file = pathlib.Path(__file__).parent.parent.parent / "docs" / "MCP_SERVER_PROMPT.md"
             
             if prompt_file.exists():
                 with open(prompt_file, 'r', encoding='utf-8') as f:

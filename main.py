@@ -189,6 +189,17 @@ if __name__ == "__main__":
         # Run local MCP server with stdio transport
         run_local_server(debug_mode=args.debug)
     else:
+        # Reconfigure logging for remote mode if --debug flag is set
+        if args.debug:
+            setup_logging(
+                level="DEBUG",
+                service_name=settings.APP_NAME,
+                json_format=(settings.LOG_FORMAT == "json"),
+                log_file=settings.LOG_FILE,
+                use_stderr=False,  # Remote mode uses stdout
+            )
+            logger.info("Debug mode enabled via command line flag")
+        
         # Run remote MCP server with HTTP
         logger.info(f"Starting remote MCP server on {args.host}:{args.port}")
         import uvicorn
