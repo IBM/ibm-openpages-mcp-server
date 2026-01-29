@@ -72,7 +72,8 @@ class MCPServer:
                 self.settings.OPENPAGES_PASSWORD,
                 self.settings.OPENPAGES_APIKEY,
                 self.settings.OPENPAGES_AUTHENTICATION_URL,
-                custom_settings=self.settings
+                custom_settings=self.settings,
+                instance_name=self.settings.OPENPAGES_INSTANCE_NAME
             )
             logger.debug("OpenPages client initialized successfully")
         except Exception as e:
@@ -554,6 +555,9 @@ ERROR RECOVERY
         
         Args:
             force_reload: If True, reload schemas even if already loaded
+            
+        Raises:
+            Exception: If schema loading fails (connection errors, API errors, etc.)
         """
         if self.dynamic_schemas_loaded and not force_reload:
             logger.debug("Dynamic schemas already loaded, using cached version")
@@ -567,25 +571,40 @@ ERROR RECOVERY
         else:
             logger.info("Loading dynamic schemas for tools")
         
-        try:
-            # Initialize client authentication first
-            await self.initialize_client()
+        # Initialize client authentication first
+        await self.initialize_client()
+        
+        # Reload the tools schema
+        if not self.dynamic_schemas_loaded:
+            self._load_tools_schema()
+        
+        # Load schemas for dynamic object types
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            obj_type = obj_config.get("type_id")
+            tool_prefix = obj_config.get("tool_prefix")
+            display_name = obj_config.get("display_name", obj_type)
+            namespace = obj_config.get("namespace", "")
             
-            # Reload the tools schema
-            if not self.dynamic_schemas_loaded:
-                self._load_tools_schema()
+            def build_tool_name(operation: str) -> str:
+                if namespace:
+                    return f"{namespace}_{operation}_{tool_prefix}"
+                return f"{operation}_{tool_prefix}"
             
-            # Load schemas for dynamic object types
-            for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
-                obj_type = obj_config.get("type_id")
-                tool_prefix = obj_config.get("tool_prefix")
-                display_name = obj_config.get("display_name", obj_type)
-                namespace = obj_config.get("namespace", "")
+            if obj_type and tool_prefix:
+                # Build schemas using schema_builder
+                # These methods will raise RuntimeError if they fail to get type definitions
+                logger.debug(f"Building dynamic schema for {obj_type}")
+                obj_schema = await self.schema_builder.build_dynamic_schema_for_object(obj_type, tool_prefix, obj_config)
+                upsert_obj_schema = self.schema_builder.create_upsert_schema(obj_schema, tool_prefix)
+                self._update_tool_schema(build_tool_name("upsert"), upsert_obj_schema)
                 
-                def build_tool_name(operation: str) -> str:
-                    if namespace:
-                        return f"{namespace}_{operation}_{tool_prefix}"
-                    return f"{operation}_{tool_prefix}"
+                # Query schema
+                query_obj_schema = await self.schema_builder.build_dynamic_schema_for_query_object(obj_type, obj_config)
+                self._update_tool_schema(build_tool_name("query") + "s", {
+                    "type": "object",
+                    "properties": query_obj_schema.get("properties", {}),
+                    "description": f"Query for {display_name.lower() if display_name else tool_prefix}s in OpenPages"
+                })
                 
                 if obj_type and tool_prefix:
                     # Build schemas using schema_builder
@@ -666,13 +685,17 @@ ERROR RECOVERY
             
         Returns:
             Dict containing the list of available tools with their schemas
+            
+        Raises:
+            Exception: If dynamic schema loading fails (connection errors, etc.)
         """
         if not self.dynamic_schemas_loaded:
             logger.debug("Loading base tools schema")
             self._load_tools_schema()
             self.request_processor.update_tools(self.tools)
         
-        # Load dynamic schemas
+        # Load dynamic schemas - this will raise an exception if it fails
+        # The exception will propagate to the client, indicating the server is not ready
         await self.load_dynamic_schemas()
         self.request_processor.update_tools(self.tools)
         

@@ -142,8 +142,13 @@ class SchemaBuilder:
         # Try to get type definition
         type_def = await self.get_type_definition(object_type)
         if not type_def or "field_definitions" not in type_def:
-            logger.warning(f"Could not get field definitions for {object_type}, using default schema")
-            return schema
+            error_msg = (
+                f"Failed to load schema for {object_type}. "
+                "The OpenPages instance may be unavailable, incorrectly configured, or the object type does not exist. "
+                "Please verify the OpenPages connection settings and ensure the instance is accessible."
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         
         # Common fields to skip (already included or system fields)
         skip_fields = [
@@ -321,8 +326,13 @@ class SchemaBuilder:
         # Try to get type definition
         type_def = await self.get_type_definition(object_type)
         if not type_def or "field_definitions" not in type_def:
-            logger.warning(f"Could not get field definitions for {object_type}, using default schema")
-            return schema
+            error_msg = (
+                f"Failed to load schema for {object_type}. "
+                "The OpenPages instance may be unavailable, incorrectly configured, or the object type does not exist. "
+                "Please verify the OpenPages connection settings and ensure the instance is accessible."
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         
         # Get query_filters configuration
         query_filters_config = obj_config.get("query_filters", {}) if obj_config else {}

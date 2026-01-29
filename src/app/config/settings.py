@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     OPENPAGES_PASSWORD: str = ""
     OPENPAGES_APIKEY: str = ""
     OPENPAGES_AUTHENTICATION_URL: str = ""
+    OPENPAGES_INSTANCE_NAME: str = ""  # For CP4D deployments
 
     # Server settings
     HOST: str = "0.0.0.0"

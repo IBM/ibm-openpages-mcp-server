@@ -21,18 +21,19 @@ class OpenPagesClient:
     
     def __init__(self, base_url: str, auth_type: str = "basic", username: Optional[str] = None,
                  password: Optional[str] = None, api_key: Optional[str] = None, authentication_url: Optional[str] = None,
-                 custom_settings: Optional[Settings] = None):
+                 custom_settings: Optional[Settings] = None, instance_name: Optional[str] = None):
         """
         Initialize the OpenPages client
         
         Args:
             base_url: Base URL of the OpenPages API
             auth_type: Authentication type, either "basic" or "bearer"
-            username: OpenPages username (required if auth_type is "basic")
-            password: OpenPages password (required if auth_type is "basic")
-            api_key: API key for bearer authentication (required if auth_type is "bearer")
-            authentication_url: Authentication URL for bearer authentication (required if auth_type is "bearer")
+            username: OpenPages username (required if auth_type is "basic" or for CP4D)
+            password: OpenPages password (required if auth_type is "basic" or for CP4D)
+            api_key: API key for bearer authentication (required if auth_type is "bearer" for IBM Cloud/MCSP)
+            authentication_url: Authentication URL for bearer authentication
             custom_settings: Optional custom settings object to use instead of global settings
+            instance_name: OpenPages instance name for CP4D deployments (e.g., 'openpagesinstance-with-25')
         """
         # Use provided settings or fall back to global settings
         self.settings = custom_settings if custom_settings else settings
@@ -42,10 +43,18 @@ class OpenPagesClient:
             if not username or not password:
                 raise ValueError("Username and password are required for basic authentication")
         elif auth_type.lower() == "bearer":
-            if not api_key:
-                raise ValueError("API key is required for bearer authentication")
             if not authentication_url:
-                raise ValueError("Authentication Url is required for bearer authentication")
+                raise ValueError("Authentication URL is required for bearer authentication")
+            # Detect if this is CP4D authentication by checking URL pattern
+            is_cp4d = '/icp4d-api/v1/authorize' in authentication_url or 'cpd-' in authentication_url
+            if is_cp4d:
+                # CP4D uses username/password
+                if not username or not password:
+                    raise ValueError("Username and password are required for CP4D authentication")
+            else:
+                # IBM Cloud IAM and MCSP use API key
+                if not api_key:
+                    raise ValueError("API key is required for bearer authentication (IBM Cloud/MCSP)")
         else:
             raise ValueError("Authentication type must be either 'basic' or 'bearer'")
             
@@ -70,11 +79,86 @@ class OpenPagesClient:
             'Accept': 'application/json'
         }
         
+        # Detect if this is CP4D based on authentication URL
+        self.is_cp4d = False
+        if self.auth_type == "bearer" and authentication_url:
+            self.is_cp4d = '/icp4d-api/v1/authorize' in authentication_url or 'cpd-' in authentication_url
+        
+        # Set instance name for CP4D
+        self.instance_name = None
+        if self.is_cp4d:
+            # Use provided instance name, or try to extract from base URL, or use from settings
+            if instance_name:
+                self.instance_name = instance_name
+            elif self.settings.OPENPAGES_INSTANCE_NAME:
+                self.instance_name = self.settings.OPENPAGES_INSTANCE_NAME
+            else:
+                self.instance_name = self._extract_instance_name(base_url)
+            logger.info(f"Detected CP4D deployment with instance name: {self.instance_name}")
+        
         # For basic auth, we can set the auth header immediately
         if self.auth_type == "basic":
             self.auth_header = self._create_basic_auth_header(username, password)
             self.headers['Authorization'] = self.auth_header
         # For bearer auth, we'll set it later in an async method
+    
+    def _extract_instance_name(self, base_url: str) -> str:
+        """
+        Extract OpenPages instance name from the base URL for CP4D deployments.
+        
+        For CP4D, the base URL typically contains the instance name.
+        Example: https://cpd-cpd-instance.apps.example.com
+        
+        Args:
+            base_url: Base URL of the OpenPages API
+            
+        Returns:
+            Instance name extracted from URL, or 'instance' as default
+        """
+        try:
+            # Remove protocol
+            url_without_protocol = base_url.replace('https://', '').replace('http://', '')
+            
+            # Split by dots and hyphens to find instance identifier
+            # For CP4D URLs like cpd-cpd-instance.apps.example.com
+            # We look for patterns after 'cpd-'
+            parts = url_without_protocol.split('.')
+            if parts:
+                first_part = parts[0]  # e.g., 'cpd-cpd-instance'
+                # Remove 'cpd-' prefix if present
+                if first_part.startswith('cpd-'):
+                    instance_part = first_part[4:]  # Remove 'cpd-' prefix
+                    # If it starts with 'cpd-' again, remove that too
+                    if instance_part.startswith('cpd-'):
+                        instance_part = instance_part[4:]
+                    if instance_part:
+                        logger.info(f"Extracted instance name: {instance_part}")
+                        return instance_part
+            
+            # Default fallback
+            logger.warning(f"Could not extract instance name from URL: {base_url}, using 'instance' as default")
+            return 'instance'
+        except Exception as e:
+            logger.error(f"Error extracting instance name: {e}, using 'instance' as default")
+            return 'instance'
+    
+    def _get_api_path(self, endpoint: str) -> str:
+        """
+        Get the correct API path based on deployment type (CP4D vs standard).
+        
+        Args:
+            endpoint: The API endpoint (e.g., '/api/v2/query')
+            
+        Returns:
+            Full API path with correct prefix
+        """
+        if self.is_cp4d:
+            # CP4D: Just append -opgrc to base URL, then add the endpoint
+            # Base URL already contains the instance path (e.g., /openpages-xxx)
+            return f"-opgrc{endpoint}"
+        else:
+            # Standard OpenPages uses: /opgrc/api/v2/...
+            return f"/opgrc{endpoint}"
     
     def _create_basic_auth_header(self, username: Optional[str], password: Optional[str]) -> str:
         """
@@ -95,24 +179,35 @@ class OpenPagesClient:
         
     async def _create_bearer_auth_header(self, api_key: Optional[str], authentication_url: Optional[str]) -> str:
         """
-        Create Bearer Auth header by fetching a token from IBM Cloud IAM
+        Create Bearer Auth header by fetching a token from IBM Cloud IAM, MCSP, or CP4D
         
         Args:
-            api_key: API key for bearer authentication
+            api_key: API key for bearer authentication (not used for CP4D)
             authentication_url: URL to use for authentication
 
         Returns:
             Bearer auth header string
         """
-        if api_key is None:
-            raise ValueError("API key cannot be None for bearer authentication")
-
         if authentication_url is None:
-            raise ValueError("Authentication Url cannot be None for bearer authentication")
+            raise ValueError("Authentication URL cannot be None for bearer authentication")
 
-        token = await self.fetch_token(api_key, authentication_url)
+        # Detect if this is CP4D authentication
+        auth_type = self._detect_auth_type(authentication_url)
+        
+        if auth_type == 'cp4d':
+            # For CP4D, we use username/password instead of API key
+            if not self.username or not self.password:
+                raise ValueError("Username and password are required for CP4D authentication")
+            # Pass empty string as api_key for CP4D (not used)
+            token = await self.fetch_token("", authentication_url)
+        else:
+            # For IBM Cloud and MCSP, we need an API key
+            if api_key is None:
+                raise ValueError("API key cannot be None for bearer authentication")
+            token = await self.fetch_token(api_key, authentication_url)
+            
         if token is None:
-            raise ValueError("Failed to obtain token from IAM service")
+            raise ValueError("Failed to obtain token from authentication service")
         return f"Bearer {token}"
     
     def _detect_auth_type(self, authentication_url: str) -> str:
@@ -123,10 +218,14 @@ class OpenPagesClient:
             authentication_url (str): The authentication URL
             
         Returns:
-            str: Either 'ibm_cloud' or 'mcsp'
+            str: Either 'ibm_cloud', 'mcsp', or 'cp4d'
         """
+        # Check if URL contains CP4D patterns
+        if '/icp4d-api/v1/authorize' in authentication_url or 'cpd-' in authentication_url:
+            logger.info("Detected CP4D authentication")
+            return 'cp4d'
         # Check if URL contains IBM Cloud IAM patterns
-        if 'iam.cloud.ibm.com' in authentication_url or 'iam.test.cloud.ibm.com' in authentication_url:
+        elif 'iam.cloud.ibm.com' in authentication_url or 'iam.test.cloud.ibm.com' in authentication_url:
             logger.info("Detected IBM Cloud OAuth2 authentication")
             return 'ibm_cloud'
         # Check if URL contains MCSP patterns
@@ -140,11 +239,11 @@ class OpenPagesClient:
     
     async def fetch_token(self, api_key: str, authentication_url: str) -> Optional[str]:
         """
-        Fetch authentication token from IBM Cloud IAM or MCSP service.
+        Fetch authentication token from IBM Cloud IAM, MCSP, or CP4D service.
         Automatically detects the authentication type based on the URL.
         
         Args:
-            api_key (str): The API key to use for authentication
+            api_key (str): The API key to use for authentication (or username:password for CP4D)
             authentication_url (str): The URL to use for authentication
 
         Returns:
@@ -153,7 +252,50 @@ class OpenPagesClient:
         # Detect authentication type
         auth_type = self._detect_auth_type(authentication_url)
         
-        if auth_type == 'ibm_cloud':
+        if auth_type == 'cp4d':
+            # CP4D authentication - expects username and password
+            # For CP4D, we use the stored username and password instead of api_key
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+            
+            json_data = {
+                'username': self.username,
+                'password': self.password
+            }
+            
+            try:
+                # Use SSL verification setting from config
+                async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
+                    logger.info(f"Fetching CP4D token from {authentication_url}")
+                    if not self.settings.SSL_VERIFY:
+                        logger.warning("SSL verification is disabled for CP4D authentication")
+                    
+                    response = await client.post(authentication_url, headers=headers, json=json_data, timeout=30.0)
+                    response.raise_for_status()
+                    
+                    token_data = response.json()
+                    
+                    # CP4D returns 'token' in the response
+                    if 'token' in token_data:
+                        logger.info("Successfully obtained CP4D token")
+                        return token_data['token']
+                    else:
+                        logger.error("Error: 'token' not found in CP4D response")
+                        logger.error(f"Response: {token_data}")
+                        return None
+                    
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Error fetching CP4D token: {e}")
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response body: {e.response.text}")
+                return None
+            except httpx.RequestError as e:
+                logger.error(f"Request error fetching CP4D token: {e}")
+                return None
+                
+        elif auth_type == 'ibm_cloud':
             # IBM Cloud OAuth2
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -276,7 +418,9 @@ class OpenPagesClient:
             "honor_primary": False
         }
         
-        logger.info(f"OpenPages API Query Request: {self.base_url}/opgrc/api/v2/query")
+        api_path = self._get_api_path("/api/v2/query")
+        full_url = f"{self.base_url}{api_path}"
+        logger.info(f"OpenPages API Query Request: {full_url}")
         logger.info(f"Request Body: {request_body}")
         
         # Use SSL verification setting from config
@@ -286,7 +430,7 @@ class OpenPagesClient:
         async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
             try:
                 response = await client.post(
-                    f"{self.base_url}/opgrc/api/v2/query",
+                    full_url,
                     headers=self.headers,
                     json=request_body,
                     timeout=30.0
@@ -335,7 +479,8 @@ class OpenPagesClient:
         # Ensure authentication is initialized
         await self.initialize_auth()
         
-        url = f"{self.base_url}/opgrc/api/v2/contents/{resource_id}"
+        api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
+        url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Get Content Request: {url}")
         
         # Use SSL verification setting from config
@@ -389,7 +534,8 @@ class OpenPagesClient:
         # Ensure authentication is initialized
         await self.initialize_auth()
         
-        url = f"{self.base_url}/opgrc/api/v2/contents"
+        api_path = self._get_api_path("/api/v2/contents")
+        url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Create Content Request: {url}")
         logger.debug(f"Request Body: {content_data}")
         
@@ -446,7 +592,8 @@ class OpenPagesClient:
         # Ensure authentication is initialized
         await self.initialize_auth()
         
-        url = f"{self.base_url}/opgrc/api/v2/contents/{resource_id}"
+        api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
+        url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Update Content Request: {url}")
         logger.debug(f"Request Body: {content_data}")
         
@@ -533,7 +680,8 @@ class OpenPagesClient:
         # Ensure authentication is initialized
         await self.initialize_auth()
         
-        url = f"{self.base_url}/opgrc/api/v2/types/{type_name}"
+        api_path = self._get_api_path(f"/api/v2/types/{type_name}")
+        url = f"{self.base_url}{api_path}"
         logger.info(f"OpenPages API Get Type Definition Request: {url}")
         
         # Use SSL verification setting from config
@@ -584,7 +732,8 @@ class OpenPagesClient:
         # Ensure authentication is initialized
         await self.initialize_auth()
         
-        url = f"{self.base_url}/opgrc/api/v2/types/{type_name}/associations?includeLocalizedLabels=false"
+        api_path = self._get_api_path(f"/api/v2/types/{type_name}/associations?includeLocalizedLabels=false")
+        url = f"{self.base_url}{api_path}"
         logger.info(f"OpenPages API Get Type Associations Request: {url}")
         
         # Use SSL verification setting from config
@@ -640,7 +789,8 @@ class OpenPagesClient:
         # Ensure authentication is initialized
         await self.initialize_auth()
         
-        url = f"{self.base_url}/opgrc/api/v2/contents/{resource_id}"
+        api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
+        url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Delete Content Request: {url}")
         
         # Use SSL verification setting from config
