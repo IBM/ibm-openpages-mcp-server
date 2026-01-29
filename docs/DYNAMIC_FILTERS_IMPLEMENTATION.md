@@ -179,14 +179,14 @@ Generates: `AND [Status] IN ('Active', 'In Progress', 'Pending')`
 
 ```python
 # 1. Try direct match (case-insensitive)
-for field_name, sql_field in field_mapping.items():
+for field_name, openpages_field in field_mapping.items():
     if field_name.lower() == filter_field_lower:
-        resolved_field = sql_field
+        resolved_field = openpages_field
 
 # 2. Try simple name match (without prefix)
 simple_name = field_name.split(':')[-1]
 if simple_name.lower() == filter_field_lower:
-    resolved_field = sql_field
+    resolved_field = openpages_field
 
 # 3. Try "Name [Group]" format
 if '[' in filter_field and filter_field.endswith(']'):

@@ -36,6 +36,8 @@ class RequestProcessor:
         server_version: str,
         tools: list,
         tool_handlers,
+        resource_handlers=None,
+        prompt_handlers=None,
         dynamic_schemas_loaded: bool = False,
         list_tools_callback: Optional[Callable] = None
     ):
@@ -46,12 +48,16 @@ class RequestProcessor:
             server_version: Version of the MCP server
             tools: List of available tools
             tool_handlers: ToolHandlers instance for executing tools
+            resource_handlers: ResourceHandlers instance for managing resources
+            prompt_handlers: PromptHandlers instance for managing prompts
             dynamic_schemas_loaded: Flag indicating if dynamic schemas are loaded
             list_tools_callback: Optional callback for list_tools to trigger schema loading
         """
         self.server_version = server_version
         self.tools = tools
         self.tool_handlers = tool_handlers
+        self.resource_handlers = resource_handlers
+        self.prompt_handlers = prompt_handlers
         self.dynamic_schemas_loaded = dynamic_schemas_loaded
         self.list_tools_callback = list_tools_callback
     
@@ -108,15 +114,21 @@ class RequestProcessor:
                 },
                 "resources": {
                     "list": {
-                        "enabled": False
+                        "enabled": True
                     },
                     "read": {
-                        "enabled": False
-                    }
+                        "enabled": True
+                    },
+                    "subscribe": False,  # Not implemented - resources are static during session
+                    "listChanged": False  # Not implemented - resources are static during session
                 },
                 "prompts": {
+                    "listChanged": False,  # Not implemented - prompts are static during session
+                    "get": {
+                        "enabled": True
+                    },
                     "list": {
-                        "enabled": False
+                        "enabled": True
                     }
                 },
                 "completion": {
@@ -220,6 +232,62 @@ class RequestProcessor:
                 }
                 result = formatted_response
                 logger.debug("Tool API call completed")
+            elif method in ["list_resources", "resources/list"]:
+                if not self.resource_handlers:
+                    logger.error("Resources not enabled - resource_handlers not initialized")
+                    return {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32601,
+                            "message": "Resources not enabled"
+                        },
+                        "id": request_id
+                    }, False
+                logger.debug("Listing resources")
+                result = await self.resource_handlers.handle_list_resources(params)
+                logger.debug("List resources completed")
+            elif method in ["read_resource", "resources/read"]:
+                if not self.resource_handlers:
+                    logger.error("Resources not enabled - resource_handlers not initialized")
+                    return {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32601,
+                            "message": "Resources not enabled"
+                        },
+                        "id": request_id
+                    }, False
+                logger.debug("Reading resource")
+                result = await self.resource_handlers.handle_read_resource(params)
+                logger.debug("Read resource completed")
+            elif method in ["list_prompts", "prompts/list"]:
+                if not self.prompt_handlers:
+                    logger.error("Prompts not enabled - prompt_handlers not initialized")
+                    return {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32601,
+                            "message": "Prompts not enabled"
+                        },
+                        "id": request_id
+                    }, False
+                logger.debug("Listing prompts")
+                result = await self.prompt_handlers.handle_list_prompts(params)
+                logger.debug("List prompts completed")
+            elif method in ["get_prompt", "prompts/get"]:
+                if not self.prompt_handlers:
+                    logger.error("Prompts not enabled - prompt_handlers not initialized")
+                    return {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32601,
+                            "message": "Prompts not enabled"
+                        },
+                        "id": request_id
+                    }, False
+                logger.debug("Getting prompt")
+                result = await self.prompt_handlers.handle_get_prompt(params)
+                logger.debug("Get prompt completed")
             elif method == "shutdown":
                 result = await self.handle_shutdown(params)
                 response = {

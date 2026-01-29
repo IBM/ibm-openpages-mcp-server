@@ -61,13 +61,13 @@ class BaseTool:
             
     def create_field_mapping(self, field_definitions: List[Dict[str, Any]]) -> Dict[str, str]:
         """
-        Create a mapping of field names to their SQL column names
+        Create a mapping of field names to their query column names
         
         Args:
             field_definitions: List of field definitions from type definition
             
         Returns:
-            Dict mapping field names to SQL column names
+            Dict mapping field names to query column names
         """
         field_mapping = {}
         

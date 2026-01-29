@@ -248,7 +248,7 @@ class OpenPagesClient:
         Execute a query against OpenPages
         
         Args:
-            statement: SQL-like query statement
+            statement: OpenPages query statement
             offset: Result offset
             limit: Maximum number of results
             
@@ -310,13 +310,14 @@ class OpenPagesClient:
                 logger.error(f"HTTP status error during query: {e}")
                 logger.error(f"Response status: {e.response.status_code}")
                 logger.error(f"Response body: {e.response.text}")
-                # Return a mock empty result instead of raising an error
-                return {"rows": []}
+                # Re-raise the error with a more descriptive message
+                error_message = f"OpenPages API error ({e.response.status_code}): {e.response.text}"
+                raise RuntimeError(error_message) from e
             except httpx.RequestError as e:
                 # Network-related errors
                 logger.error(f"Request error during query: {e}")
-                # Return a mock empty result instead of raising an error
-                return {"rows": []}
+                # Re-raise the error with a more descriptive message
+                raise RuntimeError(f"Network error during query: {str(e)}") from e
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def get_content(self, resource_id: str) -> Dict[str, Any]:
@@ -569,6 +570,59 @@ class OpenPagesClient:
                 # Network-related errors
                 logger.error(f"Request error getting type definition: {e}")
                 raise
+    
+    async def get_type_associations(self, type_name: str) -> Dict[str, Any]:
+        """
+        Get type association information from OpenPages
+        
+        Args:
+            type_name: Name of the type to retrieve associations for (e.g., 'SOXIssue')
+            
+        Returns:
+            Type association data including parent and child relationships
+        """
+        # Ensure authentication is initialized
+        await self.initialize_auth()
+        
+        url = f"{self.base_url}/opgrc/api/v2/types/{type_name}/associations?includeLocalizedLabels=false"
+        logger.info(f"OpenPages API Get Type Associations Request: {url}")
+        
+        # Use SSL verification setting from config
+        if not self.settings.SSL_VERIFY:
+            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+            
+        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
+            try:
+                response = await client.get(
+                    url,
+                    headers=self.headers,
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                response_json = response.json()
+                
+                # Log the response, but truncate if too large
+                if settings.DEBUG:
+                    logger.info(f"OpenPages API Get Type Associations Response Status: {response.status_code}")
+                    response_str = str(response_json)
+                    if len(response_str) > 1000:
+                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                    else:
+                        logger.info(f"Response Body: {response_json}")
+                
+                return response_json
+            except httpx.HTTPStatusError as e:
+                # This exception has response attribute
+                logger.error(f"HTTP status error getting type associations: {e}")
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response body: {e.response.text}")
+                # Return empty dict on error rather than raising
+                return {}
+            except httpx.RequestError as e:
+                # Network-related errors
+                logger.error(f"Request error getting type associations: {e}")
+                # Return empty dict on error rather than raising
+                return {}
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def delete_content(self, resource_id: str) -> Dict[str, Any]:

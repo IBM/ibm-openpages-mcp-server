@@ -122,6 +122,7 @@ class Settings(BaseSettings):
         env_file=str(ENV_FILE_PATH),
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",  # Ignore extra fields from environment
     )
     
     def __init__(self, env_file: Optional[str] = None, **data: Any):
@@ -132,9 +133,22 @@ class Settings(BaseSettings):
             env_file: Optional path to environment file
             data: Additional data to initialize settings with
         """
-        # Set custom env file if provided
+        # Determine the .env file path
         if env_file:
-            self.model_config["env_file"] = env_file
+            env_file_path = env_file
+        else:
+            # Look for .env file relative to the project root (where this file is located)
+            project_root = pathlib.Path(__file__).parent.parent.parent.parent
+            env_file_path = project_root / ".env"
+            
+            # If .env doesn't exist in project root, try .env.local
+            if not env_file_path.exists():
+                env_local_path = project_root / ".env.local"
+                if env_local_path.exists():
+                    env_file_path = env_local_path
+        
+        # Update model config with the resolved env file path
+        self.model_config["env_file"] = str(env_file_path)
             
         super().__init__(**data)
         
@@ -155,7 +169,11 @@ class Settings(BaseSettings):
         Reads the object_types.json file and populates the OPENPAGES_OBJECT_TYPES
         list with configured object type definitions. Also loads global settings
         like output format.
+        
+        Note: Uses sys.stderr for output to avoid polluting stdout in stdio mode.
         """
+        import sys
+        
         try:
             # Get the path to the object_types.json file
             config_path = pathlib.Path(self.OBJECT_TYPES_CONFIG_PATH)
@@ -176,11 +194,12 @@ class Settings(BaseSettings):
                         break
                 
                 if not config_path:
-                    print(f"Warning: Object types configuration file not found in any of the expected locations")
+                    # Use stderr to avoid polluting stdout in stdio mode
+                    print(f"Warning: Object types configuration file not found in any of the expected locations", file=sys.stderr)
                     return
                     
             if not config_path.exists():
-                print(f"Warning: Object types configuration file not found: {config_path}")
+                print(f"Warning: Object types configuration file not found: {config_path}", file=sys.stderr)
                 return
                 
             # Load the configuration from the file
@@ -193,13 +212,13 @@ class Settings(BaseSettings):
                     global_settings = config_data.get('global_settings', {})
                     if 'output_format' in global_settings:
                         self.OUTPUT_FORMAT = global_settings['output_format']
-                        print(f"Loaded global output format: {self.OUTPUT_FORMAT}")
+                        print(f"Loaded global output format: {self.OUTPUT_FORMAT}", file=sys.stderr)
                     
-                    print(f"Loaded {len(self.OPENPAGES_OBJECT_TYPES)} object types from {config_path}")
+                    print(f"Loaded {len(self.OPENPAGES_OBJECT_TYPES)} object types from {config_path}", file=sys.stderr)
                 except json.JSONDecodeError as e:
-                    print(f"Error parsing object types configuration file: {e}")
+                    print(f"Error parsing object types configuration file: {e}", file=sys.stderr)
         except Exception as e:
-            print(f"Error loading object types configuration: {e}")
+            print(f"Error loading object types configuration: {e}", file=sys.stderr)
 
 # Create settings instance with default .env file
 settings = Settings()
@@ -218,3 +237,4 @@ def create_settings(env_file: str) -> Settings:
     return Settings(env_file=env_file)
 
 # Made with Bob
+
