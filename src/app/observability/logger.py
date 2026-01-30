@@ -224,6 +224,7 @@ def setup_logging(
     service_name: str = "grc-mcp-server",
     json_format: bool = True,
     log_file: Optional[str] = None,
+    use_stderr: bool = False,
 ) -> None:
     """
     Setup structured logging for the application
@@ -233,6 +234,7 @@ def setup_logging(
         service_name: Name of the service for log identification
         json_format: Whether to use JSON format (True) or plain text (False)
         log_file: Optional file path to write logs to (relative paths are resolved from project root)
+        use_stderr: If True, log to stderr instead of stdout (required for stdio mode)
     """
     
     # Get root logger
@@ -242,8 +244,8 @@ def setup_logging(
     # Remove existing handlers
     root_logger.handlers.clear()
     
-    # Create console handler
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Create console handler with appropriate stream
+    console_handler = logging.StreamHandler(sys.stderr if use_stderr else sys.stdout)
     console_handler.setLevel(getattr(logging, level.upper()))
     
     # Set formatter
@@ -259,25 +261,29 @@ def setup_logging(
     
     # Add file handler if specified
     if log_file:
-        # Convert relative paths to absolute paths relative to project root
-        log_path = Path(log_file)
-        if not log_path.is_absolute():
-            # Get project root (4 levels up from this file)
-            project_root = Path(__file__).parent.parent.parent.parent
-            log_path = project_root / log_file
-        
-        # Ensure the log directory exists
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        file_handler = logging.FileHandler(str(log_path))
-        file_handler.setLevel(getattr(logging, level.upper()))
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
+        try:
+            # Convert relative paths to absolute paths relative to project root
+            log_path = Path(log_file)
+            if not log_path.is_absolute():
+                # Get project root (4 levels up from this file)
+                project_root = Path(__file__).parent.parent.parent.parent
+                log_path = project_root / log_file
+            
+            # Ensure the log directory exists
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            file_handler = logging.FileHandler(str(log_path))
+            file_handler.setLevel(getattr(logging, level.upper()))
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+        except Exception as e:
+            # If file logging fails, just log to console
+            root_logger.warning(f"Failed to setup file logging to {log_file}: {e}")
     
     # Log setup completion
     root_logger.info(
         f"Logging configured: level={level}, format={'JSON' if json_format else 'TEXT'}, "
-        f"service={service_name}"
+        f"service={service_name}, stream={'stderr' if use_stderr else 'stdout'}"
     )
 
 

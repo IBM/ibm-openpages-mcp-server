@@ -4,6 +4,9 @@ Run MCP Server in Stdio Mode - CLI Entry Point
 
 This script runs the MCP server in stdio mode for IBM OpenPages integration.
 It handles command line arguments, environment configuration, and server startup.
+
+CRITICAL: In stdio mode, stdout is reserved exclusively for JSON-RPC messages.
+All logging MUST go to stderr to avoid interfering with the MCP protocol.
 """
 
 import os
@@ -23,12 +26,7 @@ from src.app.config.settings import settings, create_settings
 # Version information
 __version__ = "1.0.0"
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stderr
-)
+# Logger will be configured by configure_logging() in main_cli()
 logger = logging.getLogger(__name__)
 
 
@@ -63,18 +61,19 @@ def main_cli() -> Optional[NoReturn]:
     try:
         # Get the environment file path
         env_file = get_env_file_path(args.env_file)
-        logger.info(f"Using environment file: {env_file}")
         
         # Create settings with the specified environment file
         app_settings = create_settings(env_file)
         
-        # Set debug mode if requested via command line
+        # Configure logging to stderr (CRITICAL: stdout must be reserved for JSON-RPC messages only)
         if args.debug:
             app_settings.DEBUG = True
-            configure_logging("DEBUG")
+            configure_logging("DEBUG", use_stderr=True)
             logger.debug("Debug mode enabled via command line")
         else:
-            configure_logging(app_settings.LOG_LEVEL)
+            configure_logging(app_settings.LOG_LEVEL, use_stderr=True)
+        
+        logger.info(f"Using environment file: {env_file}")
         
         # Override settings with command line arguments if provided
         if args.port:

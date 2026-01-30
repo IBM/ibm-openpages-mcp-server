@@ -5,29 +5,39 @@ This module contains utility functions used across the MCP server implementation
 """
 
 import os
+import sys
 import logging
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-def configure_logging(log_level: str = "INFO") -> None:
+def configure_logging(log_level: str = "INFO", use_stderr: bool = False) -> None:
     """
     Configure logging with the specified log level
     
     Args:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        use_stderr: If True, log to stderr instead of stdout (required for stdio mode)
     """
     numeric_level = getattr(logging, log_level.upper(), None)
     if not isinstance(numeric_level, int):
         logger.warning(f"Invalid log level: {log_level}, using INFO")
         numeric_level = logging.INFO
-        
-    # Configure root logger
-    logging.basicConfig(
-        level=numeric_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    )
-    logger.info(f"Logging configured with level: {log_level}")
+    
+    # Get root logger and clear existing handlers to avoid duplicates
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(numeric_level)
+    
+    # Create handler with appropriate stream
+    handler = logging.StreamHandler(sys.stderr if use_stderr else sys.stdout)
+    handler.setLevel(numeric_level)
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    ))
+    root_logger.addHandler(handler)
+    
+    logger.info(f"Logging configured with level: {log_level}, stream: {'stderr' if use_stderr else 'stdout'}")
 
 def get_env_file_path(env_file: Optional[str] = None) -> str:
     """
