@@ -50,6 +50,8 @@ class MCPServer:
         Args:
             custom_settings: Optional custom settings object to use instead of global settings
         """
+        logger.info("=== Initializing MCP Server ===")
+        
         # Use provided settings or fall back to global settings
         self.settings = custom_settings if custom_settings else settings
         
@@ -70,7 +72,8 @@ class MCPServer:
                 self.settings.OPENPAGES_PASSWORD,
                 self.settings.OPENPAGES_APIKEY,
                 self.settings.OPENPAGES_AUTHENTICATION_URL,
-                custom_settings=self.settings
+                custom_settings=self.settings,
+                instance_name=self.settings.OPENPAGES_INSTANCE_NAME
             )
             logger.debug("OpenPages client initialized successfully")
         except Exception as e:
@@ -98,11 +101,12 @@ class MCPServer:
         
         # Initialize modular components
         self.schema_builder = SchemaBuilder(self.client)
+        # Pass self reference to ToolHandlers for schema loading capability
         self.resource_handlers = ResourceHandlers(self.schema_builder, self.settings)
         self.prompt_handlers = PromptHandlers(self.settings)
         
-        # Pass resource_handlers to tool_handlers so tools can access schemas
-        self.tool_handlers = ToolHandlers(self.object_tools, self.settings, self.query_tool, self.resource_handlers)
+        # Pass resource_handlers and self to tool_handlers so tools can access schemas and trigger dynamic schema loading
+        self.tool_handlers = ToolHandlers(self.object_tools, self.settings, self.query_tool, self.resource_handlers, mcp_server=self)
         
         # Load tools schema from JSON file
         self._load_tools_schema()
@@ -120,6 +124,8 @@ class MCPServer:
         
         # Flag to indicate if dynamic schemas have been loaded
         self.dynamic_schemas_loaded: bool = False
+        
+        logger.info(f"MCP Server initialized. Base tools loaded: {len(self.tools)}, Dynamic schemas loaded: {self.dynamic_schemas_loaded}")
         
     def _build_openpages_query_description(self) -> str:
         """
@@ -367,8 +373,70 @@ ERROR RECOVERY
             }
         ]
         
+        # Add generic delete tool that works for all object types
+        self._add_generic_delete_tool()
+        
         # Dynamically add tools for each configured object type
         self._add_dynamic_tools_to_schema()
+    
+    def _add_generic_delete_tool(self) -> None:
+        """
+        Add a single generic delete tool that works for all configured object types
+        """
+        logger.info("Adding generic delete tool")
+        
+        # Build enum of configured object types (tool_prefix values only)
+        # These are the object types that have tools configured
+        object_type_enum = []
+        object_type_descriptions = []
+        
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name", tool_prefix)
+            
+            if tool_prefix:
+                object_type_enum.append(tool_prefix)
+                # Add helpful description showing the mapping
+                object_type_descriptions.append(f"'{tool_prefix}' ({type_id} - {display_name})")
+        
+        # Get namespace from settings
+        namespace = self.settings.NAMESPACE
+        
+        # Build tool name with namespace if present
+        tool_name = f"{namespace}_delete_object" if namespace else "delete_object"
+        
+        # Build description with available types
+        types_list = ", ".join(object_type_descriptions)
+        
+        self.tools.append({
+            "name": tool_name,
+            "description": f"Delete any configured object in OpenPages by resource ID, path, or name. Supported object types: {types_list}. If multiple objects match the name, an error will be returned with the list of matches.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "object_type": {
+                        "type": "string",
+                        "enum": object_type_enum,
+                        "description": f"Type of object to delete. Must be one of: {', '.join(object_type_enum)}. Use the tool_prefix value (e.g., 'issue' for SOXIssue, 'control' for SOXControl)."
+                    },
+                    "resource_id": {
+                        "type": "string",
+                        "description": "Resource ID of the object to delete (one of resource_id, path, or name is required)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Full path of the object to delete (one of resource_id, path, or name is required)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the object to delete. If multiple objects have the same name, an error will be returned (one of resource_id, path, or name is required)"
+                    }
+                },
+                "required": ["object_type"]
+            }
+        })
+        logger.info(f"Added generic {tool_name} tool supporting {len(object_type_enum)} configured object types: {', '.join(object_type_enum)}")
         
     def _add_dynamic_tools_to_schema(self) -> None:
         """
@@ -449,23 +517,25 @@ ERROR RECOVERY
                 existing_tool_names.add(query_tool_name)
                 logger.info(f"Added dynamic tool: {query_tool_name}")
                 
-            # Delete tool
-            delete_tool_name = build_tool_name("delete")
-            if delete_tool_name not in existing_tool_names:
-                delete_description = tool_descriptions.get("delete", f"Delete an existing {display_name.lower()} in OpenPages")
-                self.tools.append({
-                    "name": delete_tool_name,
-                    "description": delete_description,
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "resource_id": {"type": "string", "description": f"Resource ID to delete"},
-                            "path": {"type": "string", "description": f"Path to delete"}
-                        }
-                    }
-                })
-                existing_tool_names.add(delete_tool_name)
-                logger.info(f"Added dynamic tool: {delete_tool_name}")
+            # Delete tool - DISABLED: Now using generic delete_object tool instead
+            # Individual delete tools per object type are no longer created
+            # The generic delete_object tool handles all object types
+            # delete_tool_name = build_tool_name("delete")
+            # if delete_tool_name not in existing_tool_names:
+            #     delete_description = tool_descriptions.get("delete", f"Delete an existing {display_name.lower()} in OpenPages")
+            #     self.tools.append({
+            #         "name": delete_tool_name,
+            #         "description": delete_description,
+            #         "inputSchema": {
+            #             "type": "object",
+            #             "properties": {
+            #                 "resource_id": {"type": "string", "description": f"Resource ID to delete"},
+            #                 "path": {"type": "string", "description": f"Path to delete"}
+            #             }
+            #         }
+            #     })
+            #     existing_tool_names.add(delete_tool_name)
+            #     logger.info(f"Added dynamic tool: {delete_tool_name}")
     
     async def initialize_client(self) -> None:
         """
@@ -485,12 +555,21 @@ ERROR RECOVERY
         
         Args:
             force_reload: If True, reload schemas even if already loaded
+            
+        Raises:
+            Exception: If schema loading fails (connection errors, API errors, etc.)
         """
         if self.dynamic_schemas_loaded and not force_reload:
             logger.debug("Dynamic schemas already loaded, using cached version")
             return
         
-        logger.info("Loading dynamic schemas for tools" + (" (forced reload)" if force_reload else ""))
+        # Log schema state transition
+        if force_reload:
+            logger.info("Loading dynamic schemas for tools (forced reload)")
+        elif not self.dynamic_schemas_loaded:
+            logger.info("Loading dynamic schemas for tools (first time load)")
+        else:
+            logger.info("Loading dynamic schemas for tools")
         
         try:
             # Initialize client authentication first
@@ -514,6 +593,7 @@ ERROR RECOVERY
                 
                 if obj_type and tool_prefix:
                     # Build schemas using schema_builder
+                    # These methods will raise RuntimeError if they fail to get type definitions
                     logger.debug(f"Building dynamic schema for {obj_type}")
                     obj_schema = await self.schema_builder.build_dynamic_schema_for_object(obj_type, tool_prefix, obj_config)
                     upsert_obj_schema = self.schema_builder.create_upsert_schema(obj_schema, tool_prefix)
@@ -541,7 +621,7 @@ ERROR RECOVERY
             self.dynamic_schemas_loaded = True
             self.request_processor.update_tools(self.tools)
             self.request_processor.set_dynamic_schemas_loaded(True)
-            logger.info("Successfully loaded all dynamic schemas")
+            logger.info(f"Successfully loaded all dynamic schemas. Total tools available: {len(self.tools)}, Schema state: LOADED")
             
         except Exception as e:
             logger.error(f"Error loading dynamic schemas: {e}")
@@ -591,13 +671,17 @@ ERROR RECOVERY
             
         Returns:
             Dict containing the list of available tools with their schemas
+            
+        Raises:
+            Exception: If dynamic schema loading fails (connection errors, etc.)
         """
         if not self.dynamic_schemas_loaded:
             logger.debug("Loading base tools schema")
             self._load_tools_schema()
             self.request_processor.update_tools(self.tools)
         
-        # Load dynamic schemas
+        # Load dynamic schemas - this will raise an exception if it fails
+        # The exception will propagate to the client, indicating the server is not ready
         await self.load_dynamic_schemas()
         self.request_processor.update_tools(self.tools)
         

@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     OPENPAGES_PASSWORD: str = ""
     OPENPAGES_APIKEY: str = ""
     OPENPAGES_AUTHENTICATION_URL: str = ""
+    OPENPAGES_INSTANCE_NAME: str = ""  # For CP4D deployments
 
     # Server settings
     HOST: str = "0.0.0.0"
@@ -114,6 +115,9 @@ class Settings(BaseSettings):
     
     # Global output format setting
     OUTPUT_FORMAT: str = "text"  # Options: "text" or "json"
+    
+    # Global namespace for generic tools
+    NAMESPACE: str = ""  # Namespace prefix for generic tools (e.g., "openpages")
     
     # Path to object types configuration file
     OBJECT_TYPES_CONFIG_PATH: str = "object_types.json"
@@ -213,6 +217,10 @@ class Settings(BaseSettings):
                     if 'output_format' in global_settings:
                         self.OUTPUT_FORMAT = global_settings['output_format']
                         print(f"Loaded global output format: {self.OUTPUT_FORMAT}", file=sys.stderr)
+                    
+                    if 'namespace' in global_settings:
+                        self.NAMESPACE = global_settings['namespace']
+                        print(f"Loaded global namespace: {self.NAMESPACE}")
                     
                     print(f"Loaded {len(self.OPENPAGES_OBJECT_TYPES)} object types from {config_path}", file=sys.stderr)
                 except json.JSONDecodeError as e:

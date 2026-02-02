@@ -91,10 +91,6 @@ class StructuredFormatter(logging.Formatter):
                 "traceback": traceback.format_exception(*record.exc_info),
             }
         
-        # Add stack trace for errors
-        if record.levelno >= logging.ERROR and not record.exc_info:
-            log_data["stack_trace"] = traceback.format_stack()
-        
         return json.dumps(log_data)
 
 

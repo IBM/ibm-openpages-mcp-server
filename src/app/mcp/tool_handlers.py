@@ -29,7 +29,7 @@ class ToolHandlers:
     the execution of different tool operations.
     """
     
-    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None, resource_handlers=None):
+    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None, resource_handlers=None, mcp_server=None):
         """
         Initialize tool handlers
         
@@ -38,11 +38,17 @@ class ToolHandlers:
             settings: Application settings
             query_tool: OpenPages query tool instance (optional)
             resource_handlers: ResourceHandlers instance for schema access (optional)
+            mcp_server: MCP server instance for dynamic schema loading (optional)
         """
         self.object_tools = object_tools
         self.settings = settings
         self.query_tool = query_tool
         self.resource_handlers = resource_handlers
+        self.mcp_server = mcp_server
+
+        # Build the generic delete tool name based on namespace
+        namespace = settings.NAMESPACE
+        self.generic_delete_tool_name = f"{namespace}_delete_object" if namespace else "delete_object"
     
     @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     async def handle_echo_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -64,6 +70,156 @@ class ToolHandlers:
         }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
+    async def handle_generic_delete_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle the generic delete_object tool that works for all configured object types
+        
+        Args:
+            arguments: Tool arguments containing 'object_type' and one of 'resource_id', 'path', or 'name'
+            
+        Returns:
+            Dict containing the deletion result
+        """
+        object_type_input = arguments.get("object_type", "")
+        resource_id = arguments.get("resource_id")
+        path = arguments.get("path")
+        name = arguments.get("name")
+        
+        if not object_type_input:
+            logger.error("object_type not provided in delete_object request")
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: object_type is required"}
+                ]
+            }
+        
+        # Validate that at least one identifier is provided
+        if not resource_id and not path and not name:
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: At least one of resource_id, path, or name is required"}
+                ]
+            }
+        
+        # Normalize object_type: accept tool_prefix, type_id, or display_name
+        # Map to the tool_prefix that we use internally
+        object_type = None
+        type_id = None
+        
+        # Build a mapping of all valid identifiers to tool_prefix
+        type_mapping = {}
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            config_type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name")
+            
+            if tool_prefix:
+                # Map tool_prefix to itself (case-insensitive)
+                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
+                
+                # Map type_id to tool_prefix (case-insensitive)
+                if config_type_id:
+                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
+                
+                # Map display_name to tool_prefix (case-insensitive)
+                if display_name:
+                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
+        
+        # Look up the normalized object_type
+        lookup_key = object_type_input.lower()
+        if lookup_key in type_mapping:
+            object_type, type_id = type_mapping[lookup_key]
+            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
+        else:
+            logger.warning(f"Invalid object_type: {object_type_input}")
+            available_types = list(set([v[0] for v in type_mapping.values()]))
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
+                ]
+            }
+        
+        # Check if we have a tool for this object type
+        if object_type not in self.object_tools:
+            logger.warning(f"No tool available for object type: {object_type}")
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
+                ]
+            }
+        
+        # Get the appropriate tool
+        tool = self.object_tools[object_type]
+        logger.info(f"Executing generic delete operation for {object_type}")
+        
+        try:
+            # If name is provided but not resource_id or path, we need to look up the object first
+            if name and not resource_id and not path:
+                logger.info(f"Looking up {object_type} by name: {name}")
+                
+                # Query to find the object by name
+                from src.app.core.openpages_client import OpenPagesClient
+                
+                # Get the type_id for the query
+                type_id = None
+                for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+                    if obj_config.get("tool_prefix") == object_type:
+                        type_id = obj_config.get("type_id")
+                        break
+                
+                if not type_id:
+                    return {
+                        "result": [
+                            {"type": "text", "text": f"Error: Could not find type_id for object type: {object_type}"}
+                        ]
+                    }
+                
+                # Query for the object
+                query = f"SELECT [Resource ID], [Name] FROM [{type_id}] WHERE [Name] = '{name}' LIMIT 2"
+                client = tool.client
+                result_query = await client.query(query)
+                existing_objects = result_query.get('rows', [])
+                
+                if len(existing_objects) == 0:
+                    return {
+                        "result": [
+                            {"type": "text", "text": f"Error: No {object_type} found with name '{name}'"}
+                        ]
+                    }
+                elif len(existing_objects) > 1:
+                    obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}" for obj in existing_objects])
+                    return {
+                        "result": [
+                            {"type": "text", "text": f"Error: Multiple {object_type}s found with name '{name}'. Please specify 'resource_id' or 'path' instead:\n{obj_list}"}
+                        ]
+                    }
+                else:
+                    # Found exactly one object, use its resource_id
+                    resource_id = existing_objects[0]['fields'][0]['value']
+                    logger.info(f"Found {object_type} with name '{name}', resource_id: {resource_id}")
+                    # Update arguments with the resolved resource_id
+                    arguments["resource_id"] = resource_id
+            
+            # Now perform the delete operation
+            result = await tool.delete_object(arguments)
+            
+            # Format the response
+            logger.debug(f"Generic delete operation completed successfully for {object_type}")
+            return {
+                "result": [{"type": "text", "text": item.text} for item in result]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling delete_object for {object_type}: {e}", exc_info=True, extra_fields={
+                "object_type": object_type,
+                "error_type": type(e).__name__
+            })
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error deleting {object_type}: {str(e)}"}
+                ]
+            }
+    
     async def handle_openpages_query_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle the OpenPages query tool
@@ -449,6 +605,7 @@ class ToolHandlers:
         Handle call_tool request from the client
         
         Executes the requested tool with the provided arguments.
+        Ensures dynamic schemas are loaded before execution to handle server restart scenarios.
         
         Args:
             params: Parameters from the call_tool request, including tool name and arguments
@@ -470,10 +627,26 @@ class ToolHandlers:
         logger.info(f"Handling call_tool request for tool: {name}")
         logger.debug(f"Tool arguments: {arguments}")
         
+        # Ensure dynamic schemas are loaded before executing tool
+        # This handles the scenario where server restarted but client still has cached schema
+        if self.mcp_server and not self.mcp_server.dynamic_schemas_loaded:
+            logger.warning(f"Dynamic schemas not loaded before tool call '{name}', loading now...")
+            try:
+                await self.mcp_server.load_dynamic_schemas()
+                logger.info("Dynamic schemas loaded successfully before tool execution")
+            except Exception as e:
+                logger.error(f"Failed to load dynamic schemas before tool execution: {e}", exc_info=True)
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Error: Failed to initialize tool schemas. Please try again or contact support. Details: {str(e)}"}
+                    ]
+                }
+        
         try:
             # Map special tool names to their handler methods
             special_tool_handlers = {
                 "echo": self.handle_echo_tool,
+                self.generic_delete_tool_name: self.handle_generic_delete_tool,
                 "execute_openpages_query": self.handle_openpages_query_tool,
                 "list_resources": self.handle_list_resources_tool,
                 "get_resource": self.handle_get_resource_tool,
