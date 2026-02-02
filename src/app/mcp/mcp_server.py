@@ -571,43 +571,29 @@ ERROR RECOVERY
         else:
             logger.info("Loading dynamic schemas for tools")
         
-        # Initialize client authentication first
-        await self.initialize_client()
-        
-        # Reload the tools schema
-        if not self.dynamic_schemas_loaded:
-            self._load_tools_schema()
-        
-        # Load schemas for dynamic object types
-        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
-            obj_type = obj_config.get("type_id")
-            tool_prefix = obj_config.get("tool_prefix")
-            display_name = obj_config.get("display_name", obj_type)
-            namespace = obj_config.get("namespace", "")
+        try:
+            # Initialize client authentication first
+            await self.initialize_client()
             
-            def build_tool_name(operation: str) -> str:
-                if namespace:
-                    return f"{namespace}_{operation}_{tool_prefix}"
-                return f"{operation}_{tool_prefix}"
+            # Reload the tools schema
+            if not self.dynamic_schemas_loaded:
+                self._load_tools_schema()
             
-            if obj_type and tool_prefix:
-                # Build schemas using schema_builder
-                # These methods will raise RuntimeError if they fail to get type definitions
-                logger.debug(f"Building dynamic schema for {obj_type}")
-                obj_schema = await self.schema_builder.build_dynamic_schema_for_object(obj_type, tool_prefix, obj_config)
-                upsert_obj_schema = self.schema_builder.create_upsert_schema(obj_schema, tool_prefix)
-                self._update_tool_schema(build_tool_name("upsert"), upsert_obj_schema)
+            # Load schemas for dynamic object types
+            for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+                obj_type = obj_config.get("type_id")
+                tool_prefix = obj_config.get("tool_prefix")
+                display_name = obj_config.get("display_name", obj_type)
+                namespace = obj_config.get("namespace", "")
                 
-                # Query schema
-                query_obj_schema = await self.schema_builder.build_dynamic_schema_for_query_object(obj_type, obj_config)
-                self._update_tool_schema(build_tool_name("query") + "s", {
-                    "type": "object",
-                    "properties": query_obj_schema.get("properties", {}),
-                    "description": f"Query for {display_name.lower() if display_name else tool_prefix}s in OpenPages"
-                })
+                def build_tool_name(operation: str) -> str:
+                    if namespace:
+                        return f"{namespace}_{operation}_{tool_prefix}"
+                    return f"{operation}_{tool_prefix}"
                 
                 if obj_type and tool_prefix:
                     # Build schemas using schema_builder
+                    # These methods will raise RuntimeError if they fail to get type definitions
                     logger.debug(f"Building dynamic schema for {obj_type}")
                     obj_schema = await self.schema_builder.build_dynamic_schema_for_object(obj_type, tool_prefix, obj_config)
                     upsert_obj_schema = self.schema_builder.create_upsert_schema(obj_schema, tool_prefix)
