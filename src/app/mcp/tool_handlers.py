@@ -29,7 +29,7 @@ class ToolHandlers:
     the execution of different tool operations.
     """
     
-    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None, resource_handlers=None):
+    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None, resource_handlers=None, mcp_server=None):
         """
         Initialize tool handlers
         
@@ -38,11 +38,17 @@ class ToolHandlers:
             settings: Application settings
             query_tool: OpenPages query tool instance (optional)
             resource_handlers: ResourceHandlers instance for schema access (optional)
+            mcp_server: MCP server instance for dynamic schema loading (optional)
         """
         self.object_tools = object_tools
         self.settings = settings
         self.query_tool = query_tool
         self.resource_handlers = resource_handlers
+        self.mcp_server = mcp_server
+
+        # Build the generic delete tool name based on namespace
+        namespace = settings.NAMESPACE
+        self.generic_delete_tool_name = f"{namespace}_delete_object" if namespace else "delete_object"
     
     @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     async def handle_echo_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -211,6 +217,8 @@ class ToolHandlers:
             return {
                 "result": [
                     {"type": "text", "text": f"Error deleting {object_type}: {str(e)}"}
+                ]
+            }
     
     async def handle_openpages_query_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -638,7 +646,7 @@ class ToolHandlers:
             # Map special tool names to their handler methods
             special_tool_handlers = {
                 "echo": self.handle_echo_tool,
-                self.generic_delete_tool_name: self.handle_generic_delete_tool
+                self.generic_delete_tool_name: self.handle_generic_delete_tool,
                 "execute_openpages_query": self.handle_openpages_query_tool,
                 "list_resources": self.handle_list_resources_tool,
                 "get_resource": self.handle_get_resource_tool,
