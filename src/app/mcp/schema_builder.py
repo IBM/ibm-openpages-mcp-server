@@ -12,10 +12,12 @@ The SchemaBuilder class provides:
 - Upsert schema creation combining insert and update capabilities
 - Support for custom field configurations (include_all_fields, specific fields)
 - Enum value extraction and validation
+- Context variable support for all tools
 """
 
 import logging
 from typing import Dict, Any, List, Optional
+from src.app.mcp.context import build_context_schema
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +140,10 @@ class SchemaBuilder:
             },
             "required": ["name"]
         }
+        
+        # Add context variables to schema
+        context_properties = build_context_schema()
+        schema["properties"].update(context_properties)
         
         # Try to get type definition
         type_def = await self.get_type_definition(object_type)
@@ -322,6 +328,10 @@ class SchemaBuilder:
                 }
             }
         }
+        
+        # Add context variables to schema
+        context_properties = build_context_schema()
+        schema["properties"].update(context_properties)
         
         # Try to get type definition
         type_def = await self.get_type_definition(object_type)
