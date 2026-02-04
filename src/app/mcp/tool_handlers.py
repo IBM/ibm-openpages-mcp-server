@@ -11,12 +11,14 @@ The ToolHandlers class supports:
 - Generic object tools (upsert, query, delete) for any configured object type
 - Dynamic tool routing based on naming conventions
 - Namespace support for tool organization
+- Context variable extraction and passing
 """
 
 import logging
 from typing import Dict, Any
 
 from src.app.observability.logger import get_logger, log_method_call
+from src.app.mcp.context import extract_context_from_arguments
 
 logger = get_logger(__name__)
 
@@ -56,16 +58,25 @@ class ToolHandlers:
         Handle the echo tool
         
         Args:
-            arguments: Tool arguments containing 'text' field
+            arguments: Tool arguments containing 'text' field and optional context variables
             
         Returns:
             Dict containing the echo result
         """
-        text = arguments.get("text", "")
-        logger.debug(f"Echo tool called with text: {text[:100]}")
+        # Extract context variables from arguments
+        cleaned_args, context = extract_context_from_arguments(arguments)
+        
+        text = cleaned_args.get("text", "")
+        logger.debug(f"Echo tool called with text: {text[:100]}, context: {context}")
+        
+        # Include context info in response if present
+        response_text = f"Echo: {text}"
+        if context.to_dict():
+            response_text += f"\n\nContext: {context.to_dict()}"
+        
         return {
             "result": [
-                {"type": "text", "text": f"Echo: {text}"}
+                {"type": "text", "text": response_text}
             ]
         }
     
@@ -75,15 +86,20 @@ class ToolHandlers:
         Handle the generic delete_object tool that works for all configured object types
         
         Args:
-            arguments: Tool arguments containing 'object_type' and one of 'resource_id', 'path', or 'name'
+            arguments: Tool arguments containing 'object_type', one of 'resource_id', 'path', or 'name',
+                      and optional context variables
             
         Returns:
             Dict containing the deletion result
         """
-        object_type_input = arguments.get("object_type", "")
-        resource_id = arguments.get("resource_id")
-        path = arguments.get("path")
-        name = arguments.get("name")
+        # Extract context variables from arguments
+        cleaned_args, context = extract_context_from_arguments(arguments)
+        logger.debug(f"Delete tool context: {context}")
+        
+        object_type_input = cleaned_args.get("object_type", "")
+        resource_id = cleaned_args.get("resource_id")
+        path = cleaned_args.get("path")
+        name = cleaned_args.get("name")
         
         if not object_type_input:
             logger.error("object_type not provided in delete_object request")
@@ -197,11 +213,11 @@ class ToolHandlers:
                     # Found exactly one object, use its resource_id
                     resource_id = existing_objects[0]['fields'][0]['value']
                     logger.info(f"Found {object_type} with name '{name}', resource_id: {resource_id}")
-                    # Update arguments with the resolved resource_id
-                    arguments["resource_id"] = resource_id
+                    # Update cleaned_args with the resolved resource_id
+                    cleaned_args["resource_id"] = resource_id
             
             # Now perform the delete operation
-            result = await tool.delete_object(arguments)
+            result = await tool.delete_object(cleaned_args)
             
             # Format the response
             logger.debug(f"Generic delete operation completed successfully for {object_type}")
@@ -225,11 +241,15 @@ class ToolHandlers:
         Handle the OpenPages query tool
         
         Args:
-            arguments: Tool arguments containing query, offset, limit, and format
+            arguments: Tool arguments containing query, offset, limit, format, and optional context variables
             
         Returns:
             Dict containing the query execution result
         """
+        # Extract context variables from arguments
+        cleaned_args, context = extract_context_from_arguments(arguments)
+        logger.debug(f"Query tool context: {context}")
+        
         if not self.query_tool:
             logger.error("OpenPages query tool not initialized")
             return {
@@ -240,7 +260,7 @@ class ToolHandlers:
         
         logger.info("Executing OpenPages query tool")
         try:
-            result = await self.query_tool.execute_query(arguments)
+            result = await self.query_tool.execute_query(cleaned_args)
             return {
                 "result": [{"type": "text", "text": item.text} for item in result]
             }
@@ -259,11 +279,15 @@ class ToolHandlers:
         
         Args:
             tool_name: Name of the tool to handle (format: [namespace_]operation_prefix)
-            arguments: Tool arguments
+            arguments: Tool arguments with optional context variables
             
         Returns:
             Dict containing the tool execution result
         """
+        # Extract context variables from arguments
+        cleaned_args, context = extract_context_from_arguments(arguments)
+        logger.debug(f"Generic tool '{tool_name}' context: {context}")
+        
         logger.info(f"Handling generic tool: {tool_name}")
         
         # Parse the tool name to determine namespace, operation and object type
@@ -320,13 +344,13 @@ class ToolHandlers:
             # Call the appropriate method based on the operation
             if operation == 'upsert':
                 logger.info(f"Executing upsert operation for {obj_type}")
-                result = await tool.upsert_object(arguments)
+                result = await tool.upsert_object(cleaned_args)
             elif operation == 'query':
                 logger.info(f"Executing query operation for {obj_type}")
-                result = await tool.query_objects(arguments)
+                result = await tool.query_objects(cleaned_args)
             elif operation == 'delete':
                 logger.info(f"Executing delete operation for {obj_type}")
-                result = await tool.delete_object(arguments)
+                result = await tool.delete_object(cleaned_args)
             else:
                 logger.warning(f"Unknown operation: {operation}")
                 return {
@@ -363,11 +387,15 @@ class ToolHandlers:
         to discover available resources through the tools interface.
         
         Args:
-            arguments: Tool arguments (currently unused, but kept for consistency)
+            arguments: Tool arguments with optional context variables
             
         Returns:
             Dict containing the list of available resources
         """
+        # Extract context variables from arguments
+        cleaned_args, context = extract_context_from_arguments(arguments)
+        logger.debug(f"List resources tool context: {context}")
+        
         if not self.resource_handlers:
             logger.error("Resource handlers not initialized")
             return {
@@ -428,11 +456,15 @@ class ToolHandlers:
         to access resource content through the tools interface.
         
         Args:
-            arguments: Tool arguments containing 'uri' field
+            arguments: Tool arguments containing 'uri' field and optional context variables
             
         Returns:
             Dict containing the resource content
         """
+        # Extract context variables from arguments
+        cleaned_args, context = extract_context_from_arguments(arguments)
+        logger.debug(f"Get resource tool context: {context}")
+        
         if not self.resource_handlers:
             logger.error("Resource handlers not initialized")
             return {
@@ -441,7 +473,7 @@ class ToolHandlers:
                 ]
             }
         
-        uri = arguments.get("uri")
+        uri = cleaned_args.get("uri")
         if not uri:
             logger.error("Missing 'uri' parameter in get_resource tool")
             return {
