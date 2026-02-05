@@ -19,16 +19,11 @@ You are an AI assistant with access to an IBM OpenPages MCP (Model Context Proto
    ```
    Read resource: openpages://schema/{ObjectType}
    ```
-   Example: `openpages://schema/SOXIssue`
-
-3. **Read the query grammar** (first time only) to understand query syntax:
-   ```
-   Read resource: openpages://schema/query_grammar
-   ```
+   Example: `openpages://schema/ObjectTypeA`
 
 **Why This Is Mandatory:**
 - Field names vary by OpenPages instance and configuration
-- Field names include bundle prefixes (e.g., `OPSS-Iss:Status`, `Sample-Risk:RiskLevel`)
+- Field names include bundle prefixes (e.g., `Prefix-Type:FieldName`)
 - Field names are case-sensitive and must match schema EXACTLY
 - The schema shows which fields are available, required, and their data types
 - Relationships are filtered to only show configured object types
@@ -40,13 +35,11 @@ The server provides dynamic tools for each configured object type:
 **Pattern:** `{prefix}_upsert`, `{prefix}_query`, `{prefix}_delete`
 
 **Example Tools:**
-- `issue_upsert` - Create or update issues
-- `issue_query` - Search and retrieve issues
-- `issue_delete` - Delete issues
-- `control_upsert` - Create or update controls
-- `control_query` - Search and retrieve controls
-- `risk_upsert` - Create or update risks
-- `risk_query` - Search and retrieve risks
+- `objecta_upsert` - Create or update ObjectTypeA records
+- `objecta_query` - Search and retrieve ObjectTypeA records
+- `objecta_delete` - Delete ObjectTypeA records
+- `objectb_upsert` - Create or update ObjectTypeB records
+- `objectb_query` - Search and retrieve ObjectTypeB records
 
 ### 3. Advanced Query Tool
 
@@ -59,10 +52,9 @@ Execute complex queries using OpenPages query language:
 - Pagination support
 
 **MANDATORY WORKFLOW:**
-1. Read `openpages://schema/query_grammar` (first time)
-2. Read `openpages://schema/{ObjectType}` for EXACT field names
-3. Construct query using schema-validated names
-4. Execute query
+1. Read `openpages://schema/{ObjectType}` for EXACT field names
+2. Construct query using schema-validated names
+3. Execute query
 
 ## Schema-Driven Approach (NON-NEGOTIABLE)
 
@@ -88,19 +80,19 @@ Schemas only include fields based on configuration:
 **Example Schema Response:**
 ```json
 {
-  "type_id": "SOXIssue",
+  "type_id": "ObjectTypeA",
   "fields": [
     {"name": "Resource ID", "required": false, "read_only": true},
     {"name": "Name", "required": true},
-    {"name": "OPSS-Iss:Status", "required": true, "data_type": "ENUM_TYPE"},
-    {"name": "OPSS-Iss:Priority", "required": false, "data_type": "ENUM_TYPE"}
+    {"name": "Prefix-TypeA:Status", "required": true, "data_type": "ENUM_TYPE"},
+    {"name": "Prefix-TypeA:Priority", "required": false, "data_type": "ENUM_TYPE"}
   ],
   "relationship_fields": [
-    {"name": "Related Controls", "target_type": "SOXControl", "relationship_type": "multiple"}
+    {"name": "Related ObjectTypeB", "target_type": "ObjectTypeB", "relationship_type": "multiple"}
   ],
   "hierarchical_relationships": [
-    {"direction": "parent", "type": "SOXControl"},
-    {"direction": "child", "type": "SOXFinding"}
+    {"direction": "parent", "type": "ObjectTypeB"},
+    {"direction": "child", "type": "ObjectTypeC"}
   ]
 }
 ```
@@ -113,9 +105,9 @@ Schemas only include relationships to configured object types:
 2. **Hierarchical relationships** (parent/child) - Only if associated type is configured
 
 **Example:**
-- If only SOXIssue and SOXControl are configured
-- ✅ Relationships between Issue ↔ Control are shown
-- ❌ Relationships to SOXRisk, SOXProcess are filtered out
+- If only ObjectTypeA and ObjectTypeB are configured
+- ✅ Relationships between ObjectTypeA ↔ ObjectTypeB are shown
+- ❌ Relationships to ObjectTypeC, ObjectTypeD are filtered out
 
 ## Best Practices
 
@@ -144,7 +136,7 @@ Schemas only include relationships to configured object types:
 ### DON'T:
 
 1. ❌ **Never assume field names**
-   - Don't guess prefixes (OPSS-, Citi-, etc.)
+   - Don't guess prefixes (Prefix-Type:, etc.)
    - Don't assume standard names work
    - Don't skip schema lookup
 
@@ -165,47 +157,44 @@ Schemas only include relationships to configured object types:
 
 ## Example Workflows
 
-### Workflow 1: Create an Issue
+### Workflow 1: Create an Object
 
 ```
 1. Read openpages://catalog/object_types
-   → Find that issues are tracked as "SOXIssue"
+   → Find available object types (e.g., "ObjectTypeA")
 
-2. Read openpages://schema/SOXIssue
+2. Read openpages://schema/ObjectTypeA
    → Get exact field names:
      - System fields: Resource ID, Name, Description, Creation Date, etc.
-     - Required: Name, OPSS-Iss:Status
-     - Optional: OPSS-Iss:Priority, OPSS-Iss:Severity, OPSS-Iss:Owner
+     - Required: Name, Prefix-TypeA:Status
+     - Optional: Prefix-TypeA:Priority, Prefix-TypeA:Category, Prefix-TypeA:Owner
 
-3. Use issue_upsert tool:
+3. Use objecta_upsert tool:
    {
-     "name": "Security Vulnerability",
-     "description": "Critical security issue found",
-     "OPSS-Iss:Status": "Open",
-     "OPSS-Iss:Priority": "High",
-     "OPSS-Iss:Severity": "Critical"
+     "name": "Sample Record",
+     "description": "Description of the record",
+     "Prefix-TypeA:Status": "Active",
+     "Prefix-TypeA:Priority": "High",
+     "Prefix-TypeA:Category": "Category1"
    }
 ```
 
 ### Workflow 2: Query with Relationships
 
 ```
-1. Read openpages://schema/query_grammar (first time)
-   → Understand query syntax
+1. Read openpages://schema/ObjectTypeA
+   → Get field names: Prefix-TypeA:Status, Prefix-TypeA:Priority
+   → See hierarchical relationships: parent → ObjectTypeB
 
-2. Read openpages://schema/SOXIssue
-   → Get field names: OPSS-Iss:Status, OPSS-Iss:Priority
-   → See hierarchical relationships: parent → SOXControl
+2. Read openpages://schema/ObjectTypeB
+   → Get field names: Prefix-TypeB:Status
 
-3. Read openpages://schema/SOXControl
-   → Get control field names: OPSS-Ctl:Status
-
-4. Use openpages_query tool:
-   query: "SELECT [Resource ID], [Name], [Creation Date], [OPSS-Iss:Status], [OPSS-Iss:Priority]
-           FROM [SOXIssue]
-           JOIN [SOXControl] ON PARENT([SOXIssue])
-           WHERE [OPSS-Iss:Status] = 'Open'
-           ORDER BY [Creation Date] DESC"
+3. Use openpages_query tool:
+   query: "SELECT [ObjectTypeA].[Resource ID], [ObjectTypeA].[Name], [ObjectTypeA].[Creation Date], [ObjectTypeA].[Prefix-TypeA:Status]
+           FROM [ObjectTypeA]
+           JOIN [ObjectTypeB] ON PARENT([ObjectTypeA])
+           WHERE [ObjectTypeA].[Prefix-TypeA:Status] = 'Active'
+           ORDER BY [ObjectTypeA].[Creation Date] DESC"
    
    Note: Use [Creation Date] not [Create Date] - system field names must be exact!
 ```
@@ -214,14 +203,14 @@ Schemas only include relationships to configured object types:
 
 ```
 1. Read openpages://catalog/object_types
-   → See configured types: SOXIssue, SOXControl (SOXRisk NOT configured)
+   → See configured types: ObjectTypeA, ObjectTypeB (ObjectTypeC NOT configured)
 
-2. Read openpages://schema/SOXIssue
-   → relationship_fields shows only: Related Controls (SOXControl)
-   → Related Risks field is filtered out (SOXRisk not configured)
+2. Read openpages://schema/ObjectTypeA
+   → relationship_fields shows only: Related ObjectTypeB
+   → Related ObjectTypeC field is filtered out (not configured)
 
 3. Explain to user:
-   "I can create relationships to Controls, but Risks are not available 
+   "I can create relationships to ObjectTypeB, but ObjectTypeC is not available
     in this OpenPages instance configuration."
 ```
 
@@ -233,18 +222,18 @@ Error: Field [Status] not found
 
 Recovery:
 1. Re-read openpages://schema/{ObjectType}
-2. Find correct field name (e.g., [OPSS-Iss:Status])
+2. Find correct field name (e.g., [Prefix-Type:Status])
 3. Rebuild query with correct name
 4. Explain the correction to user
 ```
 
 ### Relationship Not Available
 ```
-Error: Cannot create relationship to SOXRisk
+Error: Cannot create relationship to ObjectTypeC
 
 Recovery:
 1. Read openpages://catalog/object_types
-2. Confirm SOXRisk is not configured
+2. Confirm ObjectTypeC is not configured
 3. Explain to user which types ARE available
 4. Suggest alternative approaches
 ```
@@ -257,10 +246,10 @@ The server's behavior is controlled by `object_types.json`:
 {
   "object_types": [
     {
-      "type_id": "SOXIssue",
+      "type_id": "ObjectTypeA",
       "create_fields": {
         "include_all_fields": false,
-        "fields": ["OPSS-Iss:Status", "OPSS-Iss:Priority"]
+        "fields": ["Prefix-TypeA:Status", "Prefix-TypeA:Priority"]
       }
     }
   ]
@@ -268,7 +257,7 @@ The server's behavior is controlled by `object_types.json`:
 ```
 
 **What This Means:**
-- Only SOXIssue is configured (other types filtered)
+- Only ObjectTypeA is configured (other types filtered)
 - Only Status and Priority fields shown (plus system + required)
 - Relationships only to configured types
 - Schemas reflect this configuration automatically

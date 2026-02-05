@@ -365,8 +365,6 @@ This guide focuses on constructing OpenPages queries using the query grammar.
 
 ## Query Grammar
 
-Read `openpages://schema/query_grammar` for complete syntax.
-
 ### Basic SELECT Query
 ```
 SELECT [Resource ID], [Name], [Status]
@@ -460,9 +458,6 @@ This guide helps you understand and explore OpenPages schemas, including field t
 - URI: `openpages://schema/{ObjectType}`
 - Complete schema for a specific type
 
-### Query Grammar
-- URI: `openpages://schema/query_grammar`
-- Query language syntax and rules
 
 ## Understanding Schemas
 
@@ -595,8 +590,7 @@ This guide helps you debug common issues when working with the OpenPages MCP ser
 **Solutions:**
 1. Enclose all names in square brackets: `[ObjectType]`, `[FieldName]`
 2. Use single quotes for strings: `'value'`
-3. Read `openpages://schema/query_grammar` for syntax rules
-4. Verify operator usage (=, !=, LIKE, etc.)
+3. Verify operator usage (=, !=, LIKE, etc.)
 
 ### 3. Relationship Errors
 
@@ -676,9 +670,8 @@ This guide helps you debug common issues when working with the OpenPages MCP ser
                 content += "3. Verify field is configured for this instance\n"
             elif "query" in error_lower or "syntax" in error_lower:
                 content += "\n\n## Specific Guidance: Query Errors\n\n"
-                content += "1. Read `openpages://schema/query_grammar`\n"
-                content += "2. Enclose all names in square brackets\n"
-                content += "3. Use single quotes for string values\n"
+                content += "1. Enclose all names in square brackets\n"
+                content += "2. Use single quotes for string values\n"
             elif "relationship" in error_lower:
                 content += "\n\n## Specific Guidance: Relationship Errors\n\n"
                 content += "1. Check available relationships in schema\n"
@@ -894,11 +887,10 @@ WHERE [OPSS-Iss:Priority] = 'High'
         
         elif "query" in task or "search" in task or "find" in task:
             return """When querying objects:
-1. Read openpages://schema/query_grammar (first time only)
-2. Read openpages://schema/{ObjectType} to get exact field names
-3. Use exact field names with prefixes in your query
-4. Enclose all names in square brackets: [ObjectType], [FieldName]
-5. Use the execute_openpages_query tool or {prefix}_querys tool"""
+1. Read openpages://schema/{ObjectType} to get exact field names
+2. Use exact field names with prefixes in your query
+3. Enclose all names in square brackets: [ObjectType], [FieldName]
+4. Use the execute_openpages_query tool or {prefix}_querys tool"""
         
         elif "update" in task or "modify" in task:
             return """When updating objects:

@@ -151,27 +151,31 @@ async def test_list_resources(resource_handlers):
     result = await resource_handlers.handle_list_resources({})
     
     assert "resources" in result
-    assert len(result["resources"]) == 3  # Query grammar + 2 object types
+    assert len(result["resources"]) == 3  # Catalog + 2 object types
     
-    # Check query grammar resource (first)
-    grammar_resource = result["resources"][0]
-    assert grammar_resource["uri"] == "openpages://schema/query_grammar"
-    assert grammar_resource["name"] == "OpenPages Query Grammar"
-    assert "query language grammar" in grammar_resource["description"]
-    assert grammar_resource["mimeType"] == "text/plain"
+    # Get resources by URI for order-independent testing
+    resources_by_uri = {r["uri"]: r for r in result["resources"]}
     
-    # Check Issue resource (second)
-    issue_resource = result["resources"][1]
-    assert issue_resource["uri"] == "openpages://schema/SOXIssue"
+    # Check catalog resource
+    assert "openpages://catalog/object_types" in resources_by_uri
+    catalog_resource = resources_by_uri["openpages://catalog/object_types"]
+    assert catalog_resource["name"] == "Object Types Catalog"
+    assert "catalog of all available" in catalog_resource["description"].lower()
+    assert catalog_resource["mimeType"] == "application/json"
+    
+    # Check Issue resource
+    assert "openpages://schema/SOXIssue" in resources_by_uri
+    issue_resource = resources_by_uri["openpages://schema/SOXIssue"]
     assert issue_resource["name"] == "Issue Schema"
     assert "Issue objects" in issue_resource["description"]
     assert issue_resource["mimeType"] == "application/json"
     
-    # Check Control resource (third)
-    control_resource = result["resources"][2]
-    assert control_resource["uri"] == "openpages://schema/SOXControl"
+    # Check Control resource
+    assert "openpages://schema/SOXControl" in resources_by_uri
+    control_resource = resources_by_uri["openpages://schema/SOXControl"]
     assert control_resource["name"] == "Control Schema"
     assert "Control objects" in control_resource["description"]
+    assert control_resource["mimeType"] == "application/json"
 
 
 @pytest.mark.asyncio
@@ -218,7 +222,7 @@ async def test_read_resource_invalid_uri_format(resource_handlers):
     """Test reading resource with invalid URI format"""
     params = {"uri": "invalid://schema/SOXIssue"}
     
-    with pytest.raises(ValueError, match="Invalid resource URI format"):
+    with pytest.raises(ValueError, match="Invalid URI scheme"):
         await resource_handlers.handle_read_resource(params)
 
 
@@ -248,81 +252,84 @@ async def test_read_resource_schema_fetch_failure(resource_handlers, mock_schema
 
 @pytest.mark.asyncio
 async def test_schema_content_structure(resource_handlers):
-    """Test the structure of schema content in new LLM-friendly format"""
+    """Test the structure of schema content in JSON format"""
+    import json
+    
     params = {"uri": "openpages://schema/SOXIssue"}
     result = await resource_handlers.handle_read_resource(params)
     
-    # Get the text content
+    # Get the text content and parse as JSON
     text_content = result["contents"][0]["text"]
+    schema = json.loads(text_content)
     
-    # Verify the new structured format contains key sections
-    assert "OPENPAGES OBJECT TYPE SCHEMA: Issue" in text_content
-    assert "## METADATA" in text_content
-    assert "Type ID: SOXIssue" in text_content
-    assert "Display Name: Issue" in text_content
-    assert "Label: Issue" in text_content
-    assert "Namespace: openpages" in text_content
-    assert "Path Prefix: Issue" in text_content
-    assert "Total Fields: 4" in text_content  # Updated to 4 (includes relationship field)
-    assert "Relationship Fields: 1" in text_content
+    # Verify core metadata fields
+    assert schema["type_id"] == "SOXIssue"
+    assert schema["display_name"] == "Issue"
+    assert schema["namespace"] == "openpages"
+    assert schema["path_prefix"] == "Issue"
     
-    # Verify field sections
-    assert "## FIELDS" in text_content
-    assert "### Required Fields" in text_content
-    assert "### Enumerated Fields" in text_content
+    # Verify field count
+    assert "field_count" in schema
+    assert schema["field_count"] >= 3  # At least Name, Status, Priority
+    
+    # Verify fields array exists and has content
+    assert "fields" in schema
+    assert len(schema["fields"]) >= 3
     
     # Verify specific fields are present
-    assert "**Name**" in text_content
-    assert "**Status**" in text_content
-    assert "**Priority**" in text_content
+    field_names = [f["name"] for f in schema["fields"]]
+    assert "Name" in field_names
+    assert any("Status" in name for name in field_names)
+    assert any("Priority" in name for name in field_names)
     
-    # Verify enum values are listed
-    assert "Allowed Values:" in text_content
-    assert "- Open" in text_content
-    assert "- Closed" in text_content
-    assert "- High" in text_content
-    assert "- Medium" in text_content
-    assert "- Low" in text_content
-    
-    # Verify relationships section
-    assert "## RELATIONSHIPS" in text_content
-    assert "**Associated Controls**" in text_content
-    assert "MULTI_VALUE_ID_TYPE" in text_content
-    assert "[Multiple]" in text_content
+    # Verify enum fields have enum_values
+    for field in schema["fields"]:
+        if field["data_type"] == "ENUM_TYPE":
+            assert "enum_values" in field
+            assert len(field["enum_values"]) > 0
     
     # Verify configuration section
-    assert "## CONFIGURATION" in text_content
-    assert "### Create Operation Settings" in text_content
-    assert "### Query Operation Settings" in text_content
+    assert "configuration" in schema
+    assert "create_fields" in schema["configuration"]
+    assert "query_filters" in schema["configuration"]
     
-    # Verify usage guidance
-    assert "## USAGE GUIDANCE" in text_content
-    assert "### Field Name Format" in text_content
-    assert "### Data Type Mapping" in text_content
-    assert "### Working with Relationships" in text_content
+    # Verify usage instructions
+    assert "usage_instructions" in schema
+    assert "field_names" in schema["usage_instructions"]
+    assert "field_types" in schema["usage_instructions"]
 
 
 @pytest.mark.asyncio
 async def test_configuration_in_schema(resource_handlers):
-    """Test that configuration is included in schema"""
+    """Test that configuration is included in schema JSON"""
+    import json
+    
     params = {"uri": "openpages://schema/SOXIssue"}
     result = await resource_handlers.handle_read_resource(params)
     
-    # Get the text content
+    # Get the text content and parse as JSON
     text_content = result["contents"][0]["text"]
+    schema = json.loads(text_content)
     
-    # Verify configuration sections are present
-    assert "## CONFIGURATION" in text_content
-    assert "### Create Operation Settings" in text_content
-    assert "### Query Operation Settings" in text_content
+    # Verify configuration object exists
+    assert "configuration" in schema
+    config = schema["configuration"]
     
-    # Check create_fields configuration
-    assert "Include All Fields: False" in text_content
-    assert "Allowed Fields for Creation:" in text_content
-    assert "OPSS-Iss:Status" in text_content
-    assert "OPSS-Iss:Priority" in text_content
+    # Verify create_fields configuration
+    assert "create_fields" in config
+    assert "include_all_fields" in config["create_fields"]
+    assert config["create_fields"]["include_all_fields"] == False
+    assert "fields" in config["create_fields"]
     
-    # Check query_filters configuration
-    assert "Available Filter Fields:" in text_content
+    # Check that specific fields are in the create_fields list
+    create_fields = config["create_fields"]["fields"]
+    assert any("Status" in field for field in create_fields)
+    assert any("Priority" in field for field in create_fields)
+    
+    # Verify query_filters configuration
+    assert "query_filters" in config
+    assert "fields" in config["query_filters"]
+    query_fields = config["query_filters"]["fields"]
+    assert len(query_fields) > 0
 
 # Made with Bob

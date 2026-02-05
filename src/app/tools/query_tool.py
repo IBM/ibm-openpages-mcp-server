@@ -46,8 +46,11 @@ class QueryValidator:
         'COUNT',
         # Set operations
         'UNION', 'ALL',
-        # Aliases
-        'AS'
+        # NOTE: 'AS' keyword is intentionally EXCLUDED
+        # While AS appears in the ANTLR grammar, the OpenPages query engine's parser
+        # does not properly handle aliases in hierarchical joins (PARENT/CHILD/ANCESTOR/DESCENDANT).
+        # Using AS for table or column aliases causes "query failed to be transformed into SQL" errors.
+        # Therefore, AS is blocked to prevent query failures.
     }
     
     # Keywords that are NOT allowed in OpenPages query grammar

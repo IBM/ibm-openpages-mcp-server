@@ -106,40 +106,12 @@ async def test_list_resources_tool(tool_handlers):
     assert "Use the get_resource tool" in text_content
     
     # Verify key resources are mentioned in the summary
-    assert "openpages://schema/query_grammar" in text_content
-    assert "OpenPages Query Grammar" in text_content
     
     assert "openpages://catalog/object_types" in text_content
     assert "Object Types Catalog" in text_content
     
     assert "openpages://schema/SOXIssue" in text_content
     assert "openpages://schema/SOXControl" in text_content
-
-
-@pytest.mark.asyncio
-async def test_get_resource_tool_query_grammar(tool_handlers):
-    """Test the get_resource tool with query grammar"""
-    params = {
-        "name": "get_resource",
-        "arguments": {
-            "uri": "openpages://schema/query_grammar"
-        }
-    }
-    
-    result = await tool_handlers.handle_call_tool(params)
-    
-    # Verify result structure
-    assert "result" in result
-    assert len(result["result"]) > 0
-    assert result["result"][0]["type"] == "text"
-    
-    # Verify content
-    text_content = result["result"][0]["text"]
-    assert len(text_content) > 0
-    assert "OPENPAGES QUERY LANGUAGE GRAMMAR" in text_content
-    assert "SELECT" in text_content
-    assert "FROM" in text_content
-    assert "WHERE" in text_content
 
 
 @pytest.mark.asyncio
