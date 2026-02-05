@@ -554,8 +554,7 @@ class ResourceHandlers:
         if hierarchical_rels:
             lines.append("## HIERARCHICAL RELATIONSHIPS")
             lines.append("")
-            lines.append("These define the parent-child structure in the OpenPages hierarchy.")
-            lines.append("Use PARENT, CHILD, and ANCESTOR joins in queries to traverse the hierarchy.")
+            lines.append("⚠️ CRITICAL: The \"direction\" value IS the function name - just copy it!")
             lines.append("")
             
             # Group by direction
@@ -563,37 +562,44 @@ class ResourceHandlers:
             child_rels = [r for r in hierarchical_rels if r['direction'] == 'child']
             
             if parent_rels:
-                lines.append("### Possible Parent Types")
+                lines.append("### Parent Relationships (direction: \"parent\")")
                 lines.append("")
                 lines.append(f"This {schema_content['display_name']} can be a child of:")
                 for rel in parent_rels:
                     parent_type = rel['type']
                     lines.append(f"  - **{parent_type}**")
                     lines.append(f"    Schema: openpages://schema/{parent_type}")
-                    lines.append(f"    Query: Use PARENT([{schema_content['type_id']}]) in JOIN clause")
+                    lines.append(f"    Query: FROM [{schema_content['type_id']}] JOIN [{parent_type}] ON PARENT([{schema_content['type_id']}])")
+                    lines.append(f"    Rule: direction \"parent\" → PARENT([{schema_content['type_id']}])")
                     lines.append("")
             
             if child_rels:
-                lines.append("### Possible Child Types")
+                lines.append("### Child Relationships (direction: \"child\")")
                 lines.append("")
                 lines.append(f"This {schema_content['display_name']} can have these children:")
                 for rel in child_rels:
                     child_type = rel['type']
                     lines.append(f"  - **{child_type}**")
                     lines.append(f"    Schema: openpages://schema/{child_type}")
-                    lines.append(f"    Query: Use CHILD([{schema_content['type_id']}]) in JOIN clause")
+                    lines.append(f"    Query: FROM [{schema_content['type_id']}] JOIN [{child_type}] ON CHILD([{schema_content['type_id']}])")
+                    lines.append(f"    Rule: direction \"child\" → CHILD([{schema_content['type_id']}])")
                     lines.append("")
             
-            lines.append("### Hierarchy Query Examples")
+            lines.append("### Query Rules")
             lines.append("")
-            lines.append("To query with hierarchical relationships:")
+            lines.append("DIRECT relationships (copy direction as function name):")
             if parent_rels:
                 parent_example = parent_rels[0]['type']
                 lines.append(f"  - Get parent: FROM [{schema_content['type_id']}] JOIN [{parent_example}] ON PARENT([{schema_content['type_id']}])")
             if child_rels:
                 child_example = child_rels[0]['type']
                 lines.append(f"  - Get children: FROM [{schema_content['type_id']}] JOIN [{child_example}] ON CHILD([{schema_content['type_id']}])")
-            lines.append(f"  - Get ancestors: FROM [{schema_content['type_id']}] JOIN [AncestorType] ON ANCESTOR([{schema_content['type_id']}], level)")
+            lines.append("")
+            lines.append("MULTI-LEVEL relationships (NOT in schema, for traversing multiple levels):")
+            lines.append(f"  - Get ancestors: FROM [{schema_content['type_id']}] JOIN [AncestorType] ON ANCESTOR([{schema_content['type_id']}])")
+            lines.append(f"  - Get descendants: FROM [{schema_content['type_id']}] JOIN [DescendantType] ON DESCENDANT([{schema_content['type_id']}])")
+            lines.append("")
+            lines.append("⚠️ The argument MUST be the FROM type, NEVER the JOIN target!")
             lines.append("")
         
         # Configuration section
@@ -646,7 +652,20 @@ class ResourceHandlers:
             lines.append("- Multiple relationships [Multiple]: Provide array of Resource IDs")
             lines.append("- Resource IDs can be numeric (e.g., '12345') or full paths")
             lines.append("- Use query tools to find Resource IDs of objects to link")
-            lines.append("- Hierarchical relationships: Use PARENT, CHILD, ANCESTOR joins in queries")
+            lines.append("")
+            lines.append("### Hierarchical Joins in Queries")
+            lines.append("For DIRECT relationships (defined in schema's hierarchical_relationships):")
+            lines.append("- Schema shows \"direction\": \"child\" then Use CHILD([FromType])")
+            lines.append("- Schema shows \"direction\": \"parent\" then Use PARENT([FromType])")
+            lines.append("- The argument MUST be the FROM type, NEVER the JOIN target")
+            lines.append("")
+            lines.append("For MULTI-LEVEL relationships (NOT in schema):")
+            lines.append("- Use ANCESTOR([FromType]) to get ancestors at any level above")
+            lines.append("- Use DESCENDANT([FromType]) to get descendants at any level below")
+            lines.append("")
+            lines.append("Example: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])")
+            lines.append("- Read schema for TypeA, find TypeB with \"direction\": \"child\"")
+            lines.append("- Copy \"child\" as function name, use FROM type [TypeA] as argument")
             lines.append("")
         
         lines.append("=" * 80)

@@ -240,24 +240,46 @@ MANDATORY WORKFLOW
 
 {object_types_section}
 
-HIERARCHICAL JOINS
+HIERARCHICAL JOINS - SIMPLE RULE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Read schema hierarchical_relationships to determine direction:
-- "direction": "parent" → Use PARENT([from_object_type])
-- "direction": "child" → Use CHILD([from_object_type])
+⚠️ CRITICAL: The schema's "direction" value IS the function name - just copy it!
 
-Example schema:
+DIRECT RELATIONSHIPS (defined in schema):
+1. Read FROM type's schema: openpages://schema/{{FromType}}
+2. Find JOIN target in hierarchical_relationships, note "direction" value
+3. Copy direction as function name, use FROM type as argument
+
+MAPPING FOR DIRECT RELATIONSHIPS:
+Schema Says           →  You Write
+"direction": "child"  →  CHILD([FromType])
+"direction": "parent" →  PARENT([FromType])
+
+MULTI-LEVEL RELATIONSHIPS (not in schema):
+Use ANCESTOR/DESCENDANT when you need to traverse multiple hierarchy levels:
+- ANCESTOR([FromType]) - Get ancestors at any level above
+- DESCENDANT([FromType]) - Get descendants at any level below
+These are NOT in the schema but can be used based on the hierarchy structure.
+
+EXAMPLE - Direct Relationship:
+Schema for [TypeA]:
 {{
   "hierarchical_relationships": [
-    {{"direction": "parent", "type": "ParentType"}}
+    {{"direction": "child", "type": "TypeB"}}
   ]
 }}
 
-Query construction:
-FROM [ChildType] JOIN [ParentType] ON PARENT([ChildType])
-- Argument is FROM object type name
-- Function name matches "direction" field
-- Field references: [ChildType].[Field], [ParentType].[Field]
+Query: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])
+Why: direction "child" → CHILD(), FROM type → [TypeA]
+
+EXAMPLE - Multi-Level Relationship:
+If TypeA → TypeB → TypeC (TypeA has child TypeB, TypeB has child TypeC)
+Query: FROM [TypeA] JOIN [TypeC] ON DESCENDANT([TypeA])
+Why: TypeC is a descendant (grandchild) of TypeA, not a direct child
+
+⚠️ COMMON ERROR: Using JOIN target as argument
+WRONG: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeB])
+RIGHT: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])
+The argument MUST be the FROM type, NEVER the JOIN target!
 
 RESTRICTIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

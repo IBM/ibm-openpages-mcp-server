@@ -181,22 +181,46 @@ Schemas only include relationships to configured object types:
 
 ### Workflow 2: Query with Relationships
 
+**CRITICAL RULE FOR HIERARCHICAL JOINS:**
+
+**Direct Relationships (in schema):**
+
+| Schema Says | You Write | Example |
+|-------------|-----------|---------|
+| "direction": "child" | CHILD([FromType]) | FROM [FromType] JOIN [TypeB] ON PARENT([FromType]) |
+| "direction": "parent" | PARENT([FromType]) | FROM [FromType] JOIN [TypeA] ON PARENT([TypeB]) |
+
+**Multi-Level Relationships (NOT in schema):**
+
+Use ANCESTOR/DESCENDANT for multi-level traversal:
+- ANCESTOR([FromType]) - Get ancestors at any level above
+- DESCENDANT([FromType]) - Get descendants at any level below
+
+**Simple 3-Step Process for Direct Relationships:**
+1. Read FROM type's schema: openpages://schema/{FromType}
+2. Find JOIN target in hierarchical_relationships, note "direction" value
+3. Copy direction as function name, use FROM type as argument
+
 ```
-1. Read openpages://schema/ObjectTypeA
-   → Get field names: Prefix-TypeA:Status, Prefix-TypeA:Priority
-   → See hierarchical relationships: parent → ObjectTypeB
+Example 1: Direct Relationship (FROM TypeA to child TypeB)
 
-2. Read openpages://schema/ObjectTypeB
-   → Get field names: Prefix-TypeB:Status
+1. Read openpages://schema/TypeA
+   → Find TypeB in hierarchical_relationships
+   → See "direction": "child"
 
-3. Use openpages_query tool:
-   query: "SELECT [ObjectTypeA].[Resource ID], [ObjectTypeA].[Name], [ObjectTypeA].[Creation Date], [ObjectTypeA].[Prefix-TypeA:Status]
-           FROM [ObjectTypeA]
-           JOIN [ObjectTypeB] ON PARENT([ObjectTypeA])
-           WHERE [ObjectTypeA].[Prefix-TypeA:Status] = 'Active'
-           ORDER BY [ObjectTypeA].[Creation Date] DESC"
+2. Construct query:
+   FROM [TypeA]
+   JOIN [TypeB] ON CHILD([TypeA])
    
-   Note: Use [Creation Date] not [Create Date] - system field names must be exact!
+   Why: direction "child" → PARENT(), FROM type → [TypeA]
+
+Example 2: Multi-Level Relationship (FROM TypeA to grandchild TypeC)
+
+If hierarchy is TypeA → TypeB → TypeC:
+   FROM [TypeA]
+   JOIN [TypeC] ON ANCESTOR([TypeA])
+   
+   Why: TypeC is a descendant (not direct child) of TypeA
 ```
 
 ### Workflow 3: Handle Filtered Relationships
@@ -225,6 +249,29 @@ Recovery:
 2. Find correct field name (e.g., [Prefix-Type:Status])
 3. Rebuild query with correct name
 4. Explain the correction to user
+```
+
+### Hierarchical Join Error
+```
+Error: "The query failed to be transformed into SQL" or "OP-60002"
+
+Root Cause: Wrong hierarchical function or wrong argument
+
+Recovery - Follow This EXACT Process:
+1. Identify the FROM type in your query
+2. Read openpages://schema/{FromType}
+3. Find the JOIN target type in hierarchical_relationships
+4. Look at the "direction" field value
+5. COPY the OPPOSITE direction value as your function name:
+   - "direction": "child" → Use PARENT([FromType])
+   - "direction": "parent" → Use CHILD([FromType])
+6. The argument MUST be the FROM type, NEVER the JOIN target
+
+Example:
+- Query: FROM [ObjectTypeA] JOIN [ObjectTypeB]
+- Read: openpages://schema/ObjectTypeA
+- Find: ObjectTypeB has "direction": "child"
+- Use: PARENT([SOXControl])  ← direction becomes the opposite function, FROM type is argument
 ```
 
 ### Relationship Not Available
