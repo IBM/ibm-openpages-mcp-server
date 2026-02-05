@@ -3,11 +3,13 @@ Test to verify that relationship fields are filtered to only include configured 
 """
 import asyncio
 import json
+import pytest
 from src.app.mcp.resource_handlers import ResourceHandlers
 from src.app.mcp.schema_builder import SchemaBuilder
 from src.app.config.settings import Settings
 
 
+@pytest.mark.asyncio
 async def test_relationship_filtering():
     """Test that relationships are filtered based on configured object types"""
     

@@ -31,6 +31,7 @@ def mock_settings():
             "namespace": "openpages",
         }
     ]
+    settings.NAMESPACE = ""  # Add missing NAMESPACE attribute
     return settings
 
 

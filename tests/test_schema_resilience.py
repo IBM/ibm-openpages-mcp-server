@@ -24,6 +24,7 @@ async def test_tool_call_triggers_schema_load_after_restart():
     mock_settings.OPENPAGES_PASSWORD = "test_pass"
     mock_settings.OPENPAGES_APIKEY = None
     mock_settings.OPENPAGES_AUTHENTICATION_URL = None
+    mock_settings.OPENPAGES_INSTANCE_NAME = "test_instance"
     mock_settings.OPENPAGES_OBJECT_TYPES = [
         {
             "type_id": "SOXIssue",
@@ -86,6 +87,7 @@ async def test_tool_call_skips_schema_load_when_already_loaded():
     mock_settings.OPENPAGES_PASSWORD = "test_pass"
     mock_settings.OPENPAGES_APIKEY = None
     mock_settings.OPENPAGES_AUTHENTICATION_URL = None
+    mock_settings.OPENPAGES_INSTANCE_NAME = "test_instance"
     mock_settings.OPENPAGES_OBJECT_TYPES = [
         {
             "type_id": "SOXIssue",
@@ -142,6 +144,7 @@ async def test_schema_load_failure_returns_error():
     mock_settings.OPENPAGES_PASSWORD = "test_pass"
     mock_settings.OPENPAGES_APIKEY = None
     mock_settings.OPENPAGES_AUTHENTICATION_URL = None
+    mock_settings.OPENPAGES_INSTANCE_NAME = "test_instance"
     mock_settings.OPENPAGES_OBJECT_TYPES = [
         {
             "type_id": "SOXIssue",

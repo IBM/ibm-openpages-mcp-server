@@ -222,7 +222,7 @@ async def test_read_resource_invalid_uri_format(resource_handlers):
     """Test reading resource with invalid URI format"""
     params = {"uri": "invalid://schema/SOXIssue"}
     
-    with pytest.raises(ValueError, match="Invalid URI scheme"):
+    with pytest.raises(ValueError, match="Invalid resource URI format"):
         await resource_handlers.handle_read_resource(params)
 
 
