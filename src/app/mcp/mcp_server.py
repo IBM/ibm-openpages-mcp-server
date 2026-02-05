@@ -23,6 +23,7 @@ from src.app.mcp.tool_handlers import ToolHandlers
 from src.app.mcp.resource_handlers import ResourceHandlers
 from src.app.mcp.prompt_handlers import PromptHandlers
 from src.app.mcp.request_processor import RequestProcessor
+from src.app.mcp.context import build_context_schema
 
 # Version information
 __version__ = "1.0.0"
@@ -303,18 +304,22 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
         """
         logger.info("Initializing base tools schema")
         
+        # Get context schema to add to all tools
+        context_properties = build_context_schema()
+        
         # Start with base tools
         self.tools = [
             {
                 "name": "echo",
-                "description": "Echo the input text",
+                "description": "Echo the input text. Accepts optional context variables.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "text": {
                             "type": "string",
                             "description": "The text to echo"
-                        }
+                    },
+                        **context_properties
                     },
                     "required": ["text"]
                 }
@@ -324,7 +329,9 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                 "description": "List all available OpenPages resources including object type schemas and the object types catalog. Use this to discover what resources are available before accessing them. This tool provides the same information as the resources/list endpoint for MCP clients that cannot use that endpoint.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        **context_properties
+                    },
                     "required": []
                 }
             },
@@ -337,7 +344,8 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                         "uri": {
                             "type": "string",
                             "description": "The resource URI to retrieve. Examples: 'openpages://schema/SOXRisk', 'openpages://catalog/object_types'. Use list_resources to see available URIs."
-                        }
+                    },
+                        **context_properties
                     },
                     "required": ["uri"]
                 }
@@ -367,7 +375,8 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                             "type": "string",
                             "enum": ["table", "json", "list"],
                             "description": "Output format: 'table' (default), 'json', or 'list'"
-                        }
+                    },
+                        **context_properties
                     },
                     "required": ["query"]
                 }
@@ -410,9 +419,12 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
         # Build description with available types
         types_list = ", ".join(object_type_descriptions)
         
+        # Get context schema
+        context_properties = build_context_schema()
+        
         self.tools.append({
             "name": tool_name,
-            "description": f"Delete any configured object in OpenPages by resource ID, path, or name. Supported object types: {types_list}. If multiple objects match the name, an error will be returned with the list of matches.",
+            "description": f"Delete any configured object in OpenPages by resource ID, path, or name. Supported object types: {types_list}. If multiple objects match the name, an error will be returned with the list of matches. Accepts optional context variables.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -432,7 +444,8 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                     "name": {
                         "type": "string",
                         "description": "Name of the object to delete. If multiple objects have the same name, an error will be returned (one of resource_id, path, or name is required)"
-                    }
+                },
+                    **context_properties
                 },
                 "required": ["object_type"]
             }
@@ -471,10 +484,13 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                     return f"{namespace}_{operation}_{tool_prefix}"
                 return f"{operation}_{tool_prefix}"
             
+            # Get context schema for dynamic tools
+            context_properties = build_context_schema()
+            
             # Upsert tool
             upsert_tool_name = build_tool_name("upsert")
             if upsert_tool_name not in existing_tool_names:
-                upsert_description = tool_descriptions.get("upsert", f"Create or update a {display_name.lower()} in OpenPages (upsert operation)")
+                upsert_description = tool_descriptions.get("upsert", f"Create or update a {display_name.lower()} in OpenPages (upsert operation). Accepts optional context variables.")
                 self.tools.append({
                     "name": upsert_tool_name,
                     "description": upsert_description,
@@ -487,7 +503,8 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                             "operation": {"type": "string", "enum": ["insert", "update", "auto"], "description": "Operation mode"},
                             "primaryParentId": {"type": "string", "description": f"Parent object ID (optional)"},
                             "title": {"type": "string", "description": f"Title (optional)"},
-                            "description": {"type": "string", "description": f"Description (optional)"}
+                            "description": {"type": "string", "description": f"Description (optional)"},
+                            **context_properties
                         },
                         "required": ["name"]
                     }

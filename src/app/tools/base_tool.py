@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from mcp.types import TextContent  # type: ignore
 from src.app.core.openpages_client import OpenPagesClient
 from src.app.config.settings import settings
+from src.app.mcp.context import ContextVariables
 
 # Configure logging
 logger = logging.getLogger(__name__)
