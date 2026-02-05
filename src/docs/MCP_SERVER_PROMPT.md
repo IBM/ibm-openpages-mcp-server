@@ -181,44 +181,109 @@ Schemas only include relationships to configured object types:
 
 ### Workflow 2: Query with Relationships
 
+**JOIN TYPES:**
+
+OpenPages query grammar supports two types of joins:
+- **JOIN** (or **INNER JOIN**) - Returns only records that have matching relationships in both tables
+- **LEFT OUTER JOIN** - Returns all records from the FROM table, plus matching records from the JOIN table (or NULL if no match)
+
+Note: `JOIN` is shorthand for `INNER JOIN` - they are equivalent.
+
 **CRITICAL RULE FOR HIERARCHICAL JOINS:**
 
-**Direct Relationships (in schema):**
+When constructing JOIN queries with hierarchical relationships, the function you use depends on **which object type's schema contains the relationship**.
 
-| Schema Says | You Write | Example |
-|-------------|-----------|---------|
-| "direction": "child" | CHILD([FromType]) | FROM [FromType] JOIN [TypeB] ON PARENT([FromType]) |
-| "direction": "parent" | PARENT([FromType]) | FROM [FromType] JOIN [TypeA] ON PARENT([TypeB]) |
+**Two Scenarios:**
+
+**Scenario 1: Relationship is in FROM type's schema**
+1. Read FROM type's schema: `openpages://schema/{FromType}`
+2. Find JOIN target in `hierarchical_relationships`, note the `"direction"` value
+3. Use the **OPPOSITE** direction as the function name with FROM type as argument
+
+| Schema Shows (in FROM type) | Function to Use | Example Query |
+|------------------------------|-----------------|---------------|
+| `"direction": "parent"` | `CHILD([FromType])` | `FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])` |
+| `"direction": "child"` | `PARENT([FromType])` | `FROM [TypeA] JOIN [TypeB] ON PARENT([TypeA])` |
+
+**Scenario 2: Relationship is in JOIN type's schema**
+1. Read JOIN type's schema: `openpages://schema/{JoinType}`
+2. Find FROM target in `hierarchical_relationships`, note the `"direction"` value
+3. Use the direction value as-is as the function name with FROM type as argument
+
+| Schema Shows (in JOIN type) | Function to Use | Example Query |
+|------------------------------|-----------------|---------------|
+| `"direction": "child"` | `CHILD([FromType])` | `FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])` |
+| `"direction": "parent"` | `PARENT([FromType])` | `FROM [TypeB] JOIN [TypeA] ON PARENT([TypeB])` |
+
+**Key Rule:**
+- If relationship is in FROM type's schema → Use **OPPOSITE** direction
+- If relationship is in JOIN type's schema → Use direction as-is
+- Argument is ALWAYS the FROM type
 
 **Multi-Level Relationships (NOT in schema):**
 
 Use ANCESTOR/DESCENDANT for multi-level traversal:
-- ANCESTOR([FromType]) - Get ancestors at any level above
-- DESCENDANT([FromType]) - Get descendants at any level below
+- `ANCESTOR([FromType])` - Get ancestors at any level above
+- `DESCENDANT([FromType])` - Get descendants at any level below
 
-**Simple 3-Step Process for Direct Relationships:**
-1. Read FROM type's schema: openpages://schema/{FromType}
-2. Find JOIN target in hierarchical_relationships, note "direction" value
-3. Copy direction as function name, use FROM type as argument
+**Examples:**
 
 ```
-Example 1: Direct Relationship (FROM TypeA to child TypeB)
+Example 1: Relationship in FROM type's schema (TypeA can be child of TypeB)
 
 1. Read openpages://schema/TypeA
    → Find TypeB in hierarchical_relationships
-   → See "direction": "child"
+   → See "direction": "parent" (meaning TypeB is the parent type)
 
-2. Construct query:
+2. Construct query (INNER JOIN):
    FROM [TypeA]
    JOIN [TypeB] ON CHILD([TypeA])
    
-   Why: direction "child" → PARENT(), FROM type → [TypeA]
+   Or with LEFT OUTER JOIN (to include TypeA records without parents):
+   FROM [TypeA]
+   LEFT OUTER JOIN [TypeB] ON CHILD([TypeA])
+   
+   Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([TypeA])
+   (Schema says "parent" but we use CHILD to navigate up to the parent)
 
-Example 2: Multi-Level Relationship (FROM TypeA to grandchild TypeC)
+Example 2: Relationship in JOIN type's schema (TypeB has child TypeA)
+
+1. Read openpages://schema/TypeB
+   → Find TypeA in hierarchical_relationships
+   → See "direction": "child" (meaning TypeA is the child type)
+
+2. Construct query (INNER JOIN):
+   FROM [TypeB]
+   JOIN [TypeA] ON CHILD([TypeB])
+   
+   Or with LEFT OUTER JOIN (to include TypeB records without children):
+   FROM [TypeB]
+   LEFT OUTER JOIN [TypeA] ON CHILD([TypeB])
+   
+   Why: Relationship in JOIN type → Use direction as-is → CHILD([TypeB])
+
+Example 3: Relationship in FROM type's schema (TypeC has child TypeD)
+
+1. Read openpages://schema/TypeC
+   → Find TypeD in hierarchical_relationships
+   → See "direction": "child" (meaning TypeD is the child type)
+
+2. Construct query (INNER JOIN):
+   FROM [TypeC]
+   JOIN [TypeD] ON PARENT([TypeC])
+   
+   Or with LEFT OUTER JOIN (to include TypeC records without children):
+   FROM [TypeC]
+   LEFT OUTER JOIN [TypeD] ON PARENT([TypeC])
+   
+   Why: Relationship in FROM type → Use OPPOSITE direction → PARENT([TypeC])
+   (Schema says "child" but we use PARENT to navigate down to the child)
+
+Example 4: Multi-Level Relationship (FROM TypeA to grandchild TypeC)
 
 If hierarchy is TypeA → TypeB → TypeC:
    FROM [TypeA]
-   JOIN [TypeC] ON ANCESTOR([TypeA])
+   JOIN [TypeC] ON DESCENDANT([TypeA])
    
    Why: TypeC is a descendant (not direct child) of TypeA
 ```
@@ -258,20 +323,37 @@ Error: "The query failed to be transformed into SQL" or "OP-60002"
 Root Cause: Wrong hierarchical function or wrong argument
 
 Recovery - Follow This EXACT Process:
-1. Identify the FROM type in your query
-2. Read openpages://schema/{FromType}
-3. Find the JOIN target type in hierarchical_relationships
-4. Look at the "direction" field value
-5. COPY the OPPOSITE direction value as your function name:
-   - "direction": "child" → Use PARENT([FromType])
-   - "direction": "parent" → Use CHILD([FromType])
-6. The argument MUST be the FROM type, NEVER the JOIN target
+1. Identify the FROM type and JOIN type in your query
+2. Try reading FROM type's schema first: openpages://schema/{FromType}
+3. Check if JOIN target is in hierarchical_relationships:
+   
+   IF FOUND in FROM type's schema:
+   - Look at the "direction" field value
+   - Use OPPOSITE direction:
+     * "direction": "parent" → Use CHILD([FromType])
+     * "direction": "child" → Use PARENT([FromType])
+   
+   IF NOT FOUND in FROM type's schema:
+   - Read JOIN type's schema: openpages://schema/{JoinType}
+   - Find FROM type in hierarchical_relationships
+   - Look at the "direction" field value
+   - Use direction as-is:
+     * "direction": "child" → Use CHILD([FromType])
+     * "direction": "parent" → Use PARENT([FromType])
 
-Example:
-- Query: FROM [ObjectTypeA] JOIN [ObjectTypeB]
-- Read: openpages://schema/ObjectTypeA
-- Find: ObjectTypeB has "direction": "child"
-- Use: PARENT([SOXControl])  ← direction becomes the opposite function, FROM type is argument
+4. The argument MUST be the FROM type, NEVER the JOIN target
+
+Example 1 (Relationship in FROM type):
+- Query: FROM [TypeA] JOIN [TypeB]
+- Read: openpages://schema/TypeA
+- Find: TypeB has "direction": "parent"
+- Use: CHILD([TypeA])  ← opposite direction, FROM type is argument
+
+Example 2 (Relationship in JOIN type):
+- Query: FROM [TypeB] JOIN [TypeA]
+- Read: openpages://schema/TypeB
+- Find: TypeA has "direction": "child"
+- Use: CHILD([TypeB])  ← direction as-is, FROM type is argument
 ```
 
 ### Relationship Not Available

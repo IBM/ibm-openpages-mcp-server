@@ -186,10 +186,15 @@ Field References:
   COUNT(*) - Count all records
   COUNT([FieldName]) - Count non-null values
 
+Join Types:
+  JOIN (or INNER JOIN) - Returns only matching records
+  LEFT OUTER JOIN - Returns all FROM records plus matching JOIN records (or NULL)
+  
 Hierarchical Joins:
   JOIN [ObjectType] ON PARENT([FromObjectType])
   JOIN [ObjectType] ON CHILD([FromObjectType])
   JOIN [ObjectType] ON ANCESTOR([FromObjectType], level)
+  LEFT OUTER JOIN [ObjectType] ON PARENT([FromObjectType])
 
 Examples:
   SELECT [ObjectType].[Resource ID], [ObjectType].[Name]
@@ -201,6 +206,11 @@ Examples:
   FROM [Child]
   JOIN [Parent] ON PARENT([Child])
   WHERE [Parent].[Resource ID] IN (100, 200, 300)
+  
+  SELECT [TypeA].[Name], [TypeB].[Name]
+  FROM [TypeA]
+  LEFT OUTER JOIN [TypeB] ON CHILD([TypeA])
+  WHERE [TypeA].[Status] = 'Active'
 
 SYNTAX RULES (NON-NEGOTIABLE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -241,39 +251,53 @@ MANDATORY WORKFLOW
 
 {object_types_section}
 
-HIERARCHICAL JOINS - SIMPLE RULE
+HIERARCHICAL JOINS - TWO SCENARIOS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ CRITICAL: The schema's "direction" value IS the function name - just copy it!
+⚠️ CRITICAL: Which schema contains the relationship determines the function!
 
-DIRECT RELATIONSHIPS (defined in schema):
+SCENARIO 1: Relationship in FROM type's schema
 1. Read FROM type's schema: openpages://schema/{{FromType}}
 2. Find JOIN target in hierarchical_relationships, note "direction" value
-3. Copy direction as function name, use FROM type as argument
+3. Use OPPOSITE direction as function name with FROM type as argument
 
-MAPPING FOR DIRECT RELATIONSHIPS:
-Schema Says           →  You Write
-"direction": "child"  →  CHILD([FromType])
-"direction": "parent" →  PARENT([FromType])
+Schema in FROM type    →  Function to Use
+"direction": "parent"  →  CHILD([FromType])
+"direction": "child"   →  PARENT([FromType])
+
+SCENARIO 2: Relationship in JOIN type's schema
+1. Read JOIN type's schema: openpages://schema/{{JoinType}}
+2. Find FROM type in hierarchical_relationships, note "direction" value
+3. Use direction as-is as function name with FROM type as argument
+
+Schema in JOIN type    →  Function to Use
+"direction": "child"   →  CHILD([FromType])
+"direction": "parent"  →  PARENT([FromType])
+
+KEY RULE:
+- Relationship in FROM type → Use OPPOSITE direction
+- Relationship in JOIN type → Use direction as-is
+- Argument is ALWAYS the FROM type
 
 MULTI-LEVEL RELATIONSHIPS (not in schema):
 Use ANCESTOR/DESCENDANT when you need to traverse multiple hierarchy levels:
 - ANCESTOR([FromType]) - Get ancestors at any level above
 - DESCENDANT([FromType]) - Get descendants at any level below
-These are NOT in the schema but can be used based on the hierarchy structure.
 
-EXAMPLE - Direct Relationship:
-Schema for [TypeA]:
-{{
-  "hierarchical_relationships": [
-    {{"direction": "child", "type": "TypeB"}}
-  ]
-}}
+EXAMPLES:
 
-Query: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])
-Why: direction "child" → CHILD(), FROM type → [TypeA]
+Example 1 - Relationship in FROM type (TypeA can be child of TypeB):
+Schema for [TypeA]: {{"hierarchical_relationships": [{{"direction": "parent", "type": "TypeB"}}]}}
+Query (INNER): FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])
+Query (OUTER): FROM [TypeA] LEFT OUTER JOIN [TypeB] ON CHILD([TypeA])
+Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([TypeA])
 
-EXAMPLE - Multi-Level Relationship:
-If TypeA → TypeB → TypeC (TypeA has child TypeB, TypeB has child TypeC)
+Example 2 - Relationship in JOIN type (TypeB has child TypeA):
+Schema for [TypeB]: {{"hierarchical_relationships": [{{"direction": "child", "type": "TypeA"}}]}}
+Query (INNER): FROM [TypeB] JOIN [TypeA] ON CHILD([TypeB])
+Query (OUTER): FROM [TypeB] LEFT OUTER JOIN [TypeA] ON CHILD([TypeB])
+Why: Relationship in JOIN type → Use direction as-is → CHILD([TypeB])
+
+Example 3 - Multi-Level (TypeA → TypeB → TypeC):
 Query: FROM [TypeA] JOIN [TypeC] ON DESCENDANT([TypeA])
 Why: TypeC is a descendant (grandchild) of TypeA, not a direct child
 
