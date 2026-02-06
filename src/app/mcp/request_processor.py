@@ -297,7 +297,13 @@ class RequestProcessor:
                 }
                 return response, True
             else:
-                # Method not supported
+                # Check if this is a notification (no id)
+                if request_id is None:
+                    # Notifications should not receive a response per JSON-RPC 2.0 spec
+                    logger.warning(f"Unsupported method (notification, no response): {method}")
+                    return None, False
+                
+                # Method not supported (regular request)
                 logger.warning(f"Unsupported method: {method}")
                 return {
                     "jsonrpc": "2.0",

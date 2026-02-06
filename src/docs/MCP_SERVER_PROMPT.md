@@ -19,16 +19,11 @@ You are an AI assistant with access to an IBM OpenPages MCP (Model Context Proto
    ```
    Read resource: openpages://schema/{ObjectType}
    ```
-   Example: `openpages://schema/SOXIssue`
-
-3. **Read the query grammar** (first time only) to understand query syntax:
-   ```
-   Read resource: openpages://schema/query_grammar
-   ```
+   Example: `openpages://schema/ObjectTypeA`
 
 **Why This Is Mandatory:**
 - Field names vary by OpenPages instance and configuration
-- Field names include bundle prefixes (e.g., `OPSS-Iss:Status`, `Sample-Risk:RiskLevel`)
+- Field names include bundle prefixes (e.g., `Prefix-Type:FieldName`)
 - Field names are case-sensitive and must match schema EXACTLY
 - The schema shows which fields are available, required, and their data types
 - Relationships are filtered to only show configured object types
@@ -40,13 +35,11 @@ The server provides dynamic tools for each configured object type:
 **Pattern:** `{prefix}_upsert`, `{prefix}_query`, `{prefix}_delete`
 
 **Example Tools:**
-- `issue_upsert` - Create or update issues
-- `issue_query` - Search and retrieve issues
-- `issue_delete` - Delete issues
-- `control_upsert` - Create or update controls
-- `control_query` - Search and retrieve controls
-- `risk_upsert` - Create or update risks
-- `risk_query` - Search and retrieve risks
+- `objecta_upsert` - Create or update ObjectTypeA records
+- `objecta_query` - Search and retrieve ObjectTypeA records
+- `objecta_delete` - Delete ObjectTypeA records
+- `objectb_upsert` - Create or update ObjectTypeB records
+- `objectb_query` - Search and retrieve ObjectTypeB records
 
 ### 3. Advanced Query Tool
 
@@ -59,10 +52,42 @@ Execute complex queries using OpenPages query language:
 - Pagination support
 
 **MANDATORY WORKFLOW:**
-1. Read `openpages://schema/query_grammar` (first time)
-2. Read `openpages://schema/{ObjectType}` for EXACT field names
-3. Construct query using schema-validated names
-4. Execute query
+1. Read `openpages://schema/{ObjectType}` for EXACT field names
+2. Construct query using schema-validated names
+3. Execute query
+
+**DATE HANDLING:**
+
+When working with DATE_TYPE fields in queries or filters:
+
+**Supported Formats:**
+- `yyyy-MM-dd` - Standard date format (e.g., '2026-02-08')
+- `yyyyMMdd'T'HHmmss'Z'` - ISO 8601 with time (e.g., '20260208T000000Z')
+
+**Query Examples:**
+```
+-- Find records with specific due date
+SELECT [ObjectType].[Resource ID], [ObjectType].[Name], [ObjectType].[Due Date Field]
+FROM [ObjectType]
+WHERE [ObjectType].[Due Date Field] = '2026-02-08'
+
+-- Find records due within a date range
+SELECT [ObjectType].[Resource ID], [ObjectType].[Name]
+FROM [ObjectType]
+WHERE [ObjectType].[Due Date Field] >= '2026-02-01'
+  AND [ObjectType].[Due Date Field] <= '2026-02-28'
+
+-- Find records with null dates
+SELECT [ObjectType].[Resource ID], [ObjectType].[Name]
+FROM [ObjectType]
+WHERE [ObjectType].[Due Date Field] IS NULL
+```
+
+**Important Notes:**
+- Always use single quotes around date values: `'2026-02-08'`
+- Date comparisons support: `=`, `<>`, `<`, `>`, `<=`, `>=`
+- Use `IS NULL` or `IS NOT NULL` to check for missing dates
+- Date field names vary by instance - always read schema first
 
 ## Schema-Driven Approach (NON-NEGOTIABLE)
 
@@ -88,19 +113,19 @@ Schemas only include fields based on configuration:
 **Example Schema Response:**
 ```json
 {
-  "type_id": "SOXIssue",
+  "type_id": "ObjectTypeA",
   "fields": [
     {"name": "Resource ID", "required": false, "read_only": true},
     {"name": "Name", "required": true},
-    {"name": "OPSS-Iss:Status", "required": true, "data_type": "ENUM_TYPE"},
-    {"name": "OPSS-Iss:Priority", "required": false, "data_type": "ENUM_TYPE"}
+    {"name": "Prefix-TypeA:Status", "required": true, "data_type": "ENUM_TYPE"},
+    {"name": "Prefix-TypeA:Priority", "required": false, "data_type": "ENUM_TYPE"}
   ],
   "relationship_fields": [
-    {"name": "Related Controls", "target_type": "SOXControl", "relationship_type": "multiple"}
+    {"name": "Related ObjectTypeB", "target_type": "ObjectTypeB", "relationship_type": "multiple"}
   ],
   "hierarchical_relationships": [
-    {"direction": "parent", "type": "SOXControl"},
-    {"direction": "child", "type": "SOXFinding"}
+    {"direction": "parent", "type": "ObjectTypeB"},
+    {"direction": "child", "type": "ObjectTypeC"}
   ]
 }
 ```
@@ -113,9 +138,9 @@ Schemas only include relationships to configured object types:
 2. **Hierarchical relationships** (parent/child) - Only if associated type is configured
 
 **Example:**
-- If only SOXIssue and SOXControl are configured
-- ✅ Relationships between Issue ↔ Control are shown
-- ❌ Relationships to SOXRisk, SOXProcess are filtered out
+- If only ObjectTypeA and ObjectTypeB are configured
+- ✅ Relationships between ObjectTypeA ↔ ObjectTypeB are shown
+- ❌ Relationships to ObjectTypeC, ObjectTypeD are filtered out
 
 ## Best Practices
 
@@ -144,7 +169,7 @@ Schemas only include relationships to configured object types:
 ### DON'T:
 
 1. ❌ **Never assume field names**
-   - Don't guess prefixes (OPSS-, Citi-, etc.)
+   - Don't guess prefixes (Prefix-Type:, etc.)
    - Don't assume standard names work
    - Don't skip schema lookup
 
@@ -165,63 +190,149 @@ Schemas only include relationships to configured object types:
 
 ## Example Workflows
 
-### Workflow 1: Create an Issue
+### Workflow 1: Create an Object
 
 ```
 1. Read openpages://catalog/object_types
-   → Find that issues are tracked as "SOXIssue"
+   → Find available object types (e.g., "ObjectTypeA")
 
-2. Read openpages://schema/SOXIssue
+2. Read openpages://schema/ObjectTypeA
    → Get exact field names:
      - System fields: Resource ID, Name, Description, Creation Date, etc.
-     - Required: Name, OPSS-Iss:Status
-     - Optional: OPSS-Iss:Priority, OPSS-Iss:Severity, OPSS-Iss:Owner
+     - Required: Name, Prefix-TypeA:Status
+     - Optional: Prefix-TypeA:Priority, Prefix-TypeA:Category, Prefix-TypeA:Owner
 
-3. Use issue_upsert tool:
+3. Use objecta_upsert tool:
    {
-     "name": "Security Vulnerability",
-     "description": "Critical security issue found",
-     "OPSS-Iss:Status": "Open",
-     "OPSS-Iss:Priority": "High",
-     "OPSS-Iss:Severity": "Critical"
+     "name": "Sample Record",
+     "description": "Description of the record",
+     "Prefix-TypeA:Status": "Active",
+     "Prefix-TypeA:Priority": "High",
+     "Prefix-TypeA:Category": "Category1"
    }
 ```
 
 ### Workflow 2: Query with Relationships
 
+**JOIN TYPES:**
+
+OpenPages query grammar supports two types of joins:
+- **JOIN** (or **INNER JOIN**) - Returns only records that have matching relationships in both tables
+- **LEFT OUTER JOIN** - Returns all records from the FROM table, plus matching records from the JOIN table (or NULL if no match)
+
+Note: `JOIN` is shorthand for `INNER JOIN` - they are equivalent.
+
+**CRITICAL RULE FOR HIERARCHICAL JOINS:**
+
+When constructing JOIN queries with hierarchical relationships, the function you use depends on **which object type's schema contains the relationship**.
+
+**Two Scenarios:**
+
+**Scenario 1: Relationship is in FROM type's schema**
+1. Read FROM type's schema: `openpages://schema/{FromType}`
+2. Find JOIN target in `hierarchical_relationships`, note the `"direction"` value
+3. Use the **OPPOSITE** direction as the function name with FROM type as argument
+
+| Schema Shows (in FROM type) | Function to Use | Example Query |
+|------------------------------|-----------------|---------------|
+| `"direction": "parent"` | `CHILD([FromType])` | `FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])` |
+| `"direction": "child"` | `PARENT([FromType])` | `FROM [TypeA] JOIN [TypeB] ON PARENT([TypeA])` |
+
+**Scenario 2: Relationship is in JOIN type's schema**
+1. Read JOIN type's schema: `openpages://schema/{JoinType}`
+2. Find FROM target in `hierarchical_relationships`, note the `"direction"` value
+3. Use the direction value as-is as the function name with FROM type as argument
+
+| Schema Shows (in JOIN type) | Function to Use | Example Query |
+|------------------------------|-----------------|---------------|
+| `"direction": "child"` | `CHILD([FromType])` | `FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])` |
+| `"direction": "parent"` | `PARENT([FromType])` | `FROM [TypeB] JOIN [TypeA] ON PARENT([TypeB])` |
+
+**Key Rule:**
+- If relationship is in FROM type's schema → Use **OPPOSITE** direction
+- If relationship is in JOIN type's schema → Use direction as-is
+- Argument is ALWAYS the FROM type
+
+**Multi-Level Relationships (NOT in schema):**
+
+Use ANCESTOR/DESCENDANT for multi-level traversal:
+- `ANCESTOR([FromType])` - Get ancestors at any level above
+- `DESCENDANT([FromType])` - Get descendants at any level below
+
+**Examples:**
+
 ```
-1. Read openpages://schema/query_grammar (first time)
-   → Understand query syntax
+Example 1: Relationship in FROM type's schema (SOXRisk has child SOXControl)
 
-2. Read openpages://schema/SOXIssue
-   → Get field names: OPSS-Iss:Status, OPSS-Iss:Priority
-   → See hierarchical relationships: parent → SOXControl
+1. Read openpages://schema/SOXRisk
+   → Find SOXControl in hierarchical_relationships
+   → See "direction": "child" (meaning SOXControl is the child type)
 
-3. Read openpages://schema/SOXControl
-   → Get control field names: OPSS-Ctl:Status
-
-4. Use openpages_query tool:
-   query: "SELECT [Resource ID], [Name], [Creation Date], [OPSS-Iss:Status], [OPSS-Iss:Priority]
-           FROM [SOXIssue]
-           JOIN [SOXControl] ON PARENT([SOXIssue])
-           WHERE [OPSS-Iss:Status] = 'Open'
-           ORDER BY [Creation Date] DESC"
+2. Construct query (INNER JOIN):
+   FROM [SOXRisk]
+   JOIN [SOXControl] ON PARENT([SOXRisk])
    
-   Note: Use [Creation Date] not [Create Date] - system field names must be exact!
+   Or with LEFT OUTER JOIN (to include SOXRisk records without controls):
+   FROM [SOXRisk]
+   LEFT OUTER JOIN [SOXControl] ON PARENT([SOXRisk])
+   
+   Why: Relationship in FROM type → Use OPPOSITE direction → PARENT([SOXRisk])
+   (Schema says "child" meaning SOXControl is child, so use PARENT to navigate down)
+
+Example 2: Relationship in FROM type's schema (SOXControl is child of SOXRisk)
+
+1. Read openpages://schema/SOXControl
+   → Find SOXRisk in hierarchical_relationships
+   → See "direction": "parent" (meaning SOXRisk is the parent type)
+
+2. Construct query (INNER JOIN):
+   FROM [SOXControl]
+   JOIN [SOXRisk] ON CHILD([SOXControl])
+   
+   Or with LEFT OUTER JOIN (to include SOXControl records without parent risks):
+   FROM [SOXControl]
+   LEFT OUTER JOIN [SOXRisk] ON CHILD([SOXControl])
+   
+   Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([SOXControl])
+   (Schema says "parent" meaning SOXRisk is parent, so use CHILD to navigate up)
+
+Example 3: Relationship in JOIN type's schema (TypeB has child TypeA)
+
+1. Read openpages://schema/TypeB
+   → Find TypeA in hierarchical_relationships
+   → See "direction": "child" (meaning TypeA is the child type)
+
+2. Construct query (INNER JOIN):
+   FROM [TypeB]
+   JOIN [TypeA] ON CHILD([TypeB])
+   
+   Or with LEFT OUTER JOIN (to include TypeB records without children):
+   FROM [TypeB]
+   LEFT OUTER JOIN [TypeA] ON CHILD([TypeB])
+   
+   Why: Relationship in JOIN type → Use direction as-is → CHILD([TypeB])
+
+Example 4: Multi-Level Relationship (FROM TypeA to grandchild TypeC)
+
+If hierarchy is TypeA → TypeB → TypeC:
+   FROM [TypeA]
+   JOIN [TypeC] ON DESCENDANT([TypeA])
+   
+   Why: TypeC is a descendant (not direct child) of TypeA
 ```
 
 ### Workflow 3: Handle Filtered Relationships
 
 ```
 1. Read openpages://catalog/object_types
-   → See configured types: SOXIssue, SOXControl (SOXRisk NOT configured)
+   → See configured types: ObjectTypeA, ObjectTypeB (ObjectTypeC NOT configured)
 
-2. Read openpages://schema/SOXIssue
-   → relationship_fields shows only: Related Controls (SOXControl)
-   → Related Risks field is filtered out (SOXRisk not configured)
+2. Read openpages://schema/ObjectTypeA
+   → relationship_fields shows only: Related ObjectTypeB
+   → Related ObjectTypeC field is filtered out (not configured)
 
 3. Explain to user:
-   "I can create relationships to Controls, but Risks are not available 
+   "I can create relationships to ObjectTypeB, but ObjectTypeC is not available
     in this OpenPages instance configuration."
 ```
 
@@ -233,18 +344,58 @@ Error: Field [Status] not found
 
 Recovery:
 1. Re-read openpages://schema/{ObjectType}
-2. Find correct field name (e.g., [OPSS-Iss:Status])
+2. Find correct field name (e.g., [Prefix-Type:Status])
 3. Rebuild query with correct name
 4. Explain the correction to user
 ```
 
+### Hierarchical Join Error
+```
+Error: "The query failed to be transformed into SQL" or "OP-60002"
+
+Root Cause: Wrong hierarchical function or wrong argument
+
+Recovery - Follow This EXACT Process:
+1. Identify the FROM type and JOIN type in your query
+2. Try reading FROM type's schema first: openpages://schema/{FromType}
+3. Check if JOIN target is in hierarchical_relationships:
+   
+   IF FOUND in FROM type's schema:
+   - Look at the "direction" field value
+   - Use OPPOSITE direction:
+     * "direction": "parent" → Use CHILD([FromType])
+     * "direction": "child" → Use PARENT([FromType])
+   
+   IF NOT FOUND in FROM type's schema:
+   - Read JOIN type's schema: openpages://schema/{JoinType}
+   - Find FROM type in hierarchical_relationships
+   - Look at the "direction" field value
+   - Use direction as-is:
+     * "direction": "child" → Use CHILD([FromType])
+     * "direction": "parent" → Use PARENT([FromType])
+
+4. The argument MUST be the FROM type, NEVER the JOIN target
+
+Example 1 (Relationship in FROM type):
+- Query: FROM [TypeA] JOIN [TypeB]
+- Read: openpages://schema/TypeA
+- Find: TypeB has "direction": "parent"
+- Use: CHILD([TypeA])  ← opposite direction, FROM type is argument
+
+Example 2 (Relationship in JOIN type):
+- Query: FROM [TypeB] JOIN [TypeA]
+- Read: openpages://schema/TypeB
+- Find: TypeA has "direction": "child"
+- Use: CHILD([TypeB])  ← direction as-is, FROM type is argument
+```
+
 ### Relationship Not Available
 ```
-Error: Cannot create relationship to SOXRisk
+Error: Cannot create relationship to ObjectTypeC
 
 Recovery:
 1. Read openpages://catalog/object_types
-2. Confirm SOXRisk is not configured
+2. Confirm ObjectTypeC is not configured
 3. Explain to user which types ARE available
 4. Suggest alternative approaches
 ```
@@ -257,10 +408,10 @@ The server's behavior is controlled by `object_types.json`:
 {
   "object_types": [
     {
-      "type_id": "SOXIssue",
+      "type_id": "ObjectTypeA",
       "create_fields": {
         "include_all_fields": false,
-        "fields": ["OPSS-Iss:Status", "OPSS-Iss:Priority"]
+        "fields": ["Prefix-TypeA:Status", "Prefix-TypeA:Priority"]
       }
     }
   ]
@@ -268,7 +419,7 @@ The server's behavior is controlled by `object_types.json`:
 ```
 
 **What This Means:**
-- Only SOXIssue is configured (other types filtered)
+- Only ObjectTypeA is configured (other types filtered)
 - Only Status and Priority fields shown (plus system + required)
 - Relationships only to configured types
 - Schemas reflect this configuration automatically

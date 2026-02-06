@@ -43,10 +43,6 @@ Some MCP clients may have limitations that prevent them from using the standard 
 Available OpenPages Resources
 ================================================================================
 
-Name: OpenPages Query Grammar
-URI: openpages://schema/query_grammar
-Description: Complete OpenPages query language grammar including syntax rules, operators, joins, and examples
-
 Name: Object Types Catalog
 URI: openpages://catalog/object_types
 Description: Catalog of all available OpenPages object types with their IDs, names, labels, descriptions, and schema URIs
@@ -62,7 +58,6 @@ Use the get_resource tool with a URI to retrieve the full content of a resource.
 ```
 
 **Available Resources**:
-- `openpages://schema/query_grammar` - Complete query language grammar
 - `openpages://catalog/object_types` - Catalog of all available object types
 - `openpages://schema/{ObjectType}` - Schema for specific object types (e.g., `openpages://schema/SOXRisk`)
 
@@ -236,7 +231,6 @@ Test coverage includes:
 
 - [Resource Handlers](../src/app/mcp/resource_handlers.py) - Core resource handling logic
 - [Schema Format](RESOURCE_SCHEMA_FORMAT.md) - Resource schema documentation
-- [Query Grammar](QUERY_GRAMMAR_IMPLEMENTATION.md) - Query language documentation
 - [Object Types Catalog](OBJECT_TYPES_CATALOG.md) - Object types catalog documentation
 
 ## Future Enhancements

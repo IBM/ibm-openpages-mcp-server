@@ -149,151 +149,212 @@ class MCPServer:
         # Build object types section
         if object_types:
             object_types_section = "CONFIGURED OBJECT TYPES (available in this instance):\n" + "\n".join(f"- {ot}" for ot in object_types)
-            object_types_section += "\n- Plus any other custom object types defined in your OpenPages instance"
         else:
             object_types_section = """EXAMPLE OBJECT TYPES (OpenPages supports many object types - these are common examples):
-- [SOXIssue] - Issues/findings
-- [SOXControl] - Controls
-- [SOXRisk] - Risks
-- [SOXProcess] - Processes
-- [SOXBusEntity] - Business entities
-- [SOXTest] - Tests
+- [ObjectTypeA] - First object type
+- [ObjectTypeB] - Second object type
+- [ObjectTypeC] - Third object type
+- [ObjectTypeD] - Fourth object type
+- [ObjectTypeE] - Fifth object type
+- [ObjectTypeF] - Sixth object type
 - Any custom object types defined in your OpenPages instance"""
         
-        return f"""Purpose
-Execute queries against OpenPages using the OpenPages query language.
+        return f"""Execute queries against OpenPages using the OpenPages query language.
 
-⚠️ CRITICAL: SCHEMA LOOKUP IS MANDATORY BEFORE EVERY QUERY ⚠️
-
-MANDATORY WORKFLOW (MUST follow in exact order - NO EXCEPTIONS)
+QUERY GRAMMAR
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Basic Structure:
+  SELECT [fields] FROM [ObjectType] [joins] [WHERE conditions] [ORDER BY fields]
 
-STEP 1: Read openpages://schema/query_grammar (FIRST TIME ONLY)
-   - Complete OpenPages query language syntax, operators, keywords, joins, examples
-   - Required for understanding hierarchical relationships (PARENT, CHILD, ANCESTOR)
-   - This provides the grammar rules for constructing valid queries
+Keywords:
+  SELECT, FROM, WHERE, ORDER BY, GROUP BY, JOIN, ON, AND, OR, NOT, IN, LIKE,
+  CONTAINS, BETWEEN, IS NULL, COUNT, UNION, PARENT, CHILD, ANCESTOR
 
-STEP 2: ALWAYS Read openpages://schema/{{ObjectType}} BEFORE constructing ANY query
-   ⚠️ THIS STEP IS ABSOLUTELY REQUIRED - NEVER SKIP IT ⚠️
-   ⚠️ DO NOT ASK USER FOR FIELD NAMES - READ THE SCHEMA DIRECTLY ⚠️
-   
-   WHY THIS IS MANDATORY:
-   - Field names vary by OpenPages instance and configuration
-   - Field names may include namespace prefixes (e.g., [OPSS-Iss:Status], [Citi-Risk:RiskLevel])
-   - Field names are case-sensitive and must match schema EXACTLY
-   - Assuming field names will cause query failures and waste time
-   - You have direct access to the schema - USE IT, don't ask the user
-   
-   HOW TO DO THIS (DO NOT ASK USER - DO THIS YOURSELF):
-   a) Read openpages://catalog/object_types to see all available object types with their IDs and schema URIs
-   b) Identify the correct object type from the catalog (e.g., SOXRisk for risks, SOXIssue for issues)
-   c) Read the schema using the schema_uri from the catalog (e.g., openpages://schema/SOXRisk)
-   d) Extract the EXACT field names from the schema (look for "name" property in field_definitions)
-   e) Use these exact names in your query, enclosed in square brackets
-   f) NEVER ask the user to confirm field names - you can read them yourself from the schema
-   
-   EXAMPLE WORKFLOW:
-   User asks: "Show me the last 10 risks created"
-   ❌ WRONG: Ask user "What is the exact field name for status?"
-   ❌ WRONG: Immediately query with assumed field names like [Status], [CreatedDate]
-   ✅ CORRECT:
-      1. Read openpages://catalog/object_types to find that risks are tracked as "SOXRisk"
-      2. Read openpages://schema/SOXRisk to get exact field names (don't ask user, just do it)
-      3. Find that the actual fields are [OPSS-Risk:Status] and [Create Date] from the schema
-      4. Construct query: SELECT [Resource ID], [Name], [OPSS-Risk:Status], [Create Date] FROM [SOXRisk] ORDER BY [Create Date] DESC
-      5. Execute the query (no user confirmation needed - you verified against schema)
+Operators:
+  =, <>, <, >, <=, >=, LIKE, CONTAINS, NOT CONTAINS, IN, NOT IN, IS NULL, IS NOT NULL
 
-STEP 3: Construct query using ONLY schema-validated names
-   - All entity names must be in square brackets: [ObjectType], [FieldName]
-   - Names are case-sensitive and must match schema exactly
-   - NEVER assume field names exist without schema verification
-   - If a field name from schema has a prefix, you MUST include the prefix
+Data Types:
+  - Strings: 'text' (single quotes)
+  - Numbers: 123, 45.67
+  - Booleans: TRUE, FALSE
+  - Dates: 'YYYY-MM-DD' or 'YYYYMMDD'T'HHmmss'Z'' (e.g., '2026-02-08' or '20260208T000000Z')
+  - NULL: NULL
 
-STEP 4: Execute query with pagination parameters
-   - Use limit and offset parameters (not LIMIT/TOP/OFFSET clauses in query)
-   - Default limit: 20, maximum: 500
+Field References:
+  [ObjectType].[FieldName] - Full qualification required
+  [ObjectType].[*] - All fields from object type
+  COUNT(*) - Count all records
+  COUNT([FieldName]) - Count non-null values
+
+Join Types:
+  JOIN (or INNER JOIN) - Returns only matching records
+  LEFT OUTER JOIN - Returns all FROM records plus matching JOIN records (or NULL)
+  
+Hierarchical Joins:
+  JOIN [ObjectType] ON PARENT([FromObjectType])
+  JOIN [ObjectType] ON CHILD([FromObjectType])
+  JOIN [ObjectType] ON ANCESTOR([FromObjectType], level)
+  LEFT OUTER JOIN [ObjectType] ON PARENT([FromObjectType])
+
+Examples:
+  SELECT [ObjectType].[Resource ID], [ObjectType].[Name]
+  FROM [ObjectType]
+  WHERE [ObjectType].[Status] = 'Active'
+  ORDER BY [ObjectType].[Name]
+
+  SELECT [Child].[Name], [Parent].[Name]
+  FROM [Child]
+  JOIN [Parent] ON PARENT([Child])
+  WHERE [Parent].[Resource ID] IN (100, 200, 300)
+  
+  SELECT [TypeA].[Name], [TypeB].[Name]
+  FROM [TypeA]
+  LEFT OUTER JOIN [TypeB] ON CHILD([TypeA])
+  WHERE [TypeA].[Status] = 'Active'
+
+SYNTAX RULES (NON-NEGOTIABLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ Use full object type names everywhere: [ObjectType].[FieldName]
+✅ All names in square brackets: [ObjectType], [FieldName]
+✅ Case-sensitive: Must match schema exactly
+✅ Hierarchical joins: ON PARENT([ObjectType]) or ON CHILD([ObjectType])
+
+❌ NEVER USE ALIASES - NOT SUPPORTED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The AS keyword is NOT supported in OpenPages queries. You MUST use full object type names.
+
+WRONG (will fail):
+  SELECT [c].[Resource ID] AS [Control ID], [i].[Name] AS [Issue Name]
+  FROM [ObjectTypeA] AS [c]
+  JOIN [ObjectTypeB] AS [i] ON CHILD([c])
+
+CORRECT:
+  SELECT [ObjectTypeA].[Resource ID], [ObjectTypeB].[Name]
+  FROM [ObjectTypeA]
+  JOIN [ObjectTypeB] ON CHILD([ObjectTypeA])
+
+WRONG (will fail):
+  FROM [ObjectTypeA] AS [i]
+  FROM [ObjectTypeB] c
+
+CORRECT:
+  FROM [ObjectTypeA]
+  FROM [ObjectTypeB]
+
+MANDATORY WORKFLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Read openpages://catalog/object_types (ONCE at start)
+2. Read openpages://schema/{{ObjectType}} for each type (ONCE per type)
+3. Store field names in context - DO NOT re-read or ask user
+4. Construct query using stored schema knowledge
+5. Execute with limit/offset parameters (not in query)
 
 {object_types_section}
 
-CRITICAL RULES
-- Square brackets required: [ObjectType], [FieldName]
-- Case-sensitive: Must match schema exactly
-- Schema validation: Verify ALL field names before use
-- No assumptions: Never guess field names or prefixes
-- Pagination: Use tool parameters, not query clauses
-- STRICT GRAMMAR ADHERENCE: Use ONLY keywords defined in query_grammar resource
-
-UNSUPPORTED KEYWORDS (will cause query failure)
-- DISTINCT - Not supported in OpenPages query language
-- TOP/LIMIT - Use tool's limit parameter instead
-- OFFSET - Use tool's offset parameter instead
-- HAVING - Not supported
-- UNION - Limited support, see query_grammar
-- Subqueries - Not supported
-- Window functions - Not supported
-- CTEs (WITH clause) - Not supported
-
-If you need unique results, retrieve data and deduplicate in application code.
-ALWAYS verify keyword support in query_grammar resource before using.
-
-HIERARCHICAL JOINS (see query_grammar for details)
-- PARENT([FromType]): Get parent objects
-- CHILD([FromType]): Get child objects
-- ANCESTOR([FromType], level): Get ancestor objects
-- Rule: Type inside function must match FROM clause type
-- Example: FROM [ChildType] JOIN [ParentType] ON PARENT([ChildType])
-
-SCHEMA-DRIVEN APPROACH (MANDATORY - NOT OPTIONAL)
+HIERARCHICAL JOINS - TWO SCENARIOS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ YOU MUST ALWAYS LOOK UP FIELD NAMES FROM THE SCHEMA BEFORE QUERYING ⚠️
+⚠️ CRITICAL: Which schema contains the relationship determines the function!
 
-- Object types catalog: Read openpages://catalog/object_types to see all available types
-- Object type schemas: Get field names from openpages://schema/{{ObjectType}} - THIS IS REQUIRED, NOT OPTIONAL
-- Query syntax: Reference openpages://schema/query_grammar
-- NEVER hardcode or assume field names - ALWAYS verify against schema first
-- Field names may have prefixes that vary by instance - you cannot guess these
+SCENARIO 1: Relationship in FROM type's schema
+1. Read FROM type's schema: openpages://schema/{{FromType}}
+2. Find JOIN target in hierarchical_relationships, note "direction" value
+3. Use OPPOSITE direction as function name with FROM type as argument
 
-RECOMMENDED WORKFLOW:
-1. First time: Read openpages://catalog/object_types to understand available object types
-2. Every query: Read the specific schema for the object type you're querying
-3. Use exact field names from schema in your query
+Schema in FROM type    →  Function to Use
+"direction": "parent"  →  CHILD([FromType])
+"direction": "child"   →  PARENT([FromType])
 
-COMMON MISTAKES TO AVOID:
-❌ MISTAKE 1: Asking user for field names
-   User: "Show me risks with status Active"
-   You: "What is the exact field name for status?"
-   WHY WRONG: You have direct access to the schema - read it yourself!
+SCENARIO 2: Relationship in JOIN type's schema
+1. Read JOIN type's schema: openpages://schema/{{JoinType}}
+2. Find FROM type in hierarchical_relationships, note "direction" value
+3. Use direction as-is as function name with FROM type as argument
 
-❌ MISTAKE 2: Assuming field names
-   User: "Show me risks with status Active"
-   You: Execute query with assumed field [Status]
-   Result: Query fails because actual field is [OPSS-Risk:Status]
+Schema in JOIN type    →  Function to Use
+"direction": "child"   →  CHILD([FromType])
+"direction": "parent"  →  PARENT([FromType])
 
-❌ MISTAKE 3: Asking for confirmation before reading schema
-   User: "Show me the last 10 risks"
-   You: "Is Risk tracked under [SOXRisk]? What is the status field name?"
-   WHY WRONG: Just read the schema directly - don't ask!
+KEY RULE:
+- Relationship in FROM type → Use OPPOSITE direction
+- Relationship in JOIN type → Use direction as-is
+- Argument is ALWAYS the FROM type
 
-✅ CORRECT APPROACH:
-✅ User: "Show me risks with status Active"
-✅ You: Silently read openpages://schema/SOXRisk to get exact field names (no asking!)
-✅ You: Find that status field is actually [OPSS-Risk:Status]
-✅ You: Execute query with correct field name [OPSS-Risk:Status]
-✅ Result: Query succeeds
+MULTI-LEVEL RELATIONSHIPS (not in schema):
+Use ANCESTOR/DESCENDANT when you need to traverse multiple hierarchy levels:
+- ANCESTOR([FromType]) - Get ancestors at any level above
+- DESCENDANT([FromType]) - Get descendants at any level below
 
-LABEL-AWARE INFERENCE
-- You may infer object types/fields from user's natural language
-- However, you MUST validate via resources/list and resources/read BEFORE querying
-- You MUST translate user labels to exact bracketed system names from schema
-- DO NOT ask user to confirm field names - read the schema yourself
-- If the object type itself is ambiguous (not field names), then ask user to clarify
-- NEVER assume the system field name matches the user's label
+EXAMPLES:
 
-ERROR RECOVERY
-- Invalid field error → You forgot to read schema first! Re-read schema, rebuild query
-- Field not in schema → Ask user for clarification or propose alternatives from schema
-- Always report error cause and show corrected query with schema-validated field names
-- Learn from errors: If you get an invalid field error, it means you skipped schema lookup
+Example 1 - Relationship in FROM type (Risk has child Control):
+Schema for [SOXRisk]: {{"hierarchical_relationships": [{{"direction": "child", "type": "SOXControl"}}]}}
+Query (INNER): FROM [SOXRisk] JOIN [SOXControl] ON PARENT([SOXRisk])
+Query (OUTER): FROM [SOXRisk] LEFT OUTER JOIN [SOXControl] ON PARENT([SOXRisk])
+Why: Relationship in FROM type → Use OPPOSITE direction → PARENT([SOXRisk])
+(Schema says "child" meaning SOXControl is child, so use PARENT to navigate down)
+
+Example 2 - Relationship in FROM type (Control is child of Risk):
+Schema for [SOXControl]: {{"hierarchical_relationships": [{{"direction": "parent", "type": "SOXRisk"}}]}}
+Query (INNER): FROM [SOXControl] JOIN [SOXRisk] ON CHILD([SOXControl])
+Query (OUTER): FROM [SOXControl] LEFT OUTER JOIN [SOXRisk] ON CHILD([SOXControl])
+Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([SOXControl])
+(Schema says "parent" meaning SOXRisk is parent, so use CHILD to navigate up)
+
+Example 3 - Relationship in JOIN type (TypeB has child TypeA):
+Schema for [TypeB]: {{"hierarchical_relationships": [{{"direction": "child", "type": "TypeA"}}]}}
+Query (INNER): FROM [TypeB] JOIN [TypeA] ON CHILD([TypeB])
+Query (OUTER): FROM [TypeB] LEFT OUTER JOIN [TypeA] ON CHILD([TypeB])
+Why: Relationship in JOIN type → Use direction as-is → CHILD([TypeB])
+
+Example 4 - Multi-Level (TypeA → TypeB → TypeC):
+Query: FROM [TypeA] JOIN [TypeC] ON DESCENDANT([TypeA])
+Why: TypeC is a descendant (grandchild) of TypeA, not a direct child
+
+⚠️ COMMON ERROR: Using JOIN target as argument
+WRONG: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeB])
+RIGHT: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])
+The argument MUST be the FROM type, NEVER the JOIN target!
+
+DATE HANDLING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When working with DATE_TYPE fields in queries:
+
+SUPPORTED FORMATS:
+  - 'YYYY-MM-DD' - Standard date format (e.g., '2026-02-08')
+  - 'YYYYMMDD'T'HHmmss'Z'' - ISO 8601 with time (e.g., '20260208T000000Z')
+
+EXAMPLES:
+  -- Find records with specific date
+  WHERE [ObjectType].[Date Field] = '2026-02-08'
+  
+  -- Find records within date range
+  WHERE [ObjectType].[Date Field] >= '2026-02-01'
+    AND [ObjectType].[Date Field] <= '2026-02-28'
+  
+  -- Find records with null dates
+  WHERE [ObjectType].[Date Field] IS NULL
+  
+  -- Find records with non-null dates
+  WHERE [ObjectType].[Date Field] IS NOT NULL
+
+IMPORTANT:
+  ✅ Always use single quotes around date values: '2026-02-08'
+  ✅ Date comparisons support: =, <>, <, >, <=, >=
+  ✅ Use IS NULL / IS NOT NULL to check for missing dates
+  ❌ Date field names vary by instance - always read schema first
+
+RESTRICTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❌ Aggregates (COUNT/SUM/AVG/MIN/MAX) with JOIN - query separately and count in code
+❌ DISTINCT, TOP/LIMIT, OFFSET, HAVING, GROUP BY, UNION, subqueries, CTEs
+✅ Use tool parameters for limit/offset, not query clauses
+
+COMMON ERRORS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"Query failed to be transformed" → Wrong PARENT/CHILD argument or direction
+"Invalid Field" → Field name doesn't match schema (read schema first)
+"Aggregate functions cannot be used" → Remove aggregates from multi-type queries
+
+SOLUTION: Always read schema first, use exact field names, match direction to function name
 """
         return description
     
@@ -317,7 +378,7 @@ ERROR RECOVERY
                         "text": {
                             "type": "string",
                             "description": "The text to echo"
-                        },
+                    },
                         **context_properties
                     },
                     "required": ["text"]
@@ -325,7 +386,7 @@ ERROR RECOVERY
             },
             {
                 "name": "list_resources",
-                "description": "List all available OpenPages resources including object type schemas and query grammar. Use this to discover what resources are available before accessing them. This tool provides the same information as the resources/list endpoint for MCP clients that cannot use that endpoint. Accepts optional context variables.",
+                "description": "List all available OpenPages resources including object type schemas and the object types catalog. Use this to discover what resources are available before accessing them. This tool provides the same information as the resources/list endpoint for MCP clients that cannot use that endpoint.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -336,14 +397,14 @@ ERROR RECOVERY
             },
             {
                 "name": "get_resource",
-                "description": "Get a resource by its URI. Resources include object type schemas (openpages://schema/{ObjectType}) and query grammar (openpages://schema/query_grammar). ⚠️ CRITICAL: You MUST call this tool to get exact field names BEFORE constructing ANY query. Field names vary by instance and may include namespace prefixes (e.g., [OPSS-Iss:Status]). DO NOT assume field names - always verify against the schema. This tool provides the same information as the resources/read endpoint for MCP clients that cannot use that endpoint. Accepts optional context variables.",
+                "description": "Get a resource by its URI. Resources include object type schemas (openpages://schema/{ObjectType}) and the object types catalog (openpages://catalog/object_types). ⚠️ CRITICAL: You MUST call this tool to get exact field names BEFORE constructing ANY query. Field names vary by instance and may include field group prefixes (e.g., [OPSS-Iss:Status]). DO NOT assume field names - always verify against the schema. This tool provides the same information as the resources/read endpoint for MCP clients that cannot use that endpoint.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "uri": {
                             "type": "string",
-                            "description": "The resource URI to retrieve. Examples: 'openpages://schema/SOXRisk', 'openpages://schema/query_grammar', 'openpages://catalog/object_types'. Use list_resources to see available URIs."
-                        },
+                            "description": "The resource URI to retrieve. Examples: 'openpages://schema/SOXRisk', 'openpages://catalog/object_types'. Use list_resources to see available URIs."
+                    },
                         **context_properties
                     },
                     "required": ["uri"]
@@ -357,7 +418,7 @@ ERROR RECOVERY
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "OpenPages query language statement. ⚠️ CRITICAL: You MUST call get_schema tool BEFORE constructing this query to get exact field names. Field names are case-sensitive and may include namespace prefixes. MUST enclose all entity names in square brackets [Name]. Use single quotes for string values. Example: SELECT [Resource ID], [Name], [OPSS-Iss:Status] FROM [SOXIssue] ORDER BY [Create Date] DESC"
+                            "description": "OpenPages query language statement. ⚠️ CRITICAL: NEVER use aliases or AS keyword - they are NOT supported. ✅ ALWAYS use full object type names: [ObjectType].[FieldName] everywhere in the query. ⚠️ You MUST call get_resource tool BEFORE constructing this query to get exact field names. Field names are case-sensitive and may include field group prefixes. MUST enclose all entity names in square brackets. WRONG: FROM [ObjectTypeA] AS [c] | CORRECT: FROM [ObjectTypeA]. Example: SELECT [ObjectType].[Resource ID], [ObjectType].[Name] FROM [ObjectType] JOIN [OtherType] ON PARENT([ObjectType]) WHERE [ObjectType].[Status] = 'Active'"
                         },
                         "offset": {
                             "type": "integer",
@@ -374,7 +435,7 @@ ERROR RECOVERY
                             "type": "string",
                             "enum": ["table", "json", "list"],
                             "description": "Output format: 'table' (default), 'json', or 'list'"
-                        },
+                    },
                         **context_properties
                     },
                     "required": ["query"]
@@ -443,7 +504,7 @@ ERROR RECOVERY
                     "name": {
                         "type": "string",
                         "description": "Name of the object to delete. If multiple objects have the same name, an error will be returned (one of resource_id, path, or name is required)"
-                    },
+                },
                     **context_properties
                 },
                 "required": ["object_type"]

@@ -105,9 +105,12 @@ async def run_stdio_server(custom_settings: Optional[Settings] = None) -> None:
                     logger.debug("Processing request")
                     response, should_exit = await server.process_request(request)
                     
-                    # Send the response
-                    sys.stdout.write(json.dumps(response) + "\n")
-                    sys.stdout.flush()
+                    # Send the response only if we have one (notifications return None)
+                    if response is not None:
+                        sys.stdout.write(json.dumps(response) + "\n")
+                        sys.stdout.flush()
+                    else:
+                        logger.debug("No response for notification (as per JSON-RPC 2.0 spec)")
                     
                     # Exit if requested
                     if should_exit:

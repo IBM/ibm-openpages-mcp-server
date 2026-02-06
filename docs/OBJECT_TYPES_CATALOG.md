@@ -163,7 +163,6 @@ The catalog is built by the `_build_object_types_catalog()` method in [`src/app/
 
 ## Related Resources
 
-- **Query Grammar**: `openpages://schema/query_grammar` - OpenPages query language syntax
 - **Object Schemas**: `openpages://schema/{ObjectType}` - Field definitions for specific object types
 
 ## Tool Instructions Update
@@ -194,5 +193,4 @@ To verify the catalog is working:
 **Last Updated:** 2026-01-23  
 **Related Documentation:**
 - [Query Tool Schema Enforcement](QUERY_TOOL_SCHEMA_ENFORCEMENT.md)
-- [Query Grammar Implementation](QUERY_GRAMMAR_IMPLEMENTATION.md)
 - [Resource Schema Format](RESOURCE_SCHEMA_FORMAT.md)

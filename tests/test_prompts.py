@@ -1,5 +1,5 @@
 """
-Simple test for MCP Prompts Implementation (no pytest required)
+Simple test for MCP Prompts Implementation
 
 This test verifies that the MCP prompts functionality works correctly.
 """
@@ -7,6 +7,7 @@ This test verifies that the MCP prompts functionality works correctly.
 import asyncio
 import sys
 import os
+import pytest
 
 # Add the src directory to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -46,6 +47,7 @@ def create_mock_settings():
     return settings
 
 
+@pytest.mark.asyncio
 async def test_initialize_advertises_prompts_capability():
     """Test that initialize response advertises prompts capability"""
     print("\n1. Testing initialize advertises prompts capability...")
@@ -73,6 +75,7 @@ async def test_initialize_advertises_prompts_capability():
     return True
 
 
+@pytest.mark.asyncio
 async def test_prompts_list():
     """Test prompts/list returns available prompts"""
     print("\n2. Testing prompts/list...")
@@ -111,6 +114,7 @@ async def test_prompts_list():
     return True
 
 
+@pytest.mark.asyncio
 async def test_prompts_get_without_arguments():
     """Test prompts/get returns prompt content without arguments"""
     print("\n3. Testing prompts/get without arguments...")
@@ -158,6 +162,7 @@ async def test_prompts_get_without_arguments():
     return True
 
 
+@pytest.mark.asyncio
 async def test_prompts_get_with_task_argument():
     """Test prompts/get returns prompt content with task-specific guidance"""
     print("\n4. Testing prompts/get with task argument...")
@@ -198,6 +203,7 @@ async def test_prompts_get_with_task_argument():
     return True
 
 
+@pytest.mark.asyncio
 async def test_prompts_get_includes_configured_types():
     """Test prompts/get includes configured object types"""
     print("\n5. Testing prompts/get includes configured types...")
@@ -232,6 +238,7 @@ async def test_prompts_get_includes_configured_types():
     return True
 
 
+@pytest.mark.asyncio
 async def test_prompts_get_unknown_prompt():
     """Test prompts/get with unknown prompt name returns error"""
     print("\n6. Testing prompts/get with unknown prompt...")

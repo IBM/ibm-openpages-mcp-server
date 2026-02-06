@@ -3,11 +3,13 @@ Test script to verify that labels are included in object type schemas
 """
 import asyncio
 import json
+import pytest
 from unittest.mock import AsyncMock, MagicMock
 from src.app.mcp.resource_handlers import ResourceHandlers
 from src.app.config.settings import Settings
 
 
+@pytest.mark.asyncio
 async def test_label_in_schema():
     """Test that label from type definition is included in schema"""
     
