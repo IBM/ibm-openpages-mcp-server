@@ -56,6 +56,39 @@ Execute complex queries using OpenPages query language:
 2. Construct query using schema-validated names
 3. Execute query
 
+**DATE HANDLING:**
+
+When working with DATE_TYPE fields in queries or filters:
+
+**Supported Formats:**
+- `yyyy-MM-dd` - Standard date format (e.g., '2026-02-08')
+- `yyyyMMdd'T'HHmmss'Z'` - ISO 8601 with time (e.g., '20260208T000000Z')
+
+**Query Examples:**
+```
+-- Find records with specific due date
+SELECT [ObjectType].[Resource ID], [ObjectType].[Name], [ObjectType].[Due Date Field]
+FROM [ObjectType]
+WHERE [ObjectType].[Due Date Field] = '2026-02-08'
+
+-- Find records due within a date range
+SELECT [ObjectType].[Resource ID], [ObjectType].[Name]
+FROM [ObjectType]
+WHERE [ObjectType].[Due Date Field] >= '2026-02-01'
+  AND [ObjectType].[Due Date Field] <= '2026-02-28'
+
+-- Find records with null dates
+SELECT [ObjectType].[Resource ID], [ObjectType].[Name]
+FROM [ObjectType]
+WHERE [ObjectType].[Due Date Field] IS NULL
+```
+
+**Important Notes:**
+- Always use single quotes around date values: `'2026-02-08'`
+- Date comparisons support: `=`, `<>`, `<`, `>`, `<=`, `>=`
+- Use `IS NULL` or `IS NOT NULL` to check for missing dates
+- Date field names vary by instance - always read schema first
+
 ## Schema-Driven Approach (NON-NEGOTIABLE)
 
 ### Field Filtering Rules

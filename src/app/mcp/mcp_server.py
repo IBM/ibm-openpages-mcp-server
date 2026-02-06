@@ -177,7 +177,7 @@ Data Types:
   - Strings: 'text' (single quotes)
   - Numbers: 123, 45.67
   - Booleans: TRUE, FALSE
-  - Dates: DATE('YYYY-MM-DD')
+  - Dates: 'YYYY-MM-DD' or 'YYYYMMDD'T'HHmmss'Z'' (e.g., '2026-02-08' or '20260208T000000Z')
   - NULL: NULL
 
 Field References:
@@ -313,6 +313,34 @@ Why: TypeC is a descendant (grandchild) of TypeA, not a direct child
 WRONG: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeB])
 RIGHT: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])
 The argument MUST be the FROM type, NEVER the JOIN target!
+
+DATE HANDLING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When working with DATE_TYPE fields in queries:
+
+SUPPORTED FORMATS:
+  - 'YYYY-MM-DD' - Standard date format (e.g., '2026-02-08')
+  - 'YYYYMMDD'T'HHmmss'Z'' - ISO 8601 with time (e.g., '20260208T000000Z')
+
+EXAMPLES:
+  -- Find records with specific date
+  WHERE [ObjectType].[Date Field] = '2026-02-08'
+  
+  -- Find records within date range
+  WHERE [ObjectType].[Date Field] >= '2026-02-01'
+    AND [ObjectType].[Date Field] <= '2026-02-28'
+  
+  -- Find records with null dates
+  WHERE [ObjectType].[Date Field] IS NULL
+  
+  -- Find records with non-null dates
+  WHERE [ObjectType].[Date Field] IS NOT NULL
+
+IMPORTANT:
+  ✅ Always use single quotes around date values: '2026-02-08'
+  ✅ Date comparisons support: =, <>, <, >, <=, >=
+  ✅ Use IS NULL / IS NOT NULL to check for missing dates
+  ❌ Date field names vary by instance - always read schema first
 
 RESTRICTIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
