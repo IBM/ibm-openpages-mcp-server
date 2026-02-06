@@ -224,21 +224,33 @@ class SchemaBuilder:
             elif field_type == "ENUM_TYPE":
                 json_type = "string"
                 
-            # Create property definition
+            # Create property definition using actual description from OpenPages type API
             field_description = field.get("description", "")
-            if not field_description:
-                field_description = f"Field: {field_name}"
+            label = field.get("localized_label")
+            
+            # Build description: prioritize actual description from API
+            if field_description:
+                # Use the actual description from OpenPages
+                if label and label != field_name:
+                    # Add label for clarity if it's different from field name
+                    final_description = f"{label}: {field_description}"
+                else:
+                    final_description = field_description
+            elif label:
+                # Fallback to label if no description
+                final_description = f"{label} ({field_name})"
+            else:
+                # Last resort: just the field name
+                final_description = f"Field: {field_name}"
             
             prop_def: Dict[str, Any] = {
                 "type": json_type,
-                "description": field_description
+                "description": final_description
             }
             
-            # Add label information
-            label = field.get("localized_label")
+            # Add label as separate property for reference
             if label:
                 prop_def["x-label"] = label
-                prop_def["description"] = f"{label} ({field_name}): {field_description}"
             
             # Add format if applicable
             if json_format:
@@ -511,13 +523,237 @@ class SchemaBuilder:
         logger.debug(f"Built query schema for {object_type} with {len(field_names)} available fields")
         return schema
     
-    def create_upsert_schema(self, base_schema: Dict[str, Any], object_type: str) -> Dict[str, Any]:
+    def _add_association_fields_to_schema(self, schema: Dict[str, Any], type_def: Dict[str, Any], configured_types: set) -> None:
+        """
+        Add association fields to schema based on type definition associations
+        
+        This method adds dynamic fields for managing associations (Parent, Child, Sibling, Peer, etc.)
+        based on the associations available for the object type.
+        
+        Args:
+            schema: Schema dictionary to modify
+            type_def: Type definition containing associations
+            configured_types: Set of configured type IDs to filter associations
+        """
+        associations = type_def.get("associations", [])
+        
+        # If associations is a dict, extract the array
+        if isinstance(associations, dict):
+            associations = associations.get("associations", [])
+        
+        if not associations:
+            logger.debug("No associations found in type definition")
+            return
+        
+        # Group associations by relationship type
+        association_groups = {}
+        for assoc in associations:
+            if not assoc.get("enabled", True):
+                continue
+            
+            relationship_type = assoc.get("relationship", "")
+            associated_type = assoc.get("name", "")
+            localized_label = assoc.get("localizedLabel", associated_type)
+            
+            if not associated_type or not relationship_type:
+                continue
+            
+            # Only include associations to configured types
+            if associated_type not in configured_types:
+                logger.debug(f"Skipping association to unconfigured type: {associated_type}")
+                continue
+            
+            if relationship_type not in association_groups:
+                association_groups[relationship_type] = []
+            
+            association_groups[relationship_type].append({
+                "type": associated_type,
+                "label": localized_label
+            })
+        
+        # Add association fields for each relationship type
+        for relationship_type, assocs in association_groups.items():
+            # Create field prefixes for both associate and dissociate
+            associate_prefix = f"associate{relationship_type}"
+            dissociate_prefix = f"dissociate{relationship_type}"
+            
+            # Add individual fields for each associated type
+            for assoc in assocs:
+                associated_type = assoc["type"]
+                label = assoc["label"]
+                
+                # Create field names for both associate and dissociate
+                associate_field_name = f"{associate_prefix}_{associated_type}"
+                dissociate_field_name = f"{dissociate_prefix}_{associated_type}"
+                
+                # Determine if this is a single or multiple association
+                # Parent associations are typically single, others can be multiple
+                is_multiple = relationship_type not in ["Parent"]
+                
+                # Create appropriate descriptions based on relationship type
+                if relationship_type == "Parent":
+                    associate_desc = f"ADDITIONAL/SECONDARY parent: Associate with {label} ({associated_type}). Use this for non-primary parents. For PRIMARY parent, use primaryParentId/primaryParentType/primaryParentName instead."
+                    dissociate_desc = f"Remove ADDITIONAL/SECONDARY parent: Dissociate from {label} ({associated_type}). This removes the association but does not delete the object."
+                elif relationship_type == "Child":
+                    associate_desc = f"Child association: Link child {label} ({associated_type}) objects to this object."
+                    dissociate_desc = f"Remove child association: Unlink child {label} ({associated_type}) objects from this object."
+                elif relationship_type == "Sibling":
+                    associate_desc = f"Sibling association: Link peer {label} ({associated_type}) objects at the same hierarchical level."
+                    dissociate_desc = f"Remove sibling association: Unlink peer {label} ({associated_type}) objects."
+                elif relationship_type == "Peer":
+                    associate_desc = f"Peer association: Link related {label} ({associated_type}) objects without hierarchical relationship."
+                    dissociate_desc = f"Remove peer association: Unlink related {label} ({associated_type}) objects."
+                else:
+                    associate_desc = f"{relationship_type} association to {label} ({associated_type})."
+                    dissociate_desc = f"Remove {relationship_type} association from {label} ({associated_type})."
+                
+                format_desc = f" Supports: Resource ID ('12345'), name ('{label}-001'), path ('/grc/folder/{label}'), or object with type/name/path/id."
+                
+                # Add ASSOCIATE field
+                field_name = associate_field_name
+                relationship_desc = associate_desc
+                
+                if is_multiple:
+                    schema["properties"][field_name] = {
+                        "type": "array",
+                        "items": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string"},
+                                        "name": {"type": "string"},
+                                        "path": {"type": "string"},
+                                        "id": {"type": "string"}
+                                    }
+                                }
+                            ]
+                        },
+                        "description": relationship_desc + format_desc
+                    }
+                else:
+                    schema["properties"][field_name] = {
+                        "oneOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string"},
+                                    "name": {"type": "string"},
+                                    "path": {"type": "string"},
+                                    "id": {"type": "string"}
+                                }
+                            }
+                        ],
+                        "description": relationship_desc + format_desc
+                    }
+                
+                logger.debug(f"Added association field: {field_name} ({relationship_type} -> {associated_type})")
+                
+                # Add DISSOCIATE field (same structure as associate, but for removing)
+                field_name = dissociate_field_name
+                relationship_desc = dissociate_desc
+                
+                if is_multiple:
+                    schema["properties"][field_name] = {
+                        "type": "array",
+                        "items": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string"},
+                                        "name": {"type": "string"},
+                                        "path": {"type": "string"},
+                                        "id": {"type": "string"}
+                                    }
+                                }
+                            ]
+                        },
+                        "description": relationship_desc + format_desc
+                    }
+                else:
+                    schema["properties"][field_name] = {
+                        "oneOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string"},
+                                    "name": {"type": "string"},
+                                    "path": {"type": "string"},
+                                    "id": {"type": "string"}
+                                }
+                            }
+                        ],
+                        "description": relationship_desc + format_desc
+                    }
+                
+                logger.debug(f"Added dissociation field: {field_name} ({relationship_type} -> {associated_type})")
+            
+            # Also add generic fields for the relationship type that accepts any configured type
+            if len(assocs) > 1:
+                # Generic associate field
+                generic_field_name = f"{associate_prefix}_ids"
+                type_list = ", ".join([a["type"] for a in assocs])
+                
+                schema["properties"][generic_field_name] = {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string"},
+                                    "name": {"type": "string"},
+                                    "path": {"type": "string"},
+                                    "id": {"type": "string"}
+                                }
+                            }
+                        ]
+                    },
+                    "description": f"Add/update {relationship_type.lower()} associations for any of: {type_list}. Supports: Resource ID, name, path, or object with type/name/path/id."
+                }
+                logger.debug(f"Added generic association field: {generic_field_name}")
+                
+                # Generic dissociate field
+                generic_dissociate_field_name = f"{dissociate_prefix}_ids"
+                schema["properties"][generic_dissociate_field_name] = {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string"},
+                                    "name": {"type": "string"},
+                                    "path": {"type": "string"},
+                                    "id": {"type": "string"}
+                                }
+                            }
+                        ]
+                    },
+                    "description": f"Remove {relationship_type.lower()} associations for any of: {type_list}. Supports: Resource ID, name, path, or object with type/name/path/id."
+                }
+                logger.debug(f"Added generic dissociation field: {generic_dissociate_field_name}")
+        
+        total_fields = sum(len(assocs) for assocs in association_groups.values()) * 2  # Both associate and dissociate
+        logger.info(f"Added {total_fields} association/dissociation fields to schema")
+
+    
+    def create_upsert_schema(self, base_schema: Dict[str, Any], object_type: str, available_types: Optional[List[str]] = None, type_def: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Create an upsert schema based on a base schema
         
         Args:
             base_schema: Base schema to extend
             object_type: Type of object (e.g., "issue", "control")
+            available_types: List of available object types for primaryParentType enum
+            type_def: Optional type definition containing associations
             
         Returns:
             Dict containing the upsert schema
@@ -546,6 +782,37 @@ class SchemaBuilder:
         # Copy all properties from base_schema
         for prop_name, prop_def in base_schema.get("properties", {}).items():
             upsert_schema["properties"][prop_name] = prop_def
+        
+        # Update primaryParentId description to clarify it's for PRIMARY parent only
+        if "primaryParentId" in upsert_schema["properties"]:
+            upsert_schema["properties"]["primaryParentId"]["description"] = (
+                "PRIMARY PARENT: The main hierarchical parent (typically for folder location). "
+                "Supports: Resource ID (e.g., '10101'), full path (e.g., '/_op_sox/Project/Default/Folder'), or use primaryParentType+primaryParentName. "
+                "For ADDITIONAL/SECONDARY parents, use associateParent_* fields instead."
+            )
+        
+        # Add new parent resolution fields with clarified descriptions
+        if available_types:
+            upsert_schema["properties"]["primaryParentType"] = {
+                "type": "string",
+                "enum": available_types,
+                "description": "PRIMARY PARENT: Type of the main parent object (use with primaryParentName). Alternative to primaryParentId. For additional parents, use associateParent_* fields."
+            }
+        else:
+            upsert_schema["properties"]["primaryParentType"] = {
+                "type": "string",
+                "description": "PRIMARY PARENT: Type of the main parent object (use with primaryParentName). Alternative to primaryParentId. For additional parents, use associateParent_* fields. Example: 'SOXBusEntity', 'SOXProcess'"
+            }
+        
+        upsert_schema["properties"]["primaryParentName"] = {
+            "type": "string",
+            "description": "PRIMARY PARENT: Name of the main parent object (use with primaryParentType). Alternative to primaryParentId. For additional parents, use associateParent_* fields."
+        }
+        
+        # Add association fields if type definition is provided
+        if type_def and available_types:
+            configured_types = set(available_types)
+            self._add_association_fields_to_schema(upsert_schema, type_def, configured_types)
         
         return upsert_schema
     

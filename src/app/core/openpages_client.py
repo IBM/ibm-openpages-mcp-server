@@ -774,6 +774,74 @@ class OpenPagesClient:
                 return {}
     
     @log_method_call(log_args=True, level=logging.DEBUG)
+    async def get_username_by_email(self, email: str) -> Optional[str]:
+        """
+        Get username by email using SCIM Users API
+        
+        Args:
+            email: Email address of the user
+            
+        Returns:
+            Username if found, None otherwise
+        """
+        logger.info(f"Getting username for email: {email}")
+        
+        # Ensure authentication is initialized
+        await self.initialize_auth()
+        
+        # URL encode the filter parameter
+        import urllib.parse
+        filter_param = f'emails eq "{email}"'
+        encoded_filter = urllib.parse.quote(filter_param)
+        
+        api_path = self._get_api_path(f"/api/v2/scim/Users?filter={encoded_filter}")
+        url = f"{self.base_url}{api_path}"
+        logger.debug(f"OpenPages SCIM Users API Request: {url}")
+        
+        # Use SSL verification setting from config
+        if not self.settings.SSL_VERIFY:
+            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+            
+        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
+            try:
+                response = await client.get(
+                    url,
+                    headers=self.headers,
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                response_json = response.json()
+                
+                # Log the response
+                if settings.DEBUG:
+                    logger.info(f"OpenPages SCIM Users API Response Status: {response.status_code}")
+                    response_str = str(response_json)
+                    if len(response_str) > 1000:
+                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                    else:
+                        logger.info(f"Response Body: {response_json}")
+                
+                # Extract username from response
+                resources = response_json.get('Resources', [])
+                if resources and len(resources) > 0:
+                    user = resources[0]
+                    username = user.get('userName')
+                    logger.info(f"Resolved email {email} to username: {username}")
+                    return username
+                else:
+                    logger.warning(f"No user found with email: {email}")
+                    return None
+                    
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP status error getting username by email: {e}")
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response body: {e.response.text}")
+                return None
+            except httpx.RequestError as e:
+                logger.error(f"Request error getting username by email: {e}")
+                return None
+    
+    @log_method_call(log_args=True, level=logging.DEBUG)
     async def delete_content(self, resource_id: str) -> Dict[str, Any]:
         """
         Delete content from OpenPages
@@ -835,5 +903,257 @@ class OpenPagesClient:
                 # Network-related errors
                 logger.error(f"Request error deleting content: {e}")
                 raise
+    
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def add_associations(self, resource_id: str, associations: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Add associations to an object in OpenPages using the dedicated associations API
+        
+        Uses: POST /v2/contents/{id}/associations
+        
+        Args:
+            resource_id: Resource ID of the source object
+            associations: List of association dictionaries, each containing:
+                - relationship_type: Type of relationship (e.g., "Parent", "Child", "Sibling", "Peer")
+                - target_id: Resource ID of the target object
+                
+        Returns:
+            Response data from the association operation
+        """
+        logger.info(f"Adding {len(associations)} association(s) to resource: {resource_id}")
+        
+        # Ensure authentication is initialized
+        await self.initialize_auth()
+        
+        api_path = self._get_api_path(f"/api/v2/contents/{resource_id}/associations")
+        url = f"{self.base_url}{api_path}"
+        logger.debug(f"OpenPages API Add Associations Request: {url}")
+        
+        # Validate associations
+        valid_associations = []
+        for assoc in associations:
+            relationship_type = assoc.get("relationship_type", "")
+            target_id = assoc.get("target_id", "")
+            
+            if not target_id:
+                logger.warning(f"Skipping association without target_id: {assoc}")
+                continue
+            
+            if not relationship_type:
+                logger.warning(f"Skipping association without relationship_type: {assoc}")
+                continue
+            
+            valid_associations.append({
+                "relationship_type": relationship_type,
+                "target_id": target_id
+            })
+        
+        if not valid_associations:
+            logger.warning("No valid associations to add")
+            return {"status": "no_associations", "message": "No valid associations provided"}
+        
+        logger.info(f"Adding {len(valid_associations)} association(s) to object {resource_id}")
+        
+        # Use SSL verification setting from config
+        if not self.settings.SSL_VERIFY:
+            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+        
+        # Prepare all associations in a single payload
+        # API accepts multiple associations in one request
+        associations_array = []
+        for assoc in valid_associations:
+            relationship_type = assoc["relationship_type"]
+            target_id = assoc["target_id"]
+            associations_array.append({
+                "id": target_id,
+                "type": relationship_type.lower()  # Convert to lowercase (parent, child, etc.)
+            })
+            logger.debug(f"Preparing {relationship_type} association to {target_id}")
+        
+        # Create payload with all associations
+        association_payload = {
+            "associations": associations_array
+        }
+        
+        if self.settings.DEBUG:
+            logger.debug(f"Association payload: {association_payload}")
+        
+        # Send all associations in a single API call
+        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
+            try:
+                response = await client.post(
+                    url,
+                    headers=self.headers,
+                    json=association_payload,
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                
+                # The response might be empty for successful association creation
+                if response.text:
+                    response_json = response.json()
+                else:
+                    response_json = {
+                        "status": "success",
+                        "message": f"Added {len(associations_array)} association(s)",
+                        "associations": associations_array
+                    }
+                
+                logger.info(f"Successfully added {len(associations_array)} association(s) to {resource_id}")
+                
+                return {
+                    "status": "success",
+                    "total": len(associations_array),
+                    "successful": len(associations_array),
+                    "failed": 0,
+                    "result": response_json
+                }
+                
+            except httpx.HTTPStatusError as e:
+                error_msg = f"Failed to add associations: {e.response.text}"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "total": len(associations_array),
+                    "successful": 0,
+                    "failed": len(associations_array),
+                    "error": e.response.text
+                }
+            except httpx.RequestError as e:
+                error_msg = f"Request error adding associations: {e}"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "total": len(associations_array),
+                    "successful": 0,
+                    "failed": len(associations_array),
+                    "error": str(e)
+                }
+    
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def remove_associations(self, resource_id: str, associations: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Remove associations from an object in OpenPages using the dedicated associations API
+        
+        Uses: DELETE /v2/contents/{id}/associations?parents=...&children=...
+        
+        The API uses query parameters to specify which associations to remove:
+        - parents: Comma-separated list of parent object IDs
+        - children: Comma-separated list of child object IDs
+        - siblings: Comma-separated list of sibling object IDs
+        - peers: Comma-separated list of peer object IDs
+        
+        Args:
+            resource_id: Resource ID of the source object
+            associations: List of association dictionaries, each containing:
+                - relationship_type: Type of relationship (e.g., "Parent", "Child", "Sibling", "Peer")
+                - target_id: Resource ID of the target object to remove
+                
+        Returns:
+            Response data from the association operation
+        """
+        logger.info(f"Removing {len(associations)} association(s) from resource: {resource_id}")
+        
+        # Ensure authentication is initialized
+        await self.initialize_auth()
+        
+        # Group associations by relationship type
+        grouped_associations = {}
+        for assoc in associations:
+            target_id = assoc.get("target_id", "")
+            relationship_type = assoc.get("relationship_type", "").lower()  # Convert to lowercase
+            
+            if not target_id:
+                logger.warning(f"Skipping association without target_id: {assoc}")
+                continue
+            
+            if relationship_type not in grouped_associations:
+                grouped_associations[relationship_type] = []
+            grouped_associations[relationship_type].append(target_id)
+        
+        if not grouped_associations:
+            logger.warning("No valid associations to remove")
+            return {"status": "no_associations", "message": "No valid associations provided"}
+        
+        # Build query parameters
+        # API expects: parents=id1,id2&children=id3,id4
+        query_params = {}
+        for rel_type, ids in grouped_associations.items():
+            # Convert relationship type to plural form for query param
+            # Parent -> parents, Child -> children, Sibling -> siblings, Peer -> peers
+            if rel_type == "parent":
+                param_name = "parents"
+            elif rel_type == "child":
+                param_name = "children"
+            elif rel_type == "sibling":
+                param_name = "siblings"
+            elif rel_type == "peer":
+                param_name = "peers"
+            else:
+                param_name = f"{rel_type}s"  # Generic pluralization
+            
+            query_params[param_name] = ",".join(ids)
+            logger.debug(f"Removing {len(ids)} {rel_type} association(s): {ids}")
+        
+        api_path = self._get_api_path(f"/api/v2/contents/{resource_id}/associations")
+        url = f"{self.base_url}{api_path}"
+        logger.debug(f"OpenPages API Remove Associations Request: {url}")
+        if self.settings.DEBUG:
+            logger.debug(f"Query parameters: {query_params}")
+        
+        # Use SSL verification setting from config
+        if not self.settings.SSL_VERIFY:
+            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+        
+        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
+            try:
+                response = await client.delete(
+                    url,
+                    headers=self.headers,
+                    params=query_params,
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                
+                # The response might be empty for successful removal
+                if response.text:
+                    response_json = response.json()
+                else:
+                    response_json = {
+                        "status": "success",
+                        "message": f"Removed {len(associations)} association(s)",
+                        "removed": grouped_associations
+                    }
+                
+                logger.info(f"Successfully removed {len(associations)} association(s) from {resource_id}")
+                
+                return {
+                    "status": "success",
+                    "total": len(associations),
+                    "successful": len(associations),
+                    "failed": 0,
+                    "result": response_json
+                }
+                
+            except httpx.HTTPStatusError as e:
+                error_msg = f"Failed to remove associations: {e.response.text}"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "total": len(associations),
+                    "successful": 0,
+                    "failed": len(associations),
+                    "error": e.response.text
+                }
+            except httpx.RequestError as e:
+                error_msg = f"Request error removing associations: {e}"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "total": len(associations),
+                    "successful": 0,
+                    "failed": len(associations),
+                    "error": str(e)
+                }
 
 # Made with Bob

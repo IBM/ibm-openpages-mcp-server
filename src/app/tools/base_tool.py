@@ -24,19 +24,21 @@ class BaseTool:
     including field mapping, type definition handling, and response formatting.
     """
     
-    def __init__(self, client: OpenPagesClient):
+    def __init__(self, client: OpenPagesClient, schema_builder=None):
         """
         Initialize base tool
         
         Args:
             client: OpenPages API client
+            schema_builder: Optional SchemaBuilder instance for cached type definitions
         """
         self.client = client
+        self.schema_builder = schema_builder
         self.output_format = settings.OUTPUT_FORMAT
         
     async def get_type_definition(self, object_type: str) -> Dict[str, Any]:
         """
-        Get type definition from OpenPages
+        Get type definition from OpenPages (uses cache if schema_builder is available)
         
         Args:
             object_type: Type of object (e.g., "SOXIssue", "SOXControl")
@@ -48,8 +50,13 @@ class BaseTool:
             Exception: If the type definition cannot be retrieved
         """
         try:
-            logger.info(f"Fetching type definition for: {object_type}")
-            type_info = await self.client.get_type_definition(object_type)
+            # Use schema_builder cache if available, otherwise fetch directly
+            if self.schema_builder:
+                logger.debug(f"Using schema_builder to get type definition for: {object_type}")
+                type_info = await self.schema_builder.get_type_definition(object_type)
+            else:
+                logger.info(f"Fetching type definition directly for: {object_type}")
+                type_info = await self.client.get_type_definition(object_type)
             
             if not type_info or "field_definitions" not in type_info:
                 logger.warning(f"No field definitions found for {object_type}")
@@ -81,43 +88,148 @@ class BaseTool:
                 
         return field_mapping
         
-    def format_field_value(self, field_value: Any, field_type: str = "STRING_TYPE") -> Any:
+    def is_user_field(self, field_name: str) -> bool:
         """
-        Format a field value based on its type
+        Determine if a field is a user/identity field based on naming conventions
+        
+        Args:
+            field_name: Name of the field
+            
+        Returns:
+            True if field appears to be a user field
+        """
+        if not field_name:
+            return False
+        
+        # Common patterns for user fields in OpenPages
+        user_patterns = [
+            'owner', 'user', 'assignee', 'assigned', 'creator',
+            'created by', 'modified by', 'reviewer', 'approver',
+            'responsible', 'accountable', 'contact'
+        ]
+        
+        field_name_lower = field_name.lower()
+        return any(pattern in field_name_lower for pattern in user_patterns)
+    
+    async def resolve_user_field(self, field_value: Any) -> Any:
+        """
+        Resolve user field value from email to username using SCIM API
+        
+        OpenPages content API accepts username directly. If email is provided,
+        we resolve it to username using the SCIM Users API.
+        
+        Args:
+            field_value: Email address or username
+            
+        Returns:
+            Username (resolved from email if needed), or original value if resolution fails
+        """
+        if not field_value or not isinstance(field_value, str):
+            return field_value
+        
+        try:
+            # If it's an email address, resolve to username using SCIM API
+            if "@" in field_value:
+                logger.debug(f"Resolving email to username: {field_value}")
+                username = await self.client.get_username_by_email(field_value)
+                
+                if username:
+                    logger.info(f"Resolved email {field_value} to username: {username}")
+                    return username
+                else:
+                    logger.warning(f"Could not resolve email {field_value} to username. Using as-is.")
+                    return field_value
+            else:
+                # Already a username, use as-is
+                logger.debug(f"Using username as-is: {field_value}")
+                return field_value
+            
+        except Exception as e:
+            logger.error(f"Error resolving user field: {e}. Using original value.")
+            return field_value
+    
+    async def format_field_value(self, field_value: Any, field_type: str = "STRING_TYPE", field_name: str = "") -> Any:
+        """
+        Format a field value based on its type with enhanced datatype support
         
         Args:
             field_value: Value to format
-            field_type: OpenPages field type
+            field_type: OpenPages field type (from field_definitions.data_type)
+            field_name: Field name (used to detect user fields)
             
         Returns:
-            Formatted value
+            Formatted value appropriate for the field type
         """
         # Handle null values
         if field_value is None or field_value == "":
             return None
+        
+        # Handle user/identity fields - resolve email/username to user ID
+        # User fields are STRING_TYPE but contain user references
+        # Detect by field name patterns (Owner, User, Assignee, etc.)
+        if field_type == "STRING_TYPE" and self.is_user_field(field_name):
+            logger.debug(f"Detected user field: {field_name}")
+            return await self.resolve_user_field(field_value)
             
         # Handle enum types (need to be objects with name property)
         if field_type == "ENUM_TYPE":
-            return {"name": field_value}
+            # If already an object with name, return as-is
+            if isinstance(field_value, dict) and "name" in field_value:
+                return field_value
+            return {"name": str(field_value)}
+        
+        # Handle date/time types
+        if field_type in ("DATE_TYPE", "DATETIME_TYPE", "TIMESTAMP_TYPE"):
+            # OpenPages typically expects ISO 8601 format or epoch milliseconds
+            # Return as-is if it's already a string (assume correct format)
+            return str(field_value)
             
-        # Handle other types
+        # Handle numeric types
         if field_type == "INTEGER_TYPE":
             try:
                 return int(field_value)
             except (ValueError, TypeError):
+                logger.warning(f"Could not convert {field_value} to integer, using as-is")
                 return field_value
-        elif field_type == "DECIMAL_TYPE":
+        elif field_type in ("DECIMAL_TYPE", "FLOAT_TYPE", "DOUBLE_TYPE", "CURRENCY_TYPE"):
             try:
                 return float(field_value)
             except (ValueError, TypeError):
+                logger.warning(f"Could not convert {field_value} to float, using as-is")
                 return field_value
+        
+        # Handle boolean types
         elif field_type == "BOOLEAN_TYPE":
+            if isinstance(field_value, bool):
+                return field_value
             if isinstance(field_value, str):
-                return field_value.lower() in ("true", "yes", "1")
+                return field_value.lower() in ("true", "yes", "1", "y")
             return bool(field_value)
+        
+        # Handle multi-value enum fields (arrays of enum objects)
+        elif field_type == "MULTI_VALUE_ENUM":
+            # Ensure we have a list
+            values = field_value if isinstance(field_value, list) else [field_value]
+            # Convert each value to enum object format
+            result = []
+            for val in values:
+                if isinstance(val, dict) and "name" in val:
+                    # Already in correct format
+                    result.append(val)
+                else:
+                    # Convert string to enum object
+                    result.append({"name": str(val)})
+            return result
+        
+        # Handle multi-value string fields (arrays of strings)
+        elif field_type == "MULTI_VALUE_STRING":
+            if isinstance(field_value, list):
+                return field_value
+            # If single value, convert to list
+            return [field_value]
             
-        # Default: return as is
-        return field_value
+        # Default: return as string for STRING_TYPE and unknown types
+        return str(field_value)
         
     def extract_display_value(self, field_value: Any) -> str:
         """
