@@ -285,19 +285,27 @@ Use ANCESTOR/DESCENDANT when you need to traverse multiple hierarchy levels:
 
 EXAMPLES:
 
-Example 1 - Relationship in FROM type (TypeA can be child of TypeB):
-Schema for [TypeA]: {{"hierarchical_relationships": [{{"direction": "parent", "type": "TypeB"}}]}}
-Query (INNER): FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])
-Query (OUTER): FROM [TypeA] LEFT OUTER JOIN [TypeB] ON CHILD([TypeA])
-Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([TypeA])
+Example 1 - Relationship in FROM type (Risk has child Control):
+Schema for [SOXRisk]: {{"hierarchical_relationships": [{{"direction": "child", "type": "SOXControl"}}]}}
+Query (INNER): FROM [SOXRisk] JOIN [SOXControl] ON PARENT([SOXRisk])
+Query (OUTER): FROM [SOXRisk] LEFT OUTER JOIN [SOXControl] ON PARENT([SOXRisk])
+Why: Relationship in FROM type → Use OPPOSITE direction → PARENT([SOXRisk])
+(Schema says "child" meaning SOXControl is child, so use PARENT to navigate down)
 
-Example 2 - Relationship in JOIN type (TypeB has child TypeA):
+Example 2 - Relationship in FROM type (Control is child of Risk):
+Schema for [SOXControl]: {{"hierarchical_relationships": [{{"direction": "parent", "type": "SOXRisk"}}]}}
+Query (INNER): FROM [SOXControl] JOIN [SOXRisk] ON CHILD([SOXControl])
+Query (OUTER): FROM [SOXControl] LEFT OUTER JOIN [SOXRisk] ON CHILD([SOXControl])
+Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([SOXControl])
+(Schema says "parent" meaning SOXRisk is parent, so use CHILD to navigate up)
+
+Example 3 - Relationship in JOIN type (TypeB has child TypeA):
 Schema for [TypeB]: {{"hierarchical_relationships": [{{"direction": "child", "type": "TypeA"}}]}}
 Query (INNER): FROM [TypeB] JOIN [TypeA] ON CHILD([TypeB])
 Query (OUTER): FROM [TypeB] LEFT OUTER JOIN [TypeA] ON CHILD([TypeB])
 Why: Relationship in JOIN type → Use direction as-is → CHILD([TypeB])
 
-Example 3 - Multi-Level (TypeA → TypeB → TypeC):
+Example 4 - Multi-Level (TypeA → TypeB → TypeC):
 Query: FROM [TypeA] JOIN [TypeC] ON DESCENDANT([TypeA])
 Why: TypeC is a descendant (grandchild) of TypeA, not a direct child
 

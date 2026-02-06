@@ -229,24 +229,41 @@ Use ANCESTOR/DESCENDANT for multi-level traversal:
 **Examples:**
 
 ```
-Example 1: Relationship in FROM type's schema (TypeA can be child of TypeB)
+Example 1: Relationship in FROM type's schema (SOXRisk has child SOXControl)
 
-1. Read openpages://schema/TypeA
-   → Find TypeB in hierarchical_relationships
-   → See "direction": "parent" (meaning TypeB is the parent type)
+1. Read openpages://schema/SOXRisk
+   → Find SOXControl in hierarchical_relationships
+   → See "direction": "child" (meaning SOXControl is the child type)
 
 2. Construct query (INNER JOIN):
-   FROM [TypeA]
-   JOIN [TypeB] ON CHILD([TypeA])
+   FROM [SOXRisk]
+   JOIN [SOXControl] ON PARENT([SOXRisk])
    
-   Or with LEFT OUTER JOIN (to include TypeA records without parents):
-   FROM [TypeA]
-   LEFT OUTER JOIN [TypeB] ON CHILD([TypeA])
+   Or with LEFT OUTER JOIN (to include SOXRisk records without controls):
+   FROM [SOXRisk]
+   LEFT OUTER JOIN [SOXControl] ON PARENT([SOXRisk])
    
-   Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([TypeA])
-   (Schema says "parent" but we use CHILD to navigate up to the parent)
+   Why: Relationship in FROM type → Use OPPOSITE direction → PARENT([SOXRisk])
+   (Schema says "child" meaning SOXControl is child, so use PARENT to navigate down)
 
-Example 2: Relationship in JOIN type's schema (TypeB has child TypeA)
+Example 2: Relationship in FROM type's schema (SOXControl is child of SOXRisk)
+
+1. Read openpages://schema/SOXControl
+   → Find SOXRisk in hierarchical_relationships
+   → See "direction": "parent" (meaning SOXRisk is the parent type)
+
+2. Construct query (INNER JOIN):
+   FROM [SOXControl]
+   JOIN [SOXRisk] ON CHILD([SOXControl])
+   
+   Or with LEFT OUTER JOIN (to include SOXControl records without parent risks):
+   FROM [SOXControl]
+   LEFT OUTER JOIN [SOXRisk] ON CHILD([SOXControl])
+   
+   Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([SOXControl])
+   (Schema says "parent" meaning SOXRisk is parent, so use CHILD to navigate up)
+
+Example 3: Relationship in JOIN type's schema (TypeB has child TypeA)
 
 1. Read openpages://schema/TypeB
    → Find TypeA in hierarchical_relationships
@@ -261,23 +278,6 @@ Example 2: Relationship in JOIN type's schema (TypeB has child TypeA)
    LEFT OUTER JOIN [TypeA] ON CHILD([TypeB])
    
    Why: Relationship in JOIN type → Use direction as-is → CHILD([TypeB])
-
-Example 3: Relationship in FROM type's schema (TypeC has child TypeD)
-
-1. Read openpages://schema/TypeC
-   → Find TypeD in hierarchical_relationships
-   → See "direction": "child" (meaning TypeD is the child type)
-
-2. Construct query (INNER JOIN):
-   FROM [TypeC]
-   JOIN [TypeD] ON PARENT([TypeC])
-   
-   Or with LEFT OUTER JOIN (to include TypeC records without children):
-   FROM [TypeC]
-   LEFT OUTER JOIN [TypeD] ON PARENT([TypeC])
-   
-   Why: Relationship in FROM type → Use OPPOSITE direction → PARENT([TypeC])
-   (Schema says "child" but we use PARENT to navigate down to the child)
 
 Example 4: Multi-Level Relationship (FROM TypeA to grandchild TypeC)
 
