@@ -81,6 +81,9 @@ class MCPServer:
             logger.error(f"Failed to initialize OpenPages client: {e}")
             raise RuntimeError(f"Failed to initialize OpenPages client: {e}")
         
+        # Initialize modular components first (schema_builder needed by tools)
+        self.schema_builder = SchemaBuilder(self.client)
+        
         # Initialize tool modules
         try:
             self.object_tools = {}
@@ -88,7 +91,8 @@ class MCPServer:
                 obj_type = obj_config.get("type_id")
                 tool_prefix = obj_config.get("tool_prefix")
                 if obj_type and tool_prefix:
-                    self.object_tools[tool_prefix] = GenericObjectTools(self.client, obj_config)
+                    # Pass schema_builder to enable caching
+                    self.object_tools[tool_prefix] = GenericObjectTools(self.client, obj_config, self.schema_builder)
                     logger.debug(f"Initialized dynamic tool for {obj_type} with prefix {tool_prefix}")
             
             # Initialize OpenPages query tool
@@ -100,8 +104,7 @@ class MCPServer:
             logger.error(f"Failed to initialize tool modules: {e}")
             raise RuntimeError(f"Failed to initialize tool modules: {e}")
         
-        # Initialize modular components
-        self.schema_builder = SchemaBuilder(self.client)
+        # Initialize remaining modular components
         # Pass self reference to ToolHandlers for schema loading capability
         self.resource_handlers = ResourceHandlers(self.schema_builder, self.settings)
         self.prompt_handlers = PromptHandlers(self.settings)
@@ -674,7 +677,14 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                     # These methods will raise RuntimeError if they fail to get type definitions
                     logger.debug(f"Building dynamic schema for {obj_type}")
                     obj_schema = await self.schema_builder.build_dynamic_schema_for_object(obj_type, tool_prefix, obj_config)
-                    upsert_obj_schema = self.schema_builder.create_upsert_schema(obj_schema, tool_prefix)
+                    
+                    # Get list of available object types for primaryParentType enum
+                    available_types = [str(cfg.get("type_id")) for cfg in self.settings.OPENPAGES_OBJECT_TYPES if cfg.get("type_id")]
+                    
+                    # Get type definition for association fields (should be cached from obj_schema build)
+                    type_def = await self.schema_builder.get_type_definition(obj_type)
+                    
+                    upsert_obj_schema = self.schema_builder.create_upsert_schema(obj_schema, tool_prefix, available_types, type_def)
                     self._update_tool_schema(build_tool_name("upsert"), upsert_obj_schema)
                     
                     # Query schema

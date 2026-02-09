@@ -25,15 +25,16 @@ class GenericObjectTools(BaseTool):
     including finding, creating, updating, and deleting objects.
     """
     
-    def __init__(self, client: OpenPagesClient, object_config: Dict[str, Any]):
+    def __init__(self, client: OpenPagesClient, object_config: Dict[str, Any], schema_builder=None):
         """
         Initialize generic object tools
         
         Args:
             client: OpenPages API client
             object_config: Configuration for the object type
+            schema_builder: Optional SchemaBuilder instance for cached type definitions
         """
-        super().__init__(client)
+        super().__init__(client, schema_builder)
         self.object_config = object_config
         self.type_id = object_config.get("type_id", "")
         self.display_name = object_config.get("display_name", "Object")
@@ -106,6 +107,8 @@ class GenericObjectTools(BaseTool):
                 - title: Object title (optional)
                 - description: Description of the object (optional)
                 - primaryParentId: Parent object ID (optional, for insert)
+                - primaryParentType: Parent object type (optional, used with primaryParentName)
+                - primaryParentName: Parent object name (optional, used with primaryParentType)
                 - Any other field defined in the schema (optional)
                 
         Returns:
@@ -119,7 +122,8 @@ class GenericObjectTools(BaseTool):
             return [TextContent(type="text", text=f"Error: {self.display_name} name is required")]
         
         # Extract operation mode
-        operation = arguments.get('operation', 'auto').lower()
+        operation = arguments.get('operation') or 'auto'
+        operation = operation.lower()
         if operation not in ['insert', 'update', 'auto']:
             return [TextContent(type="text", text=f"Error: Invalid operation '{operation}'. Must be 'insert', 'update', or 'auto'")]
         
@@ -213,6 +217,222 @@ class GenericObjectTools(BaseTool):
         else:
             return await self._perform_insert(name, arguments)
     
+    async def _process_association_fields(self, arguments: Dict[str, Any]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Process association fields from arguments and return lists of associations to add and remove
+        
+        Association fields follow the pattern:
+        - associate{RelationshipType}_{ObjectType} - to add associations
+        - dissociate{RelationshipType}_{ObjectType} - to remove associations
+        
+        Examples: associateParent_SOXBusEntity, dissociateChild_SOXControl
+        
+        Supports multiple input formats:
+        - Resource ID (numeric): "12345"
+        - Full path: "/grc/folder/ObjectName"
+        - Name with type: {"type": "SOXControl", "name": "Control-001"}
+        
+        Args:
+            arguments: Tool arguments containing association fields (both associate* and dissociate*)
+            
+        Returns:
+            Tuple of (associations_to_add, associations_to_remove)
+            Each is a list of dictionaries with relationship_type and target_id
+        """
+        associations_to_add = []
+        associations_to_remove = []
+        # Get type definition to understand available associations
+        try:
+            type_info = await self.get_type_definition(self.type_id)
+            associations = type_info.get('associations', [])
+            
+            # If associations is a dict, extract the array
+            if isinstance(associations, dict):
+                associations = associations.get('associations', [])
+            
+            # Build a map of relationship types to field names
+            # This helps us identify which fields in the type definition correspond to associations
+            association_field_map = {}
+            for assoc in associations:
+                if not assoc.get("enabled", True):
+                    continue
+                
+                relationship_type = assoc.get("relationship", "")
+                associated_type = assoc.get("name", "")
+                
+                if relationship_type and associated_type:
+                    # Create the expected field name pattern
+                    field_pattern = f"associate{relationship_type}_{associated_type}".lower()
+                    association_field_map[field_pattern] = {
+                        "relationship_type": relationship_type,
+                        "associated_type": associated_type
+                    }
+            
+            # Process arguments looking for association and dissociation fields
+            for arg_name, arg_value in arguments.items():
+                # Skip if not an association/dissociation field or if value is empty
+                if not (arg_name.startswith('associate') or arg_name.startswith('dissociate')) or not arg_value:
+                    continue
+                
+                # Determine if this is an add or remove operation
+                is_dissociate = arg_name.startswith('dissociate')
+                target_list = associations_to_remove if is_dissociate else associations_to_add
+                action = "Removing" if is_dissociate else "Preparing"
+                
+                arg_name_lower = arg_name.lower()
+                
+                # Check if this matches a known association pattern
+                matched_assoc = None
+                for pattern, assoc_info in association_field_map.items():
+                    # For dissociate, replace 'associate' with 'dissociate' in pattern
+                    if is_dissociate:
+                        dissociate_pattern = pattern.replace('associate', 'dissociate')
+                        if arg_name_lower == dissociate_pattern or arg_name_lower.startswith(dissociate_pattern):
+                            matched_assoc = assoc_info
+                            break
+                    else:
+                        if arg_name_lower == pattern or arg_name_lower.startswith(pattern):
+                            matched_assoc = assoc_info
+                            break
+                
+                if matched_assoc:
+                    relationship_type = matched_assoc["relationship_type"]
+                    associated_type = matched_assoc["associated_type"]
+                    
+                    # Handle both single values and arrays
+                    values_to_process = arg_value if isinstance(arg_value, list) else [arg_value]
+                    
+                    for value in values_to_process:
+                        if not value:
+                            continue
+                        
+                        # Resolve the value to a Resource ID
+                        resolved_id = await self._resolve_association_value(value, associated_type)
+                        
+                        if resolved_id:
+                            logger.info(f"{action} {relationship_type} association to {associated_type}: {resolved_id}")
+                            target_list.append({
+                                "relationship_type": relationship_type,
+                                "target_id": resolved_id
+                            })
+                        else:
+                            logger.warning(f"Could not resolve association value: {value} for type {associated_type}")
+                else:
+                    # Generic association field (e.g., associateParent_ids or dissociateParent_ids)
+                    logger.debug(f"Processing generic {'dissociation' if is_dissociate else 'association'} field: {arg_name}")
+                    values_to_process = arg_value if isinstance(arg_value, list) else [arg_value]
+                    
+                    for value in values_to_process:
+                        if not value:
+                            continue
+                        
+                        # Try to resolve as Resource ID or path
+                        resolved_id = await self._resolve_association_value(value, None)
+                        
+                        if resolved_id:
+                            # For generic fields, we don't know the relationship type
+                            # Log a warning and skip
+                            logger.warning(f"Generic {'dissociation' if is_dissociate else 'association'} field '{arg_name}' cannot determine relationship type. Use specific fields like {'dissociate' if is_dissociate else 'associate'}Parent_TypeName instead.")
+        
+        except Exception as e:
+            logger.warning(f"Error processing association fields: {e}. Associations may not be set correctly.")
+        
+        return (associations_to_add, associations_to_remove)
+    
+    async def _resolve_association_value(self, value: Any, target_type: Optional[str] = None) -> Optional[str]:
+        """
+        Resolve an association value to a Resource ID
+        
+        Supports multiple input formats:
+        - Resource ID (numeric string): "12345" -> "12345"
+        - Full path (string): "/grc/folder/ObjectName" -> resolved ID
+        - Dict with type and name: {"type": "SOXControl", "name": "Control-001"} -> resolved ID
+        - Dict with path: {"path": "/grc/folder/ObjectName"} -> resolved ID
+        
+        Args:
+            value: The value to resolve (string or dict)
+            target_type: Optional target object type for name-based lookup
+            
+        Returns:
+            Resource ID as string, or None if resolution fails
+        """
+        try:
+            # Case 1: Already a numeric Resource ID
+            if isinstance(value, str):
+                if value.isdigit():
+                    return value
+                
+                # Case 2: Full path - resolve using utility function
+                if '/' in value:
+                    logger.debug(f"Resolving path to Resource ID: {value}")
+                    resolved_id = await self.resolve_path_to_id(value)
+                    return resolved_id
+                
+                # Case 3: Name only - need target_type to resolve
+                if target_type:
+                    logger.debug(f"Resolving name '{value}' for type {target_type}")
+                    try:
+                        query = f"SELECT [Resource ID] FROM [{target_type}] WHERE [Name] = '{value}' LIMIT 2"
+                        result = await self.client.query(query)
+                        rows = result.get('rows', [])
+                        
+                        if len(rows) == 0:
+                            logger.warning(f"No {target_type} found with name '{value}'")
+                            return None
+                        elif len(rows) > 1:
+                            logger.warning(f"Multiple {target_type} objects found with name '{value}'. Using first match.")
+                        
+                        return rows[0]['fields'][0]['value']
+                    except Exception as e:
+                        logger.error(f"Error querying for {target_type} by name '{value}': {e}")
+                        return None
+                else:
+                    # Name without type - can't resolve
+                    logger.warning(f"Cannot resolve name '{value}' without target type")
+                    return value  # Return as-is, let OpenPages handle it
+            
+            # Case 4: Dict with type and name
+            elif isinstance(value, dict):
+                if 'type' in value and 'name' in value:
+                    obj_type = value['type']
+                    obj_name = value['name']
+                    logger.debug(f"Resolving by type '{obj_type}' and name '{obj_name}'")
+                    
+                    try:
+                        query = f"SELECT [Resource ID] FROM [{obj_type}] WHERE [Name] = '{obj_name}' LIMIT 2"
+                        result = await self.client.query(query)
+                        rows = result.get('rows', [])
+                        
+                        if len(rows) == 0:
+                            logger.warning(f"No {obj_type} found with name '{obj_name}'")
+                            return None
+                        elif len(rows) > 1:
+                            logger.warning(f"Multiple {obj_type} objects found with name '{obj_name}'. Using first match.")
+                        
+                        return rows[0]['fields'][0]['value']
+                    except Exception as e:
+                        logger.error(f"Error querying for {obj_type} by name '{obj_name}': {e}")
+                        return None
+                
+                # Case 5: Dict with path
+                elif 'path' in value:
+                    path = value['path']
+                    logger.debug(f"Resolving path from dict: {path}")
+                    resolved_id = await self.resolve_path_to_id(path)
+                    return resolved_id
+                
+                # Case 6: Dict with id
+                elif 'id' in value:
+                    return str(value['id'])
+            
+            # Unknown format
+            logger.warning(f"Unknown association value format: {value}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error resolving association value '{value}': {e}")
+            return None
+    
     async def _perform_insert(self, name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         """
         Perform insert operation
@@ -226,11 +446,28 @@ class GenericObjectTools(BaseTool):
         """
         # Extract common fields
         primaryParentId = arguments.get('primaryParentId', '')
+        primaryParentType = arguments.get('primaryParentType', '')
+        primaryParentName = arguments.get('primaryParentName', '')
         title = arguments.get('title', '')
         description = arguments.get('description', '')
         
+        # Resolve parent ID from type and name if provided
+        if primaryParentType and primaryParentName:
+            logger.info(f"Resolving parent by type '{primaryParentType}' and name '{primaryParentName}'")
+            try:
+                query = f"SELECT [Resource ID] FROM [{primaryParentType}] WHERE [Name] = '{primaryParentName}' LIMIT 1"
+                result = await self.client.query(query)
+                
+                if result.get('rows') and len(result['rows']) > 0:
+                    primaryParentId = result['rows'][0]['fields'][0]['value']
+                    logger.info(f"Resolved parent to ID: {primaryParentId}")
+                else:
+                    return [TextContent(type="text", text=f"Error: Parent {primaryParentType} with name '{primaryParentName}' not found")]
+            except Exception as e:
+                logger.error(f"Error resolving parent by type and name: {e}")
+                return [TextContent(type="text", text=f"Error resolving parent: {str(e)}")]
         # If primaryParentId is provided and not a number, resolve it using the utility function
-        if primaryParentId and not primaryParentId.isdigit():
+        elif primaryParentId and not primaryParentId.isdigit():
             logger.info(f"primaryParentId appears to be a path: {primaryParentId}")
             primaryParentId = await self.resolve_path_to_id(primaryParentId)
         
@@ -292,7 +529,11 @@ class GenericObjectTools(BaseTool):
             # Process all arguments and map them to OpenPages fields
             for arg_name, arg_value in arguments.items():
                 # Skip special fields that are handled separately
-                if arg_name in ['name', 'primaryParentId', 'title', 'description', 'id', 'path', 'operation']:
+                if arg_name in ['name', 'primaryParentId', 'primaryParentType', 'primaryParentName', 'title', 'description', 'id', 'path', 'operation']:
+                    continue
+                
+                # Skip association fields (they're handled separately via associations API)
+                if arg_name.startswith('associate') or arg_name.startswith('dissociate'):
                     continue
                     
                 # Skip empty values
@@ -353,13 +594,21 @@ class GenericObjectTools(BaseTool):
                     field_type = field_def.get('data_type', 'STRING_TYPE')
                     
                     # Format the value based on field type using base class method
-                    formatted_value = self.format_field_value(arg_value, field_type)
+                    # Pass field_name to enable user field detection
+                    formatted_value = await self.format_field_value(arg_value, field_type, field_name)
                     
                     # Add the field to the content data
-                    content_data["fields"].append({
-                        "name": field_name,
-                        "value": formatted_value
-                    })
+                    # Multi-value enum fields use "values" (plural), others use "value" (singular)
+                    if field_type == "MULTI_VALUE_ENUM":
+                        content_data["fields"].append({
+                            "name": field_name,
+                            "values": formatted_value if isinstance(formatted_value, list) else [formatted_value]
+                        })
+                    else:
+                        content_data["fields"].append({
+                            "name": field_name,
+                            "value": formatted_value
+                        })
                     logger.info(f"Added field {field_name} with value {formatted_value}")
                 else:
                     # If no matching field definition found, add it as is
@@ -384,6 +633,29 @@ class GenericObjectTools(BaseTool):
             if not resource_id:
                 return [TextContent(type="text", text=f"Error: Failed to create {self.display_name.lower()} (no resource ID returned)")]
             
+            # Process associations AFTER object is created
+            associations_to_add, associations_to_remove = await self._process_association_fields(arguments)
+            
+            # Add associations
+            if associations_to_add:
+                logger.info(f"Adding {len(associations_to_add)} association(s) to newly created object {resource_id}")
+                try:
+                    await self.client.add_associations(resource_id, associations_to_add)
+                    logger.info(f"Successfully added associations to {resource_id}")
+                except Exception as assoc_error:
+                    logger.error(f"Error adding associations to {resource_id}: {assoc_error}")
+                    # Don't fail the whole operation, just log the error
+            
+            # Remove associations (less common for new objects, but supported)
+            if associations_to_remove:
+                logger.info(f"Removing {len(associations_to_remove)} association(s) from newly created object {resource_id}")
+                try:
+                    await self.client.remove_associations(resource_id, associations_to_remove)
+                    logger.info(f"Successfully removed associations from {resource_id}")
+                except Exception as assoc_error:
+                    logger.error(f"Error removing associations from {resource_id}: {assoc_error}")
+                    # Don't fail the whole operation, just log the error
+            
             # Prepare response data
             response_data = {
                 "message": f"Successfully created {self.display_name.lower()}",
@@ -397,6 +669,12 @@ class GenericObjectTools(BaseTool):
             
             if description:
                 response_data["description"] = description
+            
+            if associations_to_add:
+                response_data["associations_added"] = len(associations_to_add)
+            
+            if associations_to_remove:
+                response_data["associations_removed"] = len(associations_to_remove)
             
             # Use base class method to format response based on output format
             logger.debug(f"upsert_object() completed successfully: INSERT operation for {self.display_name} '{name}' (ID: {resource_id})")
@@ -487,7 +765,11 @@ class GenericObjectTools(BaseTool):
             # Process all arguments and map them to OpenPages fields
             for arg_name, arg_value in arguments.items():
                 # Skip special fields that are handled separately
-                if arg_name in ['name', 'title', 'description', 'id', 'path', 'operation', 'primaryParentId']:
+                if arg_name in ['name', 'title', 'description', 'id', 'path', 'operation', 'primaryParentId', 'primaryParentType', 'primaryParentName']:
+                    continue
+                
+                # Skip association fields (they're handled separately via associations API)
+                if arg_name.startswith('associate') or arg_name.startswith('dissociate'):
                     continue
                     
                 # Skip empty values
@@ -548,13 +830,21 @@ class GenericObjectTools(BaseTool):
                     field_type = field_def.get('data_type', 'STRING_TYPE')
                     
                     # Format the value based on field type using base class method
-                    formatted_value = self.format_field_value(arg_value, field_type)
+                    # Pass field_name to enable user field detection
+                    formatted_value = await self.format_field_value(arg_value, field_type, field_name)
                     
                     # Add the field to the content data
-                    content_data["fields"].append({
-                        "name": field_name,
-                        "value": formatted_value
-                    })
+                    # Multi-value enum fields use "values" (plural), others use "value" (singular)
+                    if field_type == "MULTI_VALUE_ENUM":
+                        content_data["fields"].append({
+                            "name": field_name,
+                            "values": formatted_value if isinstance(formatted_value, list) else [formatted_value]
+                        })
+                    else:
+                        content_data["fields"].append({
+                            "name": field_name,
+                            "value": formatted_value
+                        })
                     logger.info(f"Added field {field_name} with value {formatted_value}")
                 else:
                     # If no matching field definition found, add it as is
@@ -579,6 +869,29 @@ class GenericObjectTools(BaseTool):
             if not updated_resource_id:
                 return [TextContent(type="text", text=f"Error: Failed to update {self.display_name.lower()} (no resource ID returned)")]
             
+            # Process associations AFTER object is updated
+            associations_to_add, associations_to_remove = await self._process_association_fields(arguments)
+            
+            # Add associations
+            if associations_to_add:
+                logger.info(f"Adding {len(associations_to_add)} association(s) to updated object {updated_resource_id}")
+                try:
+                    await self.client.add_associations(updated_resource_id, associations_to_add)
+                    logger.info(f"Successfully added associations to {updated_resource_id}")
+                except Exception as assoc_error:
+                    logger.error(f"Error adding associations to {updated_resource_id}: {assoc_error}")
+                    # Don't fail the whole operation, just log the error
+            
+            # Remove associations
+            if associations_to_remove:
+                logger.info(f"Removing {len(associations_to_remove)} association(s) from updated object {updated_resource_id}")
+                try:
+                    await self.client.remove_associations(updated_resource_id, associations_to_remove)
+                    logger.info(f"Successfully removed associations from {updated_resource_id}")
+                except Exception as assoc_error:
+                    logger.error(f"Error removing associations from {updated_resource_id}: {assoc_error}")
+                    # Don't fail the whole operation, just log the error
+            
             # Prepare response data
             response_data = {
                 "message": f"Successfully updated {self.display_name.lower()}",
@@ -589,6 +902,12 @@ class GenericObjectTools(BaseTool):
             
             if name:
                 response_data["name"] = name
+            
+            if associations_to_add:
+                response_data["associations_added"] = len(associations_to_add)
+            
+            if associations_to_remove:
+                response_data["associations_removed"] = len(associations_to_remove)
                 
             if description:
                 response_data["description"] = description

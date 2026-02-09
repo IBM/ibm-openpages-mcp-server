@@ -255,6 +255,14 @@ def setup_logging(
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
     
+    # Suppress verbose httpcore and httpx logs at DEBUG level
+    # These logs show TCP connection details, TLS handshakes, and HTTP headers
+    # which are too verbose for normal debugging
+    logging.getLogger("httpcore").setLevel(logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.INFO)
+    logging.getLogger("httpcore.connection").setLevel(logging.INFO)
+    logging.getLogger("httpcore.http11").setLevel(logging.INFO)
+    
     # Add file handler if specified
     if log_file:
         try:
