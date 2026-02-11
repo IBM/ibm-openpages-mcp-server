@@ -245,7 +245,7 @@ def build_context_schema() -> Dict[str, Any]:
         },
         "op_object_type_name": {
             "type": "string",
-            "description": "Current object type name (e.g., 'SOXIssue', 'SOXControl')"
+            "description": "Current object type name (e.g., 'ObjectTypeA', 'ObjectTypeB')"
         },
         "op_object_id": {
             "type": "string",

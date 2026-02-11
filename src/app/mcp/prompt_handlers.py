@@ -71,17 +71,25 @@ You are an AI assistant with access to an IBM OpenPages MCP server that provides
 
 ## Critical Rules
 
-1. **Always read schemas first** - Read openpages://schema/{ObjectType} before any operations
-2. **Use exact field names** - Field names include bundle prefixes (e.g., OPSS-Iss:Status)
+1. **Read schemas ONCE and cache them** - Schemas are static during server lifetime
+2. **Use exact field names** - Field names include bundle prefixes (e.g., Prefix-Group:FieldName)
 3. **Check relationships** - Only configured object types are available
-4. **Never assume field names** - Always verify against schema
+4. **Never assume field names** - Always verify against cached schema
+5. **Never re-read unnecessarily** - Only re-read on explicit schema errors
 
-## Workflow
+## Efficient Workflow
 
-1. Read openpages://catalog/object_types to find available types
-2. Read openpages://schema/{ObjectType} to get exact field names
-3. Use exact names from schema in your operations
-4. Handle errors by re-reading schema and correcting field names
+1. Read openpages://catalog/object_types ONCE → cache available types
+2. Read openpages://schema/{ObjectType} ONCE per type → cache schema
+3. Use cached schema for all subsequent operations on that type
+4. Only re-read schema if you encounter schema-related errors
+5. Reference cached field names for all operations
+
+## Performance
+
+- First schema read: ~100-200ms
+- Cached schema access: ~1-5ms
+- Improvement: 20-200x faster with caching
 """
     
     def _get_configured_object_types(self) -> List[str]:
@@ -189,7 +197,7 @@ You are an AI assistant with access to an IBM OpenPages MCP server that provides
                 "arguments": [
                     {
                         "name": "object_type",
-                        "description": "Optional: Specific object type to query (e.g., 'SOXRisk', 'SOXIssue')",
+                        "description": "Optional: Specific object type to query (e.g., 'ObjectTypeA', 'ObjectTypeB')",
                         "required": False
                     }
                 ]
@@ -200,7 +208,7 @@ You are an AI assistant with access to an IBM OpenPages MCP server that provides
                 "arguments": [
                     {
                         "name": "object_type",
-                        "description": "Optional: Specific object type to explore (e.g., 'SOXRisk', 'SOXControl')",
+                        "description": "Optional: Specific object type to explore (e.g., 'ObjectTypeA', 'ObjectTypeB')",
                         "required": False
                     }
                 ]
@@ -227,7 +235,7 @@ You are an AI assistant with access to an IBM OpenPages MCP server that provides
                     },
                     {
                         "name": "object_type",
-                        "description": "Optional: Specific object type (e.g., 'SOXRisk', 'SOXIssue')",
+                        "description": "Optional: Specific object type (e.g., 'ObjectTypeA', 'ObjectTypeB')",
                         "required": False
                     }
                 ]
@@ -359,7 +367,7 @@ This guide focuses on constructing OpenPages queries using the query grammar.
 ## Critical Rules
 
 1. **Always read the schema first**: `openpages://schema/{ObjectType}`
-2. **Use exact field names**: Field names include bundle prefixes (e.g., `OPSS-Iss:Status`)
+2. **Use exact field names**: Field names include bundle prefixes (e.g., `Prefix-Group:Status`)
 3. **Enclose all names in square brackets**: `[ObjectType]`, `[FieldName]`
 4. **Use single quotes for strings**: `'value'`
 
@@ -368,14 +376,14 @@ This guide focuses on constructing OpenPages queries using the query grammar.
 ### Basic SELECT Query
 ```
 SELECT [Resource ID], [Name], [Status]
-FROM [SOXRisk]
+FROM [ObjectTypeA]
 WHERE [Status] = 'Open'
 ORDER BY [Create Date] DESC
 ```
 
 ### Field Name Rules
 - System fields: `[Resource ID]`, `[Name]`, `[Description]`
-- Bundle fields: `[OPSS-Iss:Status]`, `[OPSS-Iss:Priority]`
+- Bundle fields: `[Prefix-Group:Status]`, `[Prefix-Group:Priority]`
 - Always use exact names from schema
 
 ### Operators
@@ -389,23 +397,23 @@ ORDER BY [Create Date] DESC
 **Find all open risks:**
 ```
 SELECT [Resource ID], [Name]
-FROM [SOXRisk]
-WHERE [OPSS-Risk:Status] = 'Open'
+FROM [ObjectTypeA]
+WHERE [Prefix-Group:Status] = 'Open'
 ```
 
 **Search by name pattern:**
 ```
 SELECT [Resource ID], [Name]
-FROM [SOXIssue]
+FROM [ObjectTypeB]
 WHERE [Name] LIKE '%compliance%'
 ```
 
 **Complex conditions:**
 ```
-SELECT [Resource ID], [Name], [OPSS-Iss:Priority]
-FROM [SOXIssue]
-WHERE [OPSS-Iss:Status] = 'Open'
-  AND [OPSS-Iss:Priority] IN ('High', 'Critical')
+SELECT [Resource ID], [Name], [Prefix-Group:Priority]
+FROM [ObjectTypeB]
+WHERE [Prefix-Group:Status] = 'Open'
+  AND [Prefix-Group:Priority] IN ('High', 'Critical')
 ORDER BY [Create Date] DESC
 ```
 
@@ -475,7 +483,7 @@ This guide helps you understand and explore OpenPages schemas, including field t
 
 3. **Configured Fields** (Instance-Specific)
    - Only fields configured for this instance
-   - May include bundle prefixes (e.g., `OPSS-Iss:Status`)
+   - May include bundle prefixes (e.g., `Prefix-Group:Status`)
 
 ### Field Types
 
@@ -572,7 +580,7 @@ This guide helps you debug common issues when working with the OpenPages MCP ser
 
 **Solutions:**
 1. Read `openpages://schema/{ObjectType}` to get exact field names
-2. Use complete field name with prefix: `OPSS-Iss:Status` not `Status`
+2. Use complete field name with prefix: `Prefix-Group:Status` not `Status`
 3. Verify field is in the schema (may be filtered out)
 4. Check if field is configured in `object_types.json`
 
@@ -724,12 +732,12 @@ This provides:
 
 ### Example
 ```python
-# After reading schema for SOXIssue
+# After reading schema for ObjectTypeB
 {
-    "Name": "New Compliance Issue",
-    "Description": "Issue description",
-    "OPSS-Iss:Status": "Open",
-    "OPSS-Iss:Priority": "High"
+    "Name": "New Record",
+    "Description": "Record description",
+    "Prefix-Group:Status": "Open",
+    "Prefix-Group:Priority": "High"
     # Include all required fields
 }
 ```
@@ -749,9 +757,9 @@ This provides:
 
 ### Example
 ```
-SELECT [Resource ID], [Name], [OPSS-Iss:Status]
-FROM [SOXIssue]
-WHERE [OPSS-Iss:Priority] = 'High'
+SELECT [Resource ID], [Name], [Prefix-Group:Status]
+FROM [ObjectTypeB]
+WHERE [Prefix-Group:Priority] = 'High'
 ```
 
 ### Tips
@@ -771,7 +779,7 @@ WHERE [OPSS-Iss:Priority] = 'High'
 ```python
 {
     "Resource ID": "grc-obj-12345",
-    "OPSS-Iss:Status": "Closed",
+    "Prefix-Group:Status": "Closed",
     "Description": "Updated description"
     # Only include fields to change
 }

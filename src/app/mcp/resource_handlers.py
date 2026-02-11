@@ -64,7 +64,7 @@ class ResourceHandlers:
         resources.append({
             "uri": "openpages://catalog/object_types",
             "name": "Object Types Catalog",
-            "description": "Catalog of all available OpenPages object types with their IDs, names, labels, descriptions, and schema URIs. Use this to discover which object types are available before querying.",
+            "description": "Catalog of all available OpenPages object types with their IDs, names, labels, descriptions, and schema URIs. Read this ONCE at session start and cache the list of available types. Schemas are static during server lifetime.",
             "mimeType": "application/json"
         })
         logger.debug("Added object types catalog resource")
@@ -85,7 +85,7 @@ class ResourceHandlers:
             resource = {
                 "uri": resource_uri,
                 "name": f"{display_name} Schema",
-                "description": f"Schema definition for {display_name} objects including field names, types, validation rules, and enum values",
+                "description": f"Schema definition for {display_name} objects including field names, types, validation rules, and enum values. Read ONCE per session and cache - schemas are static during server lifetime.",
                 "mimeType": "application/json"
             }
             
@@ -632,7 +632,7 @@ class ResourceHandlers:
         lines.append("")
         lines.append("### Field Name Format")
         lines.append("- Simple fields: Use the field name directly (e.g., 'Name', 'Description')")
-        lines.append("- Fields with group prefix: Use full format with field group prefix (e.g., 'OPSS-Iss:Status')")
+        lines.append("- Fields with group prefix: Use full format with field group prefix (e.g., 'Prefix-Group:Status')")
         lines.append("")
         lines.append("### Data Type Mapping")
         lines.append("- STRING_TYPE: Text values")
