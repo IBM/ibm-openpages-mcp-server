@@ -45,7 +45,7 @@ class SchemaBuilder:
         Get and cache type definition from OpenPages, including associations
         
         Args:
-            type_name: Name of the type to retrieve (e.g., "SOXIssue", "SOXControl")
+            type_name: Name of the type to retrieve (e.g., "ObjectTypeA", "ObjectTypeB")
             
         Returns:
             Dict containing the type definition with associations or None if there was an error
@@ -95,8 +95,8 @@ class SchemaBuilder:
         Build a dynamic JSON schema for object creation based on field definitions
         
         Args:
-            object_type: Type of object (e.g., "SOXIssue", "SOXControl")
-            object_label: Label to use in descriptions (e.g., "issue", "control")
+            object_type: Type of object (e.g., "ObjectTypeA", "ObjectTypeB")
+            object_label: Label to use in descriptions (e.g., "typea", "typeb")
             obj_config: Optional object configuration with create_fields settings
             
         Returns:
@@ -280,7 +280,7 @@ class SchemaBuilder:
         Build a dynamic JSON schema for query tools with field options
         
         Args:
-            object_type: Type of object (e.g., "Model", "SOXIssue", "SOXControl")
+            object_type: Type of object (e.g., "ObjectTypeA", "ObjectTypeB", "ObjectTypeC")
             obj_config: Optional object configuration with query_filters settings
             
         Returns:
@@ -467,10 +467,10 @@ class SchemaBuilder:
         
         # Add common fields
         # common_fields_mapping = {
-        #     "SOXIssue": ["Priority [OPSS-Iss]", "Owner", "Due Date [OPSS-Iss]"],
-        #     "Model": ["Owner", "Last Modified Date", "Creation Date"],
-        #     "SOXControl": ["Owner", "Control Frequency", "Automation Status"],
-        #     "SOXRisk": ["Owner", "Risk Level", "Impact"]
+        #     "ObjectTypeA": ["Priority [Prefix-Group]", "Owner", "Due Date [Prefix-Group]"],
+        #     "ObjectTypeB": ["Owner", "Last Modified Date", "Creation Date"],
+        #     "ObjectTypeC": ["Owner", "Frequency", "Status"],
+        #     "ObjectTypeD": ["Owner", "Level", "Impact"]
         # }
         
         # for obj_type, fields in common_fields_mapping.items():

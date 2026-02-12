@@ -288,19 +288,19 @@ Use ANCESTOR/DESCENDANT when you need to traverse multiple hierarchy levels:
 
 EXAMPLES:
 
-Example 1 - Relationship in FROM type (Risk has child Control):
-Schema for [SOXRisk]: {{"hierarchical_relationships": [{{"direction": "child", "type": "SOXControl"}}]}}
-Query (INNER): FROM [SOXRisk] JOIN [SOXControl] ON PARENT([SOXRisk])
-Query (OUTER): FROM [SOXRisk] LEFT OUTER JOIN [SOXControl] ON PARENT([SOXRisk])
-Why: Relationship in FROM type → Use OPPOSITE direction → PARENT([SOXRisk])
-(Schema says "child" meaning SOXControl is child, so use PARENT to navigate down)
+Example 1 - Relationship in FROM type (ParentType has child ChildType):
+Schema for [ParentType]: {{"hierarchical_relationships": [{{"direction": "child", "type": "ChildType"}}]}}
+Query (INNER): FROM [ParentType] JOIN [ChildType] ON PARENT([ParentType])
+Query (OUTER): FROM [ParentType] LEFT OUTER JOIN [ChildType] ON PARENT([ParentType])
+Why: Relationship in FROM type → Use OPPOSITE direction → PARENT([ParentType])
+(Schema says "child" meaning ChildType is child, so use PARENT to navigate down)
 
-Example 2 - Relationship in FROM type (Control is child of Risk):
-Schema for [SOXControl]: {{"hierarchical_relationships": [{{"direction": "parent", "type": "SOXRisk"}}]}}
-Query (INNER): FROM [SOXControl] JOIN [SOXRisk] ON CHILD([SOXControl])
-Query (OUTER): FROM [SOXControl] LEFT OUTER JOIN [SOXRisk] ON CHILD([SOXControl])
-Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([SOXControl])
-(Schema says "parent" meaning SOXRisk is parent, so use CHILD to navigate up)
+Example 2 - Relationship in FROM type (ChildType is child of ParentType):
+Schema for [ChildType]: {{"hierarchical_relationships": [{{"direction": "parent", "type": "ParentType"}}]}}
+Query (INNER): FROM [ChildType] JOIN [ParentType] ON CHILD([ChildType])
+Query (OUTER): FROM [ChildType] LEFT OUTER JOIN [ParentType] ON CHILD([ChildType])
+Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([ChildType])
+(Schema says "parent" meaning ParentType is parent, so use CHILD to navigate up)
 
 Example 3 - Relationship in JOIN type (TypeB has child TypeA):
 Schema for [TypeB]: {{"hierarchical_relationships": [{{"direction": "child", "type": "TypeA"}}]}}
@@ -406,7 +406,7 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                     "properties": {
                         "uri": {
                             "type": "string",
-                            "description": "The resource URI to retrieve. Examples: 'openpages://schema/SOXRisk', 'openpages://catalog/object_types'. Use list_resources to see available URIs."
+                            "description": "The resource URI to retrieve. Examples: 'openpages://schema/ObjectTypeA', 'openpages://catalog/object_types'. Use list_resources to see available URIs."
                     },
                         **context_properties
                     },
@@ -494,7 +494,7 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                     "object_type": {
                         "type": "string",
                         "enum": object_type_enum,
-                        "description": f"Type of object to delete. Must be one of: {', '.join(object_type_enum)}. Use the tool_prefix value (e.g., 'issue' for SOXIssue, 'control' for SOXControl)."
+                        "description": f"Type of object to delete. Must be one of: {', '.join(object_type_enum)}. Use the tool_prefix value from configuration."
                     },
                     "resource_id": {
                         "type": "string",

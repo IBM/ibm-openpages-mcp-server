@@ -242,6 +242,7 @@ class QueryTool(BaseTool):
                     object_type = from_match.group(1)
                     try:
                         # Fetch the schema to get valid field names
+                        # Note: This is an error recovery path - normal operations should use cached schemas
                         type_def = await self.client.get_type_definition(object_type)
                         if type_def and 'field_definitions' in type_def:
                             field_names = [f"[{field['name']}]" for field in type_def.get('field_definitions', []) if field.get('name')]
@@ -250,7 +251,7 @@ class QueryTool(BaseTool):
                             if len(field_names) > 20:
                                 field_list += f", ... and {len(field_names) - 20} more fields"
                             
-                            error_message += f"\n\nValid fields for [{object_type}]:\n{field_list}\n\nPlease retry your query using one of these field names."
+                            error_message += f"\n\nValid fields for [{object_type}]:\n{field_list}\n\nTip: Read openpages://schema/{object_type} once and cache the schema to avoid this error in future queries."
                     except Exception as schema_error:
                         logger.debug(f"Could not fetch schema for helpful error: {schema_error}")
             

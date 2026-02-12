@@ -123,7 +123,7 @@ def main():
                     "params": {
                         "name": "find_ineffective_controls",
                         "arguments": {
-                            "control_type": "SOXControl",
+                            "control_type": "ObjectTypeA",
                             "owner_filter": True
                         }
                     },
@@ -138,7 +138,7 @@ def main():
                     "params": {
                         "name": "custom_query",
                         "arguments": {
-                            "query": "SELECT * FROM SOXControl WHERE status = 'Ineffective' LIMIT 5",
+                            "query": "SELECT * FROM ObjectTypeA WHERE status = 'Ineffective' LIMIT 5",
                             "limit": 5
                         }
                     },
