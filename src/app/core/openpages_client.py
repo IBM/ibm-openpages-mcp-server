@@ -213,35 +213,23 @@ class OpenPagesClient:
     def _detect_auth_type(self, authentication_url: str) -> str:
         """
         Detect authentication type based on the authentication URL.
-        
+        Delegates to standalone function in token_exchange module.
+
         Args:
             authentication_url (str): The authentication URL
-            
+
         Returns:
             str: Either 'ibm_cloud', 'mcsp', or 'cp4d'
         """
-        # Check if URL contains CP4D patterns
-        if '/icp4d-api/v1/authorize' in authentication_url or 'cpd-' in authentication_url:
-            logger.info("Detected CP4D authentication")
-            return 'cp4d'
-        # Check if URL contains IBM Cloud IAM patterns
-        elif 'iam.cloud.ibm.com' in authentication_url or 'iam.test.cloud.ibm.com' in authentication_url:
-            logger.info("Detected IBM Cloud OAuth2 authentication")
-            return 'ibm_cloud'
-        # Check if URL contains MCSP patterns
-        elif 'account-iam.platform' in authentication_url or 'saas.ibm.com' in authentication_url:
-            logger.info("Detected MCSP OAuth2 authentication")
-            return 'mcsp'
-        else:
-            # Default to IBM Cloud if pattern is not recognized
-            logger.warning(f"Could not detect auth type from URL: {authentication_url}. Defaulting to IBM Cloud.")
-            return 'ibm_cloud'
+        from src.app.auth.token_exchange import detect_auth_type
+        return detect_auth_type(authentication_url)
     
     async def fetch_token(self, api_key: str, authentication_url: str) -> Optional[str]:
         """
         Fetch authentication token from IBM Cloud IAM, MCSP, or CP4D service.
         Automatically detects the authentication type based on the URL.
-        
+        Delegates to standalone functions in token_exchange module.
+
         Args:
             api_key (str): The API key to use for authentication (or username:password for CP4D)
             authentication_url (str): The URL to use for authentication
@@ -249,126 +237,24 @@ class OpenPagesClient:
         Returns:
             Optional[str]: The access token if successful, None otherwise
         """
-        # Detect authentication type
-        auth_type = self._detect_auth_type(authentication_url)
-        
-        if auth_type == 'cp4d':
-            # CP4D authentication - expects username and password
-            # For CP4D, we use the stored username and password instead of api_key
-            headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            }
-            
-            json_data = {
-                'username': self.username,
-                'password': self.password
-            }
-            
-            try:
-                # Use SSL verification setting from config
-                async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-                    logger.info(f"Fetching CP4D token from {authentication_url}")
-                    if not self.settings.SSL_VERIFY:
-                        logger.warning("SSL verification is disabled for CP4D authentication")
-                    
-                    response = await client.post(authentication_url, headers=headers, json=json_data, timeout=30.0)
-                    response.raise_for_status()
-                    
-                    token_data = response.json()
-                    
-                    # CP4D returns 'token' in the response
-                    if 'token' in token_data:
-                        logger.info("Successfully obtained CP4D token")
-                        return token_data['token']
-                    else:
-                        logger.error("Error: 'token' not found in CP4D response")
-                        logger.error(f"Response: {token_data}")
-                        return None
-                    
-            except httpx.HTTPStatusError as e:
-                logger.error(f"Error fetching CP4D token: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                return None
-            except httpx.RequestError as e:
-                logger.error(f"Request error fetching CP4D token: {e}")
-                return None
-                
-        elif auth_type == 'ibm_cloud':
-            # IBM Cloud OAuth2
-            headers = {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'application/json'
-            }
-            
-            data = {
-                'grant_type': 'urn:ibm:params:oauth:grant-type:apikey',
-                'apikey': api_key
-            }
-            
-            try:
-                async with httpx.AsyncClient(verify=True) as client:
-                    logger.info(f"Fetching IBM Cloud token from {authentication_url}")
-                    response = await client.post(authentication_url, headers=headers, data=data, timeout=30.0)
-                    response.raise_for_status()
-                    
-                    token_data = response.json()
-                    
-                    if 'access_token' in token_data:
-                        logger.info("Successfully obtained IBM Cloud access token")
-                        return token_data['access_token']
-                    else:
-                        logger.error("Error: 'access_token' not found in IBM Cloud response")
-                        logger.error(f"Response: {token_data}")
-                        return None
-                    
-            except httpx.HTTPStatusError as e:
-                logger.error(f"Error fetching IBM Cloud token: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                return None
-            except httpx.RequestError as e:
-                logger.error(f"Request error fetching IBM Cloud token: {e}")
-                return None
-                
-        else:  # mcsp
-            # MCSP OAuth2
-            headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            }
-            
-            # MCSP expects JSON body with apikey
-            json_data = {
-                'apikey': api_key
-            }
-            
-            try:
-                async with httpx.AsyncClient(verify=True) as client:
-                    logger.info(f"Fetching MCSP token from {authentication_url}")
-                    response = await client.post(authentication_url, headers=headers, json=json_data, timeout=30.0)
-                    response.raise_for_status()
-                    
-                    token_data = response.json()
-                    
-                    # MCSP returns 'token' instead of 'access_token'
-                    if 'token' in token_data:
-                        logger.info("Successfully obtained MCSP token")
-                        return token_data['token']
-                    else:
-                        logger.error("Error: 'token' not found in MCSP response")
-                        logger.error(f"Response: {token_data}")
-                        return None
-                    
-            except httpx.HTTPStatusError as e:
-                logger.error(f"Error fetching MCSP token: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                return None
-            except httpx.RequestError as e:
-                logger.error(f"Request error fetching MCSP token: {e}")
-                return None
+        from src.app.auth.token_exchange import (
+            detect_auth_type, fetch_ibm_cloud_token, fetch_mcsp_token, fetch_cp4d_token
+        )
+
+        auth_type = detect_auth_type(authentication_url)
+
+        try:
+            if auth_type == 'cp4d':
+                return await fetch_cp4d_token(
+                    self.username, self.password, authentication_url, self.settings.SSL_VERIFY
+                )
+            elif auth_type == 'ibm_cloud':
+                return await fetch_ibm_cloud_token(api_key, authentication_url)
+            else:  # mcsp
+                return await fetch_mcsp_token(api_key, authentication_url)
+        except (RuntimeError, Exception) as e:
+            logger.error(f"Error fetching token: {e}")
+            return None
     
     @log_method_call(level=logging.DEBUG)
     async def initialize_auth(self):
@@ -383,9 +269,28 @@ class OpenPagesClient:
             logger.info("Bearer authentication initialized successfully")
         else:
             logger.debug(f"Auth already initialized or using basic auth (type: {self.auth_type})")
-            
+
+    async def _get_request_headers(self, auth_override: Optional[str] = None) -> Dict[str, str]:
+        """
+        Get headers for an API request, optionally overriding the Authorization header.
+
+        Args:
+            auth_override: If provided, replaces the Authorization header for this request.
+                          If None, uses the server's configured credentials.
+
+        Returns:
+            Headers dict for the request
+        """
+        if auth_override:
+            headers = self.headers.copy()
+            headers['Authorization'] = auth_override
+            return headers
+        else:
+            await self.initialize_auth()
+            return self.headers
+
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def query(self, statement: str, offset: int = 0, limit: int = 100) -> Dict[str, Any]:
+    async def query(self, statement: str, offset: int = 0, limit: int = 100, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Execute a query against OpenPages
         
@@ -399,16 +304,16 @@ class OpenPagesClient:
         """
         logger.info(f"Executing OpenPages query (limit={limit}, offset={offset})")
         logger.debug(f"Query statement: {statement[:100]}..." if len(statement) > 100 else f"Query statement: {statement}")
-        
-        # Ensure authentication is initialized
-        await self.initialize_auth()
-        
+
+        # Get request headers (with optional auth override)
+        request_headers = await self._get_request_headers(auth_override)
+
         # Check if the base URL has a valid protocol
         if not (self.base_url.startswith('http://') or self.base_url.startswith('https://')):
             logger.error(f"Invalid base URL (missing protocol): {self.base_url}")
             # Return a mock empty result instead of raising an error
             return {"rows": []}
-            
+
         request_body = {
             "statement": statement,
             "offset": offset,
@@ -417,21 +322,21 @@ class OpenPagesClient:
             "case_insensitive": False,
             "honor_primary": False
         }
-        
+
         api_path = self._get_api_path("/api/v2/query")
         full_url = f"{self.base_url}{api_path}"
         logger.info(f"OpenPages API Query Request: {full_url}")
         logger.info(f"Request Body: {request_body}")
-        
+
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
             logger.warning("SSL verification is disabled. This is not recommended for production environments.")
-            
+
         async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
             try:
                 response = await client.post(
                     full_url,
-                    headers=self.headers,
+                    headers=request_headers,
                     json=request_body,
                     timeout=30.0
                 )
@@ -464,34 +369,35 @@ class OpenPagesClient:
                 raise RuntimeError(f"Network error during query: {str(e)}") from e
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def get_content(self, resource_id: str) -> Dict[str, Any]:
+    async def get_content(self, resource_id: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Get content by resource ID
-        
+
         Args:
             resource_id: Resource ID of the content
-            
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             Content data
         """
         logger.info(f"Getting content for resource ID: {resource_id}")
-        
-        # Ensure authentication is initialized
-        await self.initialize_auth()
-        
+
+        # Get request headers (with optional auth override)
+        request_headers = await self._get_request_headers(auth_override)
+
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Get Content Request: {url}")
-        
+
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
             logger.warning("SSL verification is disabled. This is not recommended for production environments.")
-            
+
         async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
             try:
                 response = await client.get(
                     url,
-                    headers=self.headers,
+                    headers=request_headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
@@ -519,35 +425,36 @@ class OpenPagesClient:
                 raise
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def create_content(self, content_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_content(self, content_data: Dict[str, Any], auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Create new content in OpenPages
-        
+
         Args:
             content_data: Content data to create
-            
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             Created content data
         """
         logger.info(f"Creating content of type: {content_data.get('type_definition_id', 'unknown')}")
-        
-        # Ensure authentication is initialized
-        await self.initialize_auth()
-        
+
+        # Get request headers (with optional auth override)
+        request_headers = await self._get_request_headers(auth_override)
+
         api_path = self._get_api_path("/api/v2/contents")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Create Content Request: {url}")
         logger.debug(f"Request Body: {content_data}")
-        
+
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
             logger.warning("SSL verification is disabled. This is not recommended for production environments.")
-            
+
         async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
             try:
                 response = await client.post(
                     url,
-                    headers=self.headers,
+                    headers=request_headers,
                     json=content_data,
                     timeout=30.0
                 )
@@ -576,36 +483,37 @@ class OpenPagesClient:
                 raise
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def update_content(self, resource_id: str, content_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_content(self, resource_id: str, content_data: Dict[str, Any], auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Update existing content in OpenPages
-        
+
         Args:
             resource_id: Resource ID of the content to update
             content_data: Updated content data
-            
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             Updated content data
         """
         logger.info(f"Updating content: {resource_id} (type: {content_data.get('type_definition_id', 'unknown')})")
-        
-        # Ensure authentication is initialized
-        await self.initialize_auth()
-        
+
+        # Get request headers (with optional auth override)
+        request_headers = await self._get_request_headers(auth_override)
+
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Update Content Request: {url}")
         logger.debug(f"Request Body: {content_data}")
-        
+
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
             logger.warning("SSL verification is disabled. This is not recommended for production environments.")
-            
+
         async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
             try:
                 response = await client.put(
                     url,
-                    headers=self.headers,
+                    headers=request_headers,
                     json=content_data,
                     timeout=30.0
                 )
@@ -633,10 +541,13 @@ class OpenPagesClient:
                 logger.error(f"Request error updating content: {e}")
                 raise
     
-    async def get_current_user(self) -> Optional[str]:
+    async def get_current_user(self, auth_override: Optional[str] = None) -> Optional[str]:
         """
         Get the current authenticated user's information
-        
+
+        Args:
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             Username of the current user
         """
@@ -646,12 +557,12 @@ class OpenPagesClient:
             if not (self.base_url.startswith('http://') or self.base_url.startswith('https://')):
                 logger.error(f"Base URL missing protocol: {self.base_url}")
                 return "admin"  # Return a default user if URL is invalid
-                
+
             # Query for current user
             query = "SELECT [Name] FROM [User] WHERE [Name] IS NOT NULL LIMIT 1"
             logger.info(f"Current user query: {query}")
-            
-            result = await self.query(query)
+
+            result = await self.query(query, auth_override=auth_override)
             
             if result.get('rows'):
                 username = result['rows'][0]['fields'][0]['value']
@@ -667,32 +578,33 @@ class OpenPagesClient:
                 logger.error(f"Traceback: {traceback.format_exc()}")
             return "admin"  # Return a default user on error
     
-    async def get_type_definition(self, type_name: str) -> Dict[str, Any]:
+    async def get_type_definition(self, type_name: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Get type definition information from OpenPages
-        
+
         Args:
             type_name: Name of the type to retrieve (e.g., 'SOXIssue')
-            
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             Type definition data including field definitions
         """
-        # Ensure authentication is initialized
-        await self.initialize_auth()
-        
+        # Get request headers (with optional auth override)
+        request_headers = await self._get_request_headers(auth_override)
+
         api_path = self._get_api_path(f"/api/v2/types/{type_name}")
         url = f"{self.base_url}{api_path}"
         logger.info(f"OpenPages API Get Type Definition Request: {url}")
-        
+
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
             logger.warning("SSL verification is disabled. This is not recommended for production environments.")
-            
+
         async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
             try:
                 response = await client.get(
                     url,
-                    headers=self.headers,
+                    headers=request_headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
@@ -719,32 +631,33 @@ class OpenPagesClient:
                 logger.error(f"Request error getting type definition: {e}")
                 raise
     
-    async def get_type_associations(self, type_name: str) -> Dict[str, Any]:
+    async def get_type_associations(self, type_name: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Get type association information from OpenPages
-        
+
         Args:
             type_name: Name of the type to retrieve associations for (e.g., 'SOXIssue')
-            
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             Type association data including parent and child relationships
         """
-        # Ensure authentication is initialized
-        await self.initialize_auth()
-        
+        # Get request headers (with optional auth override)
+        request_headers = await self._get_request_headers(auth_override)
+
         api_path = self._get_api_path(f"/api/v2/types/{type_name}/associations?includeLocalizedLabels=false")
         url = f"{self.base_url}{api_path}"
         logger.info(f"OpenPages API Get Type Associations Request: {url}")
-        
+
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
             logger.warning("SSL verification is disabled. This is not recommended for production environments.")
-            
+
         async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
             try:
                 response = await client.get(
                     url,
-                    headers=self.headers,
+                    headers=request_headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
@@ -777,31 +690,31 @@ class OpenPagesClient:
     async def get_username_by_email(self, email: str) -> Optional[str]:
         """
         Get username by email using SCIM Users API
-        
+
         Args:
             email: Email address of the user
-            
+
         Returns:
             Username if found, None otherwise
         """
         logger.info(f"Getting username for email: {email}")
-        
+
         # Ensure authentication is initialized
         await self.initialize_auth()
-        
+
         # URL encode the filter parameter
         import urllib.parse
         filter_param = f'emails eq "{email}"'
         encoded_filter = urllib.parse.quote(filter_param)
-        
+
         api_path = self._get_api_path(f"/api/v2/scim/Users?filter={encoded_filter}")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages SCIM Users API Request: {url}")
-        
+
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
             logger.warning("SSL verification is disabled. This is not recommended for production environments.")
-            
+
         async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
             try:
                 response = await client.get(
@@ -811,7 +724,7 @@ class OpenPagesClient:
                 )
                 response.raise_for_status()
                 response_json = response.json()
-                
+
                 # Log the response
                 if settings.DEBUG:
                     logger.info(f"OpenPages SCIM Users API Response Status: {response.status_code}")
@@ -820,7 +733,7 @@ class OpenPagesClient:
                         logger.info(f"Response Body (truncated): {response_str[:1000]}...")
                     else:
                         logger.info(f"Response Body: {response_json}")
-                
+
                 # Extract username from response
                 resources = response_json.get('Resources', [])
                 if resources and len(resources) > 0:
@@ -831,7 +744,7 @@ class OpenPagesClient:
                 else:
                     logger.warning(f"No user found with email: {email}")
                     return None
-                    
+
             except httpx.HTTPStatusError as e:
                 logger.error(f"HTTP status error getting username by email: {e}")
                 logger.error(f"Response status: {e.response.status_code}")
@@ -840,36 +753,37 @@ class OpenPagesClient:
             except httpx.RequestError as e:
                 logger.error(f"Request error getting username by email: {e}")
                 return None
-    
+
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def delete_content(self, resource_id: str) -> Dict[str, Any]:
+    async def delete_content(self, resource_id: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Delete content from OpenPages
-        
+
         Args:
             resource_id: Resource ID of the content to delete
-            
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             Response data from the delete operation
         """
         logger.info(f"Deleting content: {resource_id}")
-        
-        # Ensure authentication is initialized
-        await self.initialize_auth()
-        
+
+        # Get request headers (with optional auth override)
+        request_headers = await self._get_request_headers(auth_override)
+
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Delete Content Request: {url}")
-        
+
         # Use SSL verification setting from config
         if not self.settings.SSL_VERIFY:
             logger.warning("SSL verification is disabled. This is not recommended for production environments.")
-            
+
         async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
             try:
                 response = await client.delete(
                     url,
-                    headers=self.headers,
+                    headers=request_headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
