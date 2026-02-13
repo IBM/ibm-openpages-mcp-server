@@ -394,7 +394,8 @@ class BaseTool:
             else:
                 formatted_path = path
             encoded_path = urllib.parse.quote(formatted_path, safe='')
-            logger.info(f"Getting content for path: {encoded_path}")
+            logger.info(f"Attempting to resolve path to Resource ID: {path}")
+            logger.debug(f"Encoded path for API call: {encoded_path}")
             
             # Make GET call to contents API
             content_result = await self.client.get_content(encoded_path)
@@ -402,14 +403,23 @@ class BaseTool:
             # Extract the ID from the result
             if content_result and "id" in content_result:
                 resolved_id = content_result["id"]
-                logger.info(f"Resolved path to ID: {resolved_id}")
+                logger.info(f"Successfully resolved path '{path}' to Resource ID: {resolved_id}")
                 return resolved_id
             else:
-                logger.warning(f"Could not resolve path to ID: {path}")
+                logger.warning(f"Could not resolve path to ID - no 'id' field in response: {path}")
+                logger.warning(f"Response received: {content_result}")
                 return path
         except Exception as e:
-            logger.error(f"Error resolving path to ID: {e}")
-            # Return the original path if there's an error
+            logger.error(f"Failed to resolve path '{path}' to Resource ID: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            if hasattr(e, 'response'):
+                response = getattr(e, 'response')
+                status = getattr(response, 'status_code', 'N/A') if response else 'N/A'
+                body = getattr(response, 'text', 'N/A') if response else 'N/A'
+                logger.error(f"HTTP Status: {status}")
+                logger.error(f"Response body: {body}")
+            # Return the original path if there's an error - this will likely cause downstream issues
+            logger.warning(f"Returning original path '{path}' - this may cause issues if used as primary_parent_id")
             return path
 
 # Made with Bob
