@@ -184,7 +184,9 @@ class TestBuildContextSchema:
                    "user" in props["description"].lower() or \
                    "object" in props["description"].lower() or \
                    "view" in props["description"].lower() or \
-                   "url" in props["description"].lower()
+                   "url" in props["description"].lower() or \
+                   "workflow" in props["description"].lower() or \
+                   "auth" in props["description"].lower()
 
 
 class TestAllowedContextVariables:
@@ -203,14 +205,15 @@ class TestAllowedContextVariables:
             "op_object_type_name",
             "op_object_id",
             "op_object_name",
-            "op_workflow_stage"
+            "op_workflow_stage",
+            "op_auth_header"
         }
-        
+
         assert ALLOWED_CONTEXT_VARIABLES == required_vars
-    
+
     def test_no_extra_variables(self):
         """Test that no extra variables are defined"""
-        assert len(ALLOWED_CONTEXT_VARIABLES) == 11
+        assert len(ALLOWED_CONTEXT_VARIABLES) == 12
 
 
 # Made with Bob
