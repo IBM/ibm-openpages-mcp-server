@@ -48,9 +48,10 @@ class ToolHandlers:
         self.resource_handlers = resource_handlers
         self.mcp_server = mcp_server
 
-        # Build the generic delete tool name based on namespace
+        # Build the generic delete and upsert tool names based on namespace
         namespace = settings.NAMESPACE
         self.generic_delete_tool_name = f"{namespace}_delete_object" if namespace else "delete_object"
+        self.generic_upsert_tool_name = f"{namespace}_upsert_object" if namespace else "upsert_object"
     
     @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     async def handle_echo_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -233,6 +234,131 @@ class ToolHandlers:
             return {
                 "result": [
                     {"type": "text", "text": f"Error deleting {object_type}: {str(e)}"}
+                ]
+            }
+    
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def handle_generic_upsert_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle the generic upsert_object tool that works for all configured object types
+        Uses the published schema from MCP resources for field definitions
+        
+        Args:
+            arguments: Tool arguments containing 'object_type', 'name', optional 'id'/'path'/'operation',
+                      'fields' object with dynamic field values, and optional context variables
+            
+        Returns:
+            Dict containing the upsert result
+        """
+        # Extract context variables from arguments
+        cleaned_args, context = extract_context_from_arguments(arguments)
+        logger.debug(f"Upsert tool context: {context}")
+        
+        object_type_input = cleaned_args.get("object_type", "")
+        name = cleaned_args.get("name")
+        fields = cleaned_args.get("fields", {})
+        
+        if not object_type_input:
+            logger.error("object_type not provided in upsert_object request")
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: object_type is required"}
+                ]
+            }
+        
+        if not name:
+            logger.error("name not provided in upsert_object request")
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: name is required"}
+                ]
+            }
+        
+        # Normalize object_type: accept tool_prefix, type_id, or display_name
+        # Map to the tool_prefix that we use internally
+        object_type = None
+        type_id = None
+        
+        # Build a mapping of all valid identifiers to tool_prefix
+        type_mapping = {}
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            config_type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name")
+            
+            if tool_prefix:
+                # Map tool_prefix to itself (case-insensitive)
+                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
+                
+                # Map type_id to tool_prefix (case-insensitive)
+                if config_type_id:
+                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
+                
+                # Map display_name to tool_prefix (case-insensitive)
+                if display_name:
+                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
+        
+        # Look up the normalized object_type
+        lookup_key = object_type_input.lower()
+        if lookup_key in type_mapping:
+            object_type, type_id = type_mapping[lookup_key]
+            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
+        else:
+            logger.warning(f"Invalid object_type: {object_type_input}")
+            available_types = list(set([v[0] for v in type_mapping.values()]))
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
+                ]
+            }
+        
+        # Check if we have a tool for this object type
+        if object_type not in self.object_tools:
+            logger.warning(f"No tool available for object type: {object_type}")
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
+                ]
+            }
+        
+        # Get the appropriate tool
+        tool = self.object_tools[object_type]
+        logger.info(f"Executing generic upsert operation for {object_type}")
+        
+        try:
+            # Merge fields from the 'fields' object into the main arguments
+            # This allows the existing upsert_object method to process them
+            merged_args = cleaned_args.copy()
+            
+            # Remove the 'fields' key as we're flattening it
+            if 'fields' in merged_args:
+                del merged_args['fields']
+            
+            # Add all fields from the fields object to the main arguments
+            if fields and isinstance(fields, dict):
+                for field_name, field_value in fields.items():
+                    # Only add if not already present (main args take precedence)
+                    if field_name not in merged_args:
+                        merged_args[field_name] = field_value
+                        logger.debug(f"Added field from 'fields' object: {field_name} = {field_value}")
+            
+            # Now perform the upsert operation with merged arguments
+            result = await tool.upsert_object(merged_args)
+            
+            # Format the response
+            logger.debug(f"Generic upsert operation completed successfully for {object_type}")
+            return {
+                "result": [{"type": "text", "text": item.text} for item in result]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling upsert_object for {object_type}: {e}", exc_info=True, extra_fields={
+                "object_type": object_type,
+                "error_type": type(e).__name__
+            })
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error upserting {object_type}: {str(e)}"}
                 ]
             }
     
@@ -679,6 +805,7 @@ class ToolHandlers:
             special_tool_handlers = {
                 "echo": self.handle_echo_tool,
                 self.generic_delete_tool_name: self.handle_generic_delete_tool,
+                self.generic_upsert_tool_name: self.handle_generic_upsert_tool,
                 "execute_openpages_query": self.handle_openpages_query_tool,
                 "list_resources": self.handle_list_resources_tool,
                 "get_resource": self.handle_get_resource_tool,

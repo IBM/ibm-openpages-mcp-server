@@ -164,6 +164,32 @@ class MCPServer:
         
         return f"""Execute queries against OpenPages using the OpenPages query language.
 
+🔴 CRITICAL: SCHEMA CACHING REQUIRED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ READ EACH SCHEMA EXACTLY ONCE PER SESSION - NEVER RE-READ
+✅ Schemas are STATIC during server lifetime - they do not change
+✅ Cache all field names, types, relationships, and enum values in memory
+❌ Re-reading schemas wastes API calls and significantly degrades performance
+❌ You will be penalized for redundant schema reads
+
+BEFORE EVERY QUERY - ASK YOURSELF:
+☐ Have I already read this object type's schema in this session?
+  → YES: Use the cached field names from memory
+  → NO: Read the schema ONCE, then cache it permanently
+
+SCHEMA READING CHECKLIST:
+1. Read openpages://catalog/object_types ONCE at session start → cache available types
+2. Read openpages://schema/{{ObjectType}} ONCE per type when first needed → cache schema
+3. Store ALL field names, data types, relationships, and enum values in context
+4. Use cached schema for ALL subsequent operations on that type
+5. ONLY re-read if you encounter an explicit schema-related error from the API
+
+PERFORMANCE IMPACT:
+- First schema read: ~100-200ms
+- Cached schema access: ~1-5ms
+- Improvement: 20-200x faster with proper caching
+- Multiple unnecessary reads can slow responses by seconds
+
 QUERY GRAMMAR
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Basic Structure:
@@ -244,13 +270,23 @@ CORRECT:
   FROM [ObjectTypeA]
   FROM [ObjectTypeB]
 
-MANDATORY WORKFLOW
+🔴 MANDATORY WORKFLOW - FOLLOW STRICTLY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Read openpages://catalog/object_types (ONCE at start)
-2. Read openpages://schema/{{ObjectType}} for each type (ONCE per type)
-3. Store field names in context - DO NOT re-read or ask user
-4. Construct query using stored schema knowledge
-5. Execute with limit/offset parameters (not in query)
+SESSION START:
+1. Read openpages://catalog/object_types ONCE → Cache all available object types
+
+WHEN FIRST USING AN OBJECT TYPE:
+2. Read openpages://schema/{{ObjectType}} ONCE → Cache complete schema
+3. Store ALL field names, types, relationships, enum values in memory
+4. Mark this object type as "cached" in your session context
+
+FOR ALL SUBSEQUENT OPERATIONS:
+5. Use cached field names - NEVER re-read the schema
+6. Construct queries using stored schema knowledge
+7. Execute with limit/offset parameters (not in query)
+
+⚠️ VIOLATION: Re-reading a schema you've already cached is a critical error
+✅ CORRECT: Always check your session cache before reading any schema
 
 {object_types_section}
 
@@ -280,6 +316,29 @@ KEY RULE:
 - Relationship in FROM type → Use OPPOSITE direction
 - Relationship in JOIN type → Use direction as-is
 - Argument is ALWAYS the FROM type
+
+HIERARCHICAL JOIN QUICK REFERENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ SIMPLIFIED RULE: Schema direction → Use OPPOSITE as function name
+
+Schema shows "direction": "parent" → Use CHILD([FromType])
+Schema shows "direction": "child"  → Use PARENT([FromType])
+
+The schema's hierarchical_relationships now include ready-to-use examples:
+- "join_function": The function name to use (CHILD or PARENT)
+- "join_syntax": Complete JOIN clause you can copy
+- "explanation": Why this function is used
+
+Example from schema response:
+{{
+  "direction": "parent",
+  "type": "TargetType",
+  "join_function": "CHILD",
+  "join_syntax": "FROM [FromType] JOIN [TargetType] ON CHILD([FromType])",
+  "explanation": "FromType has 'parent' relationship to TargetType, so use OPPOSITE direction (CHILD)"
+}}
+
+Just copy the join_syntax directly into your query!
 
 MULTI-LEVEL RELATIONSHIPS (not in schema):
 Use ANCESTOR/DESCENDANT when you need to traverse multiple hierarchy levels:
@@ -318,7 +377,7 @@ RIGHT: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])
 The argument MUST be the FROM type, NEVER the JOIN target!
 
 DATE HANDLING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 When working with DATE_TYPE fields in queries:
 
 SUPPORTED FORMATS:
@@ -449,6 +508,9 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
         # Add generic delete tool that works for all object types
         self._add_generic_delete_tool()
         
+        # Add generic upsert tool that works for all object types
+        self._add_generic_upsert_tool()
+        
         # Dynamically add tools for each configured object type
         self._add_dynamic_tools_to_schema()
     
@@ -511,6 +573,143 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                     **context_properties
                 },
                 "required": ["object_type"]
+            }
+        })
+        logger.info(f"Added generic {tool_name} tool supporting {len(object_type_enum)} configured object types: {', '.join(object_type_enum)}")
+    
+    def _add_generic_upsert_tool(self) -> None:
+        """
+        Add a single generic upsert tool that works for all configured object types
+        Uses the published schema from MCP resources for field definitions
+        """
+        logger.info("Adding generic upsert tool")
+        
+        # Build enum of configured object types (tool_prefix values only)
+        object_type_enum = []
+        object_type_descriptions = []
+        
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name", tool_prefix)
+            
+            if tool_prefix:
+                object_type_enum.append(tool_prefix)
+                # Add helpful description showing the mapping
+                object_type_descriptions.append(f"'{tool_prefix}' ({type_id} - {display_name})")
+        
+        # Get namespace from settings
+        namespace = self.settings.NAMESPACE
+        
+        # Build tool name with namespace if present
+        tool_name = f"{namespace}_upsert_object" if namespace else "upsert_object"
+        
+        # Build description with available types
+        types_list = ", ".join(object_type_descriptions)
+        
+        # Get context schema
+        context_properties = build_context_schema()
+        
+        self.tools.append({
+            "name": tool_name,
+            "description": f"""Create or update any configured object in OpenPages (upsert operation).
+
+Supported object types: {types_list}
+
+🔴 CRITICAL: READ THE SCHEMA (ONCE PER SESSION)
+Before using this tool for a given object type, you should:
+1. Call get_resource with URI: openpages://schema/{{ObjectType}} (replace {{ObjectType}} with actual type from configuration)
+2. Review the field_definitions array to understand:
+   - Available field names (use exact names including any prefixes)
+   - Field data types (STRING_TYPE, ENUM_TYPE, INTEGER_TYPE, DATE_TYPE, etc.)
+   - Required vs optional fields (check 'required' property)
+   - Valid enum values (check 'enum_values' array for ENUM_TYPE fields)
+3. Cache this schema information for the session - schemas are static and don't change during server lifetime
+4. Only provide fields that exist in the schema - unknown fields will be rejected
+
+⚠️ SCHEMA-BASED FIELD VALIDATION:
+- All field names and values MUST match the object type's schema definition
+- Field names are case-sensitive and must include any prefixes from the schema
+- Enum fields must use exact values from the schema's enum_values array
+- Data types must match schema definitions (strings, numbers, dates, booleans, etc.)
+
+The tool automatically determines whether to insert (create new) or update (modify existing) based on:
+- If 'id' or 'path' is provided and object exists → UPDATE
+- If 'name' matches exactly one existing object → UPDATE
+- Otherwise → INSERT
+
+You can force a specific operation using the 'operation' parameter ('insert', 'update', or 'auto').
+
+🔴 CRITICAL REQUIREMENT FOR NEW OBJECTS:
+When creating a new object (INSERT operation), you MUST specify a primary parent using ONE of these methods:
+- primaryParentId (Resource ID or full path)
+- primaryParentType + primaryParentName (type and name combination)
+
+Failure to provide a primary parent when creating new objects will result in an error.
+
+📋 ENUM FIELD VALUES:
+For fields with data_type "ENUM_TYPE" or "MULTI_VALUE_ENUM" in the schema:
+- The schema's field_definitions will include an "enum_values" array listing all valid options
+- Each enum value has a "name" property - use this exact name as the field value
+- Example: If enum_values shows [{{"name": "Value1"}}, {{"name": "Value2"}}], use 'Value1' or 'Value2' as the value
+- For ENUM_TYPE: Provide a single string value (e.g., 'Value1')
+- For MULTI_VALUE_ENUM: Provide an array of strings (e.g., ['Value1', 'Value2'])
+- Invalid enum values will be rejected with an error message
+
+Field values are automatically formatted based on their data types from the schema. Accepts optional context variables.""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "object_type": {
+                        "type": "string",
+                        "enum": object_type_enum,
+                        "description": f"Type of object to upsert. Must be one of: {', '.join(object_type_enum)}. Use the tool_prefix value from configuration."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the object (required)"
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": "Resource ID for direct lookup (optional). If provided and exists, will update; if doesn't exist, will insert."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Full path for lookup (optional). If provided and exists, will update; if doesn't exist, will insert."
+                    },
+                    "operation": {
+                        "type": "string",
+                        "enum": ["insert", "update", "auto"],
+                        "description": "Operation mode: 'insert' (force create), 'update' (force update), or 'auto' (intelligent decision, default)"
+                    },
+                    "primaryParentId": {
+                        "type": "string",
+                        "description": "🔴 REQUIRED FOR NEW OBJECTS: The main hierarchical parent (typically for folder location). Supports: Resource ID (e.g., '10101'), full path (e.g., '/_op_sox/Project/Default/Folder'), or use primaryParentType+primaryParentName instead. For ADDITIONAL/SECONDARY parents, use associateParent_* fields. When creating a new object, you MUST provide either this field OR both primaryParentType+primaryParentName."
+                    },
+                    "primaryParentType": {
+                        "type": "string",
+                        "description": "🔴 REQUIRED FOR NEW OBJECTS (with primaryParentName): Type of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentName if not using primaryParentId. For additional parents, use associateParent_* fields. Example: 'SOXBusEntity', 'SOXProcess'"
+                    },
+                    "primaryParentName": {
+                        "type": "string",
+                        "description": "🔴 REQUIRED FOR NEW OBJECTS (with primaryParentType): Name of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentType if not using primaryParentId. For additional parents, use associateParent_* fields."
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Title of the object (optional)"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of the object (optional)"
+                    },
+                    "fields": {
+                        "type": "object",
+                        "description": "🔴 SCHEMA-BASED FIELDS ONLY: Dynamic field values as key-value pairs. ALL field names and values MUST come from the object type's schema (retrieved via get_resource). Field names must match exactly as defined in the schema (including any prefixes). For ENUM_TYPE fields, use exact 'name' values from the schema's enum_values array. Example: {'FieldGroup:FieldName1': 'StringValue', 'FieldGroup:FieldName2': 'EnumValue', 'FieldGroup:FieldName3': 'user@example.com'}",
+                        "additionalProperties": True
+                    },
+                    **context_properties
+                },
+                "required": ["object_type", "name"]
             }
         })
         logger.info(f"Added generic {tool_name} tool supporting {len(object_type_enum)} configured object types: {', '.join(object_type_enum)}")
@@ -598,25 +797,9 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
                 existing_tool_names.add(query_tool_name)
                 logger.info(f"Added dynamic tool: {query_tool_name}")
                 
-            # Delete tool - DISABLED: Now using generic delete_object tool instead
-            # Individual delete tools per object type are no longer created
-            # The generic delete_object tool handles all object types
-            # delete_tool_name = build_tool_name("delete")
-            # if delete_tool_name not in existing_tool_names:
-            #     delete_description = tool_descriptions.get("delete", f"Delete an existing {display_name.lower()} in OpenPages")
-            #     self.tools.append({
-            #         "name": delete_tool_name,
-            #         "description": delete_description,
-            #         "inputSchema": {
-            #             "type": "object",
-            #             "properties": {
-            #                 "resource_id": {"type": "string", "description": f"Resource ID to delete"},
-            #                 "path": {"type": "string", "description": f"Path to delete"}
-            #             }
-            #         }
-            #     })
-            #     existing_tool_names.add(delete_tool_name)
-            #     logger.info(f"Added dynamic tool: {delete_tool_name}")
+        logger.info(f"Dynamic tools schema initialization complete. Total tools: {len(self.tools)}")
+
+        logger.info(f"Dynamic tools schema initialization complete. Total tools: {len(self.tools)}")
     
     async def initialize_client(self) -> None:
         """
@@ -630,82 +813,79 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
             logger.error(f"Failed to initialize OpenPages client authentication: {e}")
             raise RuntimeError(f"Authentication failed: {e}")
     
-    async def load_dynamic_schemas(self, force_reload: bool = False) -> None:
+    async def load_dynamic_schemas(self) -> None:
         """
-        Load dynamic schemas for tools
+        Load dynamic schemas for all configured object types
         
-        Args:
-            force_reload: If True, reload schemas even if already loaded
-            
-        Raises:
-            Exception: If schema loading fails (connection errors, API errors, etc.)
+        This method fetches type definitions from OpenPages and updates tool schemas
+        with actual field definitions, enum values, and associations.
         """
-        if self.dynamic_schemas_loaded and not force_reload:
-            logger.debug("Dynamic schemas already loaded, using cached version")
+        if self.dynamic_schemas_loaded:
+            logger.debug("Dynamic schemas already loaded, skipping")
             return
         
-        # Log schema state transition
-        if force_reload:
-            logger.info("Loading dynamic schemas for tools (forced reload)")
-        elif not self.dynamic_schemas_loaded:
-            logger.info("Loading dynamic schemas for tools (first time load)")
-        else:
-            logger.info("Loading dynamic schemas for tools")
+        logger.info("Loading dynamic schemas for all configured object types")
         
         try:
-            # Initialize client authentication first
-            await self.initialize_client()
+            # Get list of available type IDs for parent type enum
+            available_types = [obj_config.get("type_id") for obj_config in self.settings.OPENPAGES_OBJECT_TYPES if obj_config.get("type_id")]
             
-            # Reload the tools schema
-            if not self.dynamic_schemas_loaded:
-                self._load_tools_schema()
-            
-            # Load schemas for dynamic object types
             for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
                 obj_type = obj_config.get("type_id")
                 tool_prefix = obj_config.get("tool_prefix")
                 display_name = obj_config.get("display_name", obj_type)
                 namespace = obj_config.get("namespace", "")
                 
+                if not obj_type or not tool_prefix:
+                    continue
+                
+                logger.info(f"Loading dynamic schema for {obj_type}")
+                
+                # Build tool names
                 def build_tool_name(operation: str) -> str:
                     if namespace:
                         return f"{namespace}_{operation}_{tool_prefix}"
                     return f"{operation}_{tool_prefix}"
                 
-                if obj_type and tool_prefix:
-                    # Build schemas using schema_builder
-                    # These methods will raise RuntimeError if they fail to get type definitions
-                    logger.debug(f"Building dynamic schema for {obj_type}")
-                    obj_schema = await self.schema_builder.build_dynamic_schema_for_object(obj_type, tool_prefix, obj_config)
-                    
-                    # Get list of available object types for primaryParentType enum
-                    available_types = [str(cfg.get("type_id")) for cfg in self.settings.OPENPAGES_OBJECT_TYPES if cfg.get("type_id")]
-                    
-                    # Get type definition for association fields (should be cached from obj_schema build)
-                    type_def = await self.schema_builder.get_type_definition(obj_type)
-                    
-                    upsert_obj_schema = self.schema_builder.create_upsert_schema(obj_schema, tool_prefix, available_types, type_def)
-                    self._update_tool_schema(build_tool_name("upsert"), upsert_obj_schema)
-                    
-                    # Query schema
-                    query_obj_schema = await self.schema_builder.build_dynamic_schema_for_query_object(obj_type, obj_config)
-                    self._update_tool_schema(build_tool_name("query") + "s", {
-                        "type": "object",
-                        "properties": query_obj_schema.get("properties", {}),
-                        "description": f"Query for {display_name.lower() if display_name else tool_prefix}s in OpenPages"
-                    })
-                    
-                    # Delete schema
-                    delete_obj_schema = {
-                        "type": "object",
-                        "properties": {
-                            "resource_id": {"type": "string", "description": f"Resource ID of the {tool_prefix} to delete"},
-                            "path": {"type": "string", "description": f"Path of the {tool_prefix} including the name"}
-                        },
-                        "description": f"Delete a {display_name.lower() if display_name else tool_prefix} in OpenPages"
-                    }
-                    self._update_tool_schema(build_tool_name("delete"), delete_obj_schema)
+                # Load type definition (this will cache it in schema_builder)
+                type_def = await self.schema_builder.get_type_definition(obj_type)
+                
+                if not type_def:
+                    logger.warning(f"Could not load type definition for {obj_type}, skipping schema update")
+                    continue
+                
+                # Update upsert tool schema
+                upsert_tool_name = build_tool_name("upsert")
+                try:
+                    base_schema = await self.schema_builder.build_dynamic_schema_for_object(
+                        obj_type, 
+                        display_name.lower() if display_name else tool_prefix,
+                        obj_config
+                    )
+                    upsert_schema = self.schema_builder.create_upsert_schema(
+                        base_schema, 
+                        obj_type,
+                        available_types,
+                        type_def
+                    )
+                    self._update_tool_schema(upsert_tool_name, upsert_schema)
+                    logger.debug(f"Updated {upsert_tool_name} with dynamic schema")
+                except Exception as e:
+                    logger.error(f"Error building upsert schema for {obj_type}: {e}")
+                
+                # Update query tool schema
+                query_tool_name = build_tool_name("query") + "s"
+                try:
+                    query_schema = await self.schema_builder.build_dynamic_schema_for_query_object(
+                        obj_type,
+                        obj_config
+                    )
+                    self._update_tool_schema(query_tool_name, query_schema)
+                    logger.debug(f"Updated {query_tool_name} with dynamic schema")
+                except Exception as e:
+                    logger.error(f"Error building query schema for {obj_type}: {e}")
             
+            # Mark schemas as loaded
             self.dynamic_schemas_loaded = True
             self.request_processor.update_tools(self.tools)
             self.request_processor.set_dynamic_schemas_loaded(True)
