@@ -101,7 +101,16 @@ async def lifespan(app: FastAPI):
     # Initialize the MCP server using the singleton pattern
     initialize_server()
     logger.info("MCP Server initialized")
-    
+
+    # Wire shared token cache between auth middleware and AuthService
+    if settings.AUTH_ENABLED and _shared_auth_cache is not None:
+        from src.app.mcp.remote.server_instance import get_server
+        server = get_server()
+        if server and hasattr(server, 'token_cache'):
+            # Replace the server's cache with the shared one (middleware already has it)
+            server.token_cache = _shared_auth_cache
+            server.auth_service.cache = _shared_auth_cache
+
     yield
     
     logger.info("Shutting down GRC MCP Server")
@@ -136,6 +145,23 @@ if settings.OBSERVABILITY_ENABLED:
             f"Rate limiting enabled: {settings.RATE_LIMIT_REQUESTS_PER_MINUTE} req/min, "
             f"burst={settings.RATE_LIMIT_BURST_SIZE}"
         )
+
+# Add auth middleware (executes before CORS, after rate limiting)
+# Create shared token cache at module level so both middleware and MCPServer can use it
+_shared_auth_cache = None
+if settings.AUTH_ENABLED:
+    from src.app.auth.middleware import AuthMiddleware
+    from src.app.auth.cache import TokenCache
+
+    _shared_auth_cache = TokenCache(settings.AUTH_TOKEN_CACHE_TTL, settings.AUTH_TOKEN_CACHE_MAX_SIZE)
+    app.add_middleware(
+        AuthMiddleware,
+        header_name=settings.AUTH_API_KEY_HEADER,
+        auth_url=settings.OPENPAGES_AUTHENTICATION_URL,
+        ssl_verify=settings.SSL_VERIFY,
+        cache=_shared_auth_cache,
+    )
+    logger.info(f"Auth middleware enabled with header: {settings.AUTH_API_KEY_HEADER}")
 
 # Add CORS middleware (executes first)
 app.add_middleware(
