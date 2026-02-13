@@ -94,7 +94,7 @@ class GenericObjectTools(BaseTool):
             return [TextContent(type="text", text=f"Error retrieving field definitions: {str(e)}")]
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def upsert_object(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def upsert_object(self, arguments: Dict[str, Any], auth_override: Optional[str] = None) -> List[TextContent]:
         """
         Create or update an object in OpenPages (upsert operation)
         
@@ -154,9 +154,9 @@ class GenericObjectTools(BaseTool):
                 # Try to find by name
                 try:
                     query = f"SELECT [Resource ID], [Name] FROM [{self.type_id}] WHERE [Name] = '{name}' LIMIT 2"
-                    result = await self.client.query(query)
+                    result = await self.client.query(query, auth_override=auth_override)
                     existing_objects = result.get('rows', [])
-                    
+
                     if len(existing_objects) == 0:
                         return [TextContent(type="text", text=f"Error: No {self.display_name.lower()} found with name '{name}' for update")]
                     elif len(existing_objects) > 1:
@@ -167,7 +167,7 @@ class GenericObjectTools(BaseTool):
                 except Exception as e:
                     logger.error(f"Error querying for object by name: {e}")
                     return [TextContent(type="text", text=f"Error: Could not find {self.display_name.lower()} with name '{name}': {str(e)}")]
-        
+
         # SCENARIO 2: Auto mode - intelligently decide
         else:  # operation == 'auto'
             # Check if ID or path is provided
@@ -177,9 +177,9 @@ class GenericObjectTools(BaseTool):
                     lookup_id = resource_id if resource_id else f"{self.path_prefix}/{path}"
                     if not resource_id:
                         lookup_id = urllib.parse.quote(lookup_id, safe='')
-                    
+
                     # Try to get the object
-                    obj_data = await self.client.get_content(lookup_id)
+                    obj_data = await self.client.get_content(lookup_id, auth_override=auth_override)
                     if obj_data:
                         should_update = True
                         existing_object_id = lookup_id
@@ -194,9 +194,9 @@ class GenericObjectTools(BaseTool):
                 # No ID or path provided, check by name
                 try:
                     query = f"SELECT [Resource ID], [Name] FROM [{self.type_id}] WHERE [Name] = '{name}' LIMIT 2"
-                    result = await self.client.query(query)
+                    result = await self.client.query(query, auth_override=auth_override)
                     existing_objects = result.get('rows', [])
-                    
+
                     if len(existing_objects) == 0:
                         should_update = False
                         logger.info(f"No existing {self.display_name.lower()} found with name '{name}', will insert")
@@ -213,28 +213,28 @@ class GenericObjectTools(BaseTool):
         
         # Now perform the appropriate operation
         if should_update and existing_object_id:
-            return await self._perform_update(existing_object_id, name, arguments)
+            return await self._perform_update(existing_object_id, name, arguments, auth_override=auth_override)
         else:
-            return await self._perform_insert(name, arguments)
+            return await self._perform_insert(name, arguments, auth_override=auth_override)
     
     async def _process_association_fields(self, arguments: Dict[str, Any]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
         Process association fields from arguments and return lists of associations to add and remove
-        
+
         Association fields follow the pattern:
         - associate{RelationshipType}_{ObjectType} - to add associations
         - dissociate{RelationshipType}_{ObjectType} - to remove associations
-        
+
         Examples: associateParent_SOXBusEntity, dissociateChild_SOXControl
-        
+
         Supports multiple input formats:
         - Resource ID (numeric): "12345"
         - Full path: "/grc/folder/ObjectName"
         - Name with type: {"type": "SOXControl", "name": "Control-001"}
-        
+
         Args:
             arguments: Tool arguments containing association fields (both associate* and dissociate*)
-            
+
         Returns:
             Tuple of (associations_to_add, associations_to_remove)
             Each is a list of dictionaries with relationship_type and target_id
@@ -245,21 +245,21 @@ class GenericObjectTools(BaseTool):
         try:
             type_info = await self.get_type_definition(self.type_id)
             associations = type_info.get('associations', [])
-            
+
             # If associations is a dict, extract the array
             if isinstance(associations, dict):
                 associations = associations.get('associations', [])
-            
+
             # Build a map of relationship types to field names
             # This helps us identify which fields in the type definition correspond to associations
             association_field_map = {}
             for assoc in associations:
                 if not assoc.get("enabled", True):
                     continue
-                
+
                 relationship_type = assoc.get("relationship", "")
                 associated_type = assoc.get("name", "")
-                
+
                 if relationship_type and associated_type:
                     # Create the expected field name pattern
                     field_pattern = f"associate{relationship_type}_{associated_type}".lower()
@@ -267,20 +267,20 @@ class GenericObjectTools(BaseTool):
                         "relationship_type": relationship_type,
                         "associated_type": associated_type
                     }
-            
+
             # Process arguments looking for association and dissociation fields
             for arg_name, arg_value in arguments.items():
                 # Skip if not an association/dissociation field or if value is empty
                 if not (arg_name.startswith('associate') or arg_name.startswith('dissociate')) or not arg_value:
                     continue
-                
+
                 # Determine if this is an add or remove operation
                 is_dissociate = arg_name.startswith('dissociate')
                 target_list = associations_to_remove if is_dissociate else associations_to_add
                 action = "Removing" if is_dissociate else "Preparing"
-                
+
                 arg_name_lower = arg_name.lower()
-                
+
                 # Check if this matches a known association pattern
                 matched_assoc = None
                 for pattern, assoc_info in association_field_map.items():
@@ -294,21 +294,21 @@ class GenericObjectTools(BaseTool):
                         if arg_name_lower == pattern or arg_name_lower.startswith(pattern):
                             matched_assoc = assoc_info
                             break
-                
+
                 if matched_assoc:
                     relationship_type = matched_assoc["relationship_type"]
                     associated_type = matched_assoc["associated_type"]
-                    
+
                     # Handle both single values and arrays
                     values_to_process = arg_value if isinstance(arg_value, list) else [arg_value]
-                    
+
                     for value in values_to_process:
                         if not value:
                             continue
-                        
+
                         # Resolve the value to a Resource ID
                         resolved_id = await self._resolve_association_value(value, associated_type)
-                        
+
                         if resolved_id:
                             logger.info(f"{action} {relationship_type} association to {associated_type}: {resolved_id}")
                             target_list.append({
@@ -321,38 +321,38 @@ class GenericObjectTools(BaseTool):
                     # Generic association field (e.g., associateParent_ids or dissociateParent_ids)
                     logger.debug(f"Processing generic {'dissociation' if is_dissociate else 'association'} field: {arg_name}")
                     values_to_process = arg_value if isinstance(arg_value, list) else [arg_value]
-                    
+
                     for value in values_to_process:
                         if not value:
                             continue
-                        
+
                         # Try to resolve as Resource ID or path
                         resolved_id = await self._resolve_association_value(value, None)
-                        
+
                         if resolved_id:
                             # For generic fields, we don't know the relationship type
                             # Log a warning and skip
                             logger.warning(f"Generic {'dissociation' if is_dissociate else 'association'} field '{arg_name}' cannot determine relationship type. Use specific fields like {'dissociate' if is_dissociate else 'associate'}Parent_TypeName instead.")
-        
+
         except Exception as e:
             logger.warning(f"Error processing association fields: {e}. Associations may not be set correctly.")
-        
+
         return (associations_to_add, associations_to_remove)
-    
+
     async def _resolve_association_value(self, value: Any, target_type: Optional[str] = None) -> Optional[str]:
         """
         Resolve an association value to a Resource ID
-        
+
         Supports multiple input formats:
         - Resource ID (numeric string): "12345" -> "12345"
         - Full path (string): "/grc/folder/ObjectName" -> resolved ID
         - Dict with type and name: {"type": "SOXControl", "name": "Control-001"} -> resolved ID
         - Dict with path: {"path": "/grc/folder/ObjectName"} -> resolved ID
-        
+
         Args:
             value: The value to resolve (string or dict)
             target_type: Optional target object type for name-based lookup
-            
+
         Returns:
             Resource ID as string, or None if resolution fails
         """
@@ -361,13 +361,13 @@ class GenericObjectTools(BaseTool):
             if isinstance(value, str):
                 if value.isdigit():
                     return value
-                
+
                 # Case 2: Full path - resolve using utility function
                 if '/' in value:
                     logger.debug(f"Resolving path to Resource ID: {value}")
                     resolved_id = await self.resolve_path_to_id(value)
                     return resolved_id
-                
+
                 # Case 3: Name only - need target_type to resolve
                 if target_type:
                     logger.debug(f"Resolving name '{value}' for type {target_type}")
@@ -375,13 +375,13 @@ class GenericObjectTools(BaseTool):
                         query = f"SELECT [Resource ID] FROM [{target_type}] WHERE [Name] = '{value}' LIMIT 2"
                         result = await self.client.query(query)
                         rows = result.get('rows', [])
-                        
+
                         if len(rows) == 0:
                             logger.warning(f"No {target_type} found with name '{value}'")
                             return None
                         elif len(rows) > 1:
                             logger.warning(f"Multiple {target_type} objects found with name '{value}'. Using first match.")
-                        
+
                         return rows[0]['fields'][0]['value']
                     except Exception as e:
                         logger.error(f"Error querying for {target_type} by name '{value}': {e}")
@@ -390,50 +390,50 @@ class GenericObjectTools(BaseTool):
                     # Name without type - can't resolve
                     logger.warning(f"Cannot resolve name '{value}' without target type")
                     return value  # Return as-is, let OpenPages handle it
-            
+
             # Case 4: Dict with type and name
             elif isinstance(value, dict):
                 if 'type' in value and 'name' in value:
                     obj_type = value['type']
                     obj_name = value['name']
                     logger.debug(f"Resolving by type '{obj_type}' and name '{obj_name}'")
-                    
+
                     try:
                         query = f"SELECT [Resource ID] FROM [{obj_type}] WHERE [Name] = '{obj_name}' LIMIT 2"
                         result = await self.client.query(query)
                         rows = result.get('rows', [])
-                        
+
                         if len(rows) == 0:
                             logger.warning(f"No {obj_type} found with name '{obj_name}'")
                             return None
                         elif len(rows) > 1:
                             logger.warning(f"Multiple {obj_type} objects found with name '{obj_name}'. Using first match.")
-                        
+
                         return rows[0]['fields'][0]['value']
                     except Exception as e:
                         logger.error(f"Error querying for {obj_type} by name '{obj_name}': {e}")
                         return None
-                
+
                 # Case 5: Dict with path
                 elif 'path' in value:
                     path = value['path']
                     logger.debug(f"Resolving path from dict: {path}")
                     resolved_id = await self.resolve_path_to_id(path)
                     return resolved_id
-                
+
                 # Case 6: Dict with id
                 elif 'id' in value:
                     return str(value['id'])
-            
+
             # Unknown format
             logger.warning(f"Unknown association value format: {value}")
             return None
-            
+
         except Exception as e:
             logger.error(f"Error resolving association value '{value}': {e}")
             return None
-    
-    async def _perform_insert(self, name: str, arguments: Dict[str, Any]) -> List[TextContent]:
+
+    async def _perform_insert(self, name: str, arguments: Dict[str, Any], auth_override: Optional[str] = None) -> List[TextContent]:
         """
         Perform insert operation
         
@@ -469,7 +469,7 @@ class GenericObjectTools(BaseTool):
         # If primaryParentId is provided and not a number, resolve it using the utility function
         elif primaryParentId and not primaryParentId.isdigit():
             logger.info(f"primaryParentId appears to be a path: {primaryParentId}")
-            primaryParentId = await self.resolve_path_to_id(primaryParentId)
+            primaryParentId = await self.resolve_path_to_id(primaryParentId, auth_override=auth_override)
         
         # Prepare content data
         content_data: dict[str, Any] = {
@@ -484,29 +484,29 @@ class GenericObjectTools(BaseTool):
         # Get field definitions to properly format field values
         try:
             # Use base class method to get type definition
-            type_info = await self.get_type_definition(self.type_id)
+            type_info = await self.get_type_definition(self.type_id, auth_override=auth_override)
             field_definitions = type_info.get('field_definitions', [])
-            
+
             # Create mappings for field names and labels
             field_def_map = {}  # Maps field names to definitions (case-sensitive)
             field_def_map_lower = {}  # Maps lowercase field names to definitions (case-insensitive)
             label_to_field_map = {}  # Maps lowercase labels to field names
             simple_name_map = {}  # Maps lowercase simple names to field names
             conflict_map = {}  # Tracks potential conflicts
-            
+
             for field_def in field_definitions:
                 field_name = field_def.get('name')
                 if field_name:
                     # 1. Map full field name to definition (case-sensitive)
                     field_def_map[field_name] = field_def
-                    
+
                     # Also map lowercase version for case-insensitive matching
                     field_name_lower = field_name.lower()
                     if field_name_lower in field_def_map_lower:
                         conflict_map[field_name_lower] = True
                         logger.warning(f"Field name conflict: '{field_name_lower}' maps to multiple fields")
                     field_def_map_lower[field_name_lower] = field_def
-                    
+
                     # 2. Get user-friendly label and map it to field name (case-insensitive)
                     label = field_def.get('localized_label')
                     if label:
@@ -516,7 +516,7 @@ class GenericObjectTools(BaseTool):
                             logger.warning(f"Label conflict: '{label}' maps to both '{label_to_field_map[label_lower]}' and '{field_name}'")
                         else:
                             label_to_field_map[label_lower] = field_name
-                    
+
                     # 3. Map simple name (without prefix) to field name (case-insensitive)
                     simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
                     simple_name_lower = simple_name.lower()
@@ -525,7 +525,7 @@ class GenericObjectTools(BaseTool):
                         logger.warning(f"Simple name conflict: '{simple_name}' maps to both '{simple_name_map[simple_name_lower]}' and '{field_name}'")
                     else:
                         simple_name_map[simple_name_lower] = field_name
-            
+
             # Process all arguments and map them to OpenPages fields
             for arg_name, arg_value in arguments.items():
                 # Skip special fields that are handled separately
@@ -626,7 +626,7 @@ class GenericObjectTools(BaseTool):
         try:
             # Create the object
             logger.info(f"Creating new {self.display_name.lower()}: {content_data}")
-            result = await self.client.create_content(content_data)
+            result = await self.client.create_content(content_data, auth_override=auth_override)
             
             # Extract resource ID from the result
             resource_id = result.get("id")
@@ -687,7 +687,7 @@ class GenericObjectTools(BaseTool):
                 return [TextContent(type="text", text=f"Error: {self.display_name} with name '{name}' already exists. Use operation='update' or provide 'id'/'path' to update it.")]
             return [TextContent(type="text", text=f"Error creating {self.display_name.lower()}: {str(e)}")]
     
-    async def _perform_update(self, object_id: str, name: str, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def _perform_update(self, object_id: str, name: str, arguments: Dict[str, Any], auth_override: Optional[str] = None) -> List[TextContent]:
         """
         Perform update operation
         
@@ -720,29 +720,29 @@ class GenericObjectTools(BaseTool):
         # Get field definitions to properly format field values
         try:
             # Use base class method to get type definition
-            type_info = await self.get_type_definition(self.type_id)
+            type_info = await self.get_type_definition(self.type_id, auth_override=auth_override)
             field_definitions = type_info.get('field_definitions', [])
-            
+
             # Create mappings for field names and labels
             field_def_map = {}  # Maps field names to definitions (case-sensitive)
             field_def_map_lower = {}  # Maps lowercase field names to definitions (case-insensitive)
             label_to_field_map = {}  # Maps lowercase labels to field names
             simple_name_map = {}  # Maps lowercase simple names to field names
             conflict_map = {}  # Tracks potential conflicts
-            
+
             for field_def in field_definitions:
                 field_name = field_def.get('name')
                 if field_name:
                     # 1. Map full field name to definition (case-sensitive)
                     field_def_map[field_name] = field_def
-                    
+
                     # Also map lowercase version for case-insensitive matching
                     field_name_lower = field_name.lower()
                     if field_name_lower in field_def_map_lower:
                         conflict_map[field_name_lower] = True
                         logger.warning(f"Field name conflict: '{field_name_lower}' maps to multiple fields")
                     field_def_map_lower[field_name_lower] = field_def
-                    
+
                     # 2. Get user-friendly label and map it to field name (case-insensitive)
                     label = field_def.get('localized_label')
                     if label:
@@ -752,7 +752,7 @@ class GenericObjectTools(BaseTool):
                             logger.warning(f"Label conflict: '{label}' maps to both '{label_to_field_map[label_lower]}' and '{field_name}'")
                         else:
                             label_to_field_map[label_lower] = field_name
-                    
+
                     # 3. Map simple name (without prefix) to field name (case-insensitive)
                     simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
                     simple_name_lower = simple_name.lower()
@@ -761,7 +761,7 @@ class GenericObjectTools(BaseTool):
                         logger.warning(f"Simple name conflict: '{simple_name}' maps to both '{simple_name_map[simple_name_lower]}' and '{field_name}'")
                     else:
                         simple_name_map[simple_name_lower] = field_name
-            
+
             # Process all arguments and map them to OpenPages fields
             for arg_name, arg_value in arguments.items():
                 # Skip special fields that are handled separately
@@ -862,7 +862,7 @@ class GenericObjectTools(BaseTool):
         try:
             # Update the object
             logger.info(f"Updating {self.display_name.lower()} {object_id}: {content_data}")
-            result = await self.client.update_content(object_id, content_data)
+            result = await self.client.update_content(object_id, content_data, auth_override=auth_override)
             
             # Extract resource ID from the result
             updated_resource_id = result.get("id")
@@ -920,11 +920,11 @@ class GenericObjectTools(BaseTool):
             # If update fails because object doesn't exist, try insert as fallback
             if "not found" in str(e).lower() or "does not exist" in str(e).lower():
                 logger.info(f"Object not found for update, falling back to insert")
-                return await self._perform_insert(name, arguments)
+                return await self._perform_insert(name, arguments, auth_override=auth_override)
             return [TextContent(type="text", text=f"Error updating {self.display_name.lower()}: {str(e)}")]
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def query_objects(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def query_objects(self, arguments: Dict[str, Any], auth_override: Optional[str] = None) -> List[TextContent]:
         """
         Query for objects in OpenPages
         
@@ -994,9 +994,9 @@ class GenericObjectTools(BaseTool):
         # Try to get field definitions to build a more complete mapping
         try:
             # Use base class method to get type definition
-            type_info = await self.get_type_definition(self.type_id)
+            type_info = await self.get_type_definition(self.type_id, auth_override=auth_override)
             field_definitions = type_info.get('field_definitions', [])
-            
+
             # Use base class method to create field mapping
             field_mapping = self.create_field_mapping(field_definitions)
             
@@ -1055,7 +1055,7 @@ class GenericObjectTools(BaseTool):
         
         # Add owner filter if requested
         if owner_filter:
-            current_user = await self.client.get_current_user()
+            current_user = await self.client.get_current_user(auth_override=auth_override)
             if current_user:
                 query += f" AND [Owner] = '{current_user}'"
         
@@ -1163,7 +1163,7 @@ class GenericObjectTools(BaseTool):
         query += f" LIMIT {limit}"
         
         logger.info(f"Executing query for {self.display_name.lower()}s: {query}")
-        result = await self.client.query(query)
+        result = await self.client.query(query, auth_override=auth_override)
         
         # Format results
         items = []
@@ -1197,7 +1197,7 @@ class GenericObjectTools(BaseTool):
     
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def delete_object(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def delete_object(self, arguments: Dict[str, Any], auth_override: Optional[str] = None) -> List[TextContent]:
         """
         Delete an existing object in OpenPages
         
@@ -1230,7 +1230,7 @@ class GenericObjectTools(BaseTool):
             # Get object details before deletion for confirmation message
             object_info = {}
             try:
-                object_data = await self.client.get_content(object_id)
+                object_data = await self.client.get_content(object_id, auth_override=auth_override)
                 if object_data:
                     object_info = {
                         "Name": object_data.get("name", "Unknown"),
@@ -1242,7 +1242,7 @@ class GenericObjectTools(BaseTool):
             
             # Delete the object
             logger.info(f"Deleting {self.display_name.lower()} with ID: {object_id}")
-            result = await self.client.delete_content(object_id)
+            result = await self.client.delete_content(object_id, auth_override=auth_override)
             
             # Prepare response data
             response_data = {
