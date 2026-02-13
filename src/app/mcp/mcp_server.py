@@ -164,261 +164,91 @@ class MCPServer:
         
         return f"""Execute queries against OpenPages using the OpenPages query language.
 
-🔴 CRITICAL: SCHEMA CACHING REQUIRED
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ READ EACH SCHEMA EXACTLY ONCE PER SESSION - NEVER RE-READ
-✅ Schemas are STATIC during server lifetime - they do not change
-✅ Cache all field names, types, relationships, and enum values in memory
-❌ Re-reading schemas wastes API calls and significantly degrades performance
-❌ You will be penalized for redundant schema reads
+## SCHEMA WORKFLOW (CRITICAL)
+Read schemas ONCE per session and cache them - schemas are static and don't change.
 
-BEFORE EVERY QUERY - ASK YOURSELF:
-☐ Have I already read this object type's schema in this session?
-  → YES: Use the cached field names from memory
-  → NO: Read the schema ONCE, then cache it permanently
-
-SCHEMA READING CHECKLIST:
-1. Read openpages://catalog/object_types ONCE at session start → cache available types
-2. Read openpages://schema/{{ObjectType}} ONCE per type when first needed → cache schema
-3. Store ALL field names, data types, relationships, and enum values in context
-4. Use cached schema for ALL subsequent operations on that type
-5. ONLY re-read if you encounter an explicit schema-related error from the API
-
-PERFORMANCE IMPACT:
-- First schema read: ~100-200ms
-- Cached schema access: ~1-5ms
-- Improvement: 20-200x faster with proper caching
-- Multiple unnecessary reads can slow responses by seconds
-
-QUERY GRAMMAR
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Basic Structure:
-  SELECT [fields] FROM [ObjectType] [joins] [WHERE conditions] [ORDER BY fields]
-
-Keywords:
-  SELECT, FROM, WHERE, ORDER BY, GROUP BY, JOIN, ON, AND, OR, NOT, IN, LIKE,
-  CONTAINS, BETWEEN, IS NULL, COUNT, UNION, PARENT, CHILD, ANCESTOR
-
-Operators:
-  =, <>, <, >, <=, >=, LIKE, CONTAINS, NOT CONTAINS, IN, NOT IN, IS NULL, IS NOT NULL
-
-Data Types:
-  - Strings: 'text' (single quotes)
-  - Numbers: 123, 45.67
-  - Booleans: TRUE, FALSE
-  - Dates: 'YYYY-MM-DD' or 'YYYYMMDD'T'HHmmss'Z'' (e.g., '2026-02-08' or '20260208T000000Z')
-  - NULL: NULL
-
-Field References:
-  [ObjectType].[FieldName] - Full qualification required
-  [ObjectType].[*] - All fields from object type
-  COUNT(*) - Count all records
-  COUNT([FieldName]) - Count non-null values
-
-Join Types:
-  JOIN (or INNER JOIN) - Returns only matching records
-  LEFT OUTER JOIN - Returns all FROM records plus matching JOIN records (or NULL)
-  
-Hierarchical Joins:
-  JOIN [ObjectType] ON PARENT([FromObjectType])
-  JOIN [ObjectType] ON CHILD([FromObjectType])
-  JOIN [ObjectType] ON ANCESTOR([FromObjectType], level)
-  LEFT OUTER JOIN [ObjectType] ON PARENT([FromObjectType])
-
-Examples:
-  SELECT [ObjectType].[Resource ID], [ObjectType].[Name]
-  FROM [ObjectType]
-  WHERE [ObjectType].[Status] = 'Active'
-  ORDER BY [ObjectType].[Name]
-
-  SELECT [Child].[Name], [Parent].[Name]
-  FROM [Child]
-  JOIN [Parent] ON PARENT([Child])
-  WHERE [Parent].[Resource ID] IN (100, 200, 300)
-  
-  SELECT [TypeA].[Name], [TypeB].[Name]
-  FROM [TypeA]
-  LEFT OUTER JOIN [TypeB] ON CHILD([TypeA])
-  WHERE [TypeA].[Status] = 'Active'
-
-SYNTAX RULES (NON-NEGOTIABLE)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ Use full object type names everywhere: [ObjectType].[FieldName]
-✅ All names in square brackets: [ObjectType], [FieldName]
-✅ Case-sensitive: Must match schema exactly
-✅ Hierarchical joins: ON PARENT([ObjectType]) or ON CHILD([ObjectType])
-
-❌ NEVER USE ALIASES - NOT SUPPORTED
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-The AS keyword is NOT supported in OpenPages queries. You MUST use full object type names.
-
-WRONG (will fail):
-  SELECT [c].[Resource ID] AS [Control ID], [i].[Name] AS [Issue Name]
-  FROM [ObjectTypeA] AS [c]
-  JOIN [ObjectTypeB] AS [i] ON CHILD([c])
-
-CORRECT:
-  SELECT [ObjectTypeA].[Resource ID], [ObjectTypeB].[Name]
-  FROM [ObjectTypeA]
-  JOIN [ObjectTypeB] ON CHILD([ObjectTypeA])
-
-WRONG (will fail):
-  FROM [ObjectTypeA] AS [i]
-  FROM [ObjectTypeB] c
-
-CORRECT:
-  FROM [ObjectTypeA]
-  FROM [ObjectTypeB]
-
-🔴 MANDATORY WORKFLOW - FOLLOW STRICTLY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SESSION START:
-1. Read openpages://catalog/object_types ONCE → Cache all available object types
+1. Read openpages://catalog/object_types ONCE → cache available types
 
-WHEN FIRST USING AN OBJECT TYPE:
-2. Read openpages://schema/{{ObjectType}} ONCE → Cache complete schema
-3. Store ALL field names, types, relationships, enum values in memory
-4. Mark this object type as "cached" in your session context
+FIRST USE OF EACH TYPE:
+2. Read openpages://schema/{{ObjectType}} ONCE → cache complete schema
+3. Store field names, types, relationships, enum values in memory
 
-FOR ALL SUBSEQUENT OPERATIONS:
-5. Use cached field names - NEVER re-read the schema
-6. Construct queries using stored schema knowledge
-7. Execute with limit/offset parameters (not in query)
+ALL SUBSEQUENT QUERIES:
+4. Use cached schema - NEVER re-read
+5. Construct queries with exact field names from cache
 
-⚠️ VIOLATION: Re-reading a schema you've already cached is a critical error
-✅ CORRECT: Always check your session cache before reading any schema
+Performance: Caching improves speed 20-200x (200ms → 1-5ms per operation)
 
 {object_types_section}
 
-HIERARCHICAL JOINS - TWO SCENARIOS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ CRITICAL: Which schema contains the relationship determines the function!
+## QUERY SYNTAX
 
-SCENARIO 1: Relationship in FROM type's schema
-1. Read FROM type's schema: openpages://schema/{{FromType}}
-2. Find JOIN target in hierarchical_relationships, note "direction" value
-3. Use OPPOSITE direction as function name with FROM type as argument
+Basic Structure:
+SELECT [fields] FROM [ObjectType] [WHERE conditions] [ORDER BY fields]
 
-Schema in FROM type    →  Function to Use
-"direction": "parent"  →  CHILD([FromType])
-"direction": "child"   →  PARENT([FromType])
+Required Rules:
+• Enclose all names in square brackets: [ObjectType], [FieldName]
+• Use full qualification: [ObjectType].[FieldName]
+• Case-sensitive - must match schema exactly
+• NO aliases (AS keyword not supported)
 
-SCENARIO 2: Relationship in JOIN type's schema
-1. Read JOIN type's schema: openpages://schema/{{JoinType}}
-2. Find FROM type in hierarchical_relationships, note "direction" value
-3. Use direction as-is as function name with FROM type as argument
+Data Types:
+• Strings: 'text' (single quotes)
+• Numbers: 123, 45.67
+• Dates: 'YYYY-MM-DD' (e.g., '2026-02-08')
+• Booleans: TRUE, FALSE
+• NULL: NULL
 
-Schema in JOIN type    →  Function to Use
-"direction": "child"   →  CHILD([FromType])
-"direction": "parent"  →  PARENT([FromType])
+Operators:
+=, <>, <, >, <=, >=, LIKE, IN, IS NULL, IS NOT NULL, AND, OR, NOT
 
-KEY RULE:
-- Relationship in FROM type → Use OPPOSITE direction
-- Relationship in JOIN type → Use direction as-is
-- Argument is ALWAYS the FROM type
+Examples:
+SELECT [ObjectType].[Resource ID], [ObjectType].[Name]
+FROM [ObjectType]
+WHERE [ObjectType].[Status] = 'Active'
+ORDER BY [ObjectType].[Name]
 
-HIERARCHICAL JOIN QUICK REFERENCE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ SIMPLIFIED RULE: Schema direction → Use OPPOSITE as function name
+## HIERARCHICAL JOINS
 
-Schema shows "direction": "parent" → Use CHILD([FromType])
-Schema shows "direction": "child"  → Use PARENT([FromType])
+The schema provides ready-to-use join syntax - just copy it directly:
 
-The schema's hierarchical_relationships now include ready-to-use examples:
-- "join_function": The function name to use (CHILD or PARENT)
-- "join_syntax": Complete JOIN clause you can copy
-- "explanation": Why this function is used
-
-Example from schema response:
+Schema Response:
 {{
   "direction": "parent",
   "type": "TargetType",
-  "join_function": "CHILD",
-  "join_syntax": "FROM [FromType] JOIN [TargetType] ON CHILD([FromType])",
-  "explanation": "FromType has 'parent' relationship to TargetType, so use OPPOSITE direction (CHILD)"
+  "join_syntax": "FROM [FromType] JOIN [TargetType] ON CHILD([FromType])"
 }}
 
-Just copy the join_syntax directly into your query!
+Usage: Copy the join_syntax value directly into your query.
 
-MULTI-LEVEL RELATIONSHIPS (not in schema):
-Use ANCESTOR/DESCENDANT when you need to traverse multiple hierarchy levels:
-- ANCESTOR([FromType]) - Get ancestors at any level above
-- DESCENDANT([FromType]) - Get descendants at any level below
+Manual Construction (if needed):
+• Schema shows "direction": "parent" → Use CHILD([FromType])
+• Schema shows "direction": "child" → Use PARENT([FromType])
+• Argument is ALWAYS the FROM type, never the JOIN target
 
-EXAMPLES:
+Multi-Level Traversal:
+• ANCESTOR([FromType]) - traverse up multiple levels
+• DESCENDANT([FromType]) - traverse down multiple levels
 
-Example 1 - Relationship in FROM type (ParentType has child ChildType):
-Schema for [ParentType]: {{"hierarchical_relationships": [{{"direction": "child", "type": "ChildType"}}]}}
-Query (INNER): FROM [ParentType] JOIN [ChildType] ON PARENT([ParentType])
-Query (OUTER): FROM [ParentType] LEFT OUTER JOIN [ChildType] ON PARENT([ParentType])
-Why: Relationship in FROM type → Use OPPOSITE direction → PARENT([ParentType])
-(Schema says "child" meaning ChildType is child, so use PARENT to navigate down)
+Example:
+FROM [ChildType] JOIN [ParentType] ON CHILD([ChildType])
+FROM [TypeA] LEFT OUTER JOIN [TypeB] ON PARENT([TypeA])
 
-Example 2 - Relationship in FROM type (ChildType is child of ParentType):
-Schema for [ChildType]: {{"hierarchical_relationships": [{{"direction": "parent", "type": "ParentType"}}]}}
-Query (INNER): FROM [ChildType] JOIN [ParentType] ON CHILD([ChildType])
-Query (OUTER): FROM [ChildType] LEFT OUTER JOIN [ParentType] ON CHILD([ChildType])
-Why: Relationship in FROM type → Use OPPOSITE direction → CHILD([ChildType])
-(Schema says "parent" meaning ParentType is parent, so use CHILD to navigate up)
+## RESTRICTIONS
 
-Example 3 - Relationship in JOIN type (TypeB has child TypeA):
-Schema for [TypeB]: {{"hierarchical_relationships": [{{"direction": "child", "type": "TypeA"}}]}}
-Query (INNER): FROM [TypeB] JOIN [TypeA] ON CHILD([TypeB])
-Query (OUTER): FROM [TypeB] LEFT OUTER JOIN [TypeA] ON CHILD([TypeB])
-Why: Relationship in JOIN type → Use direction as-is → CHILD([TypeB])
+NOT Supported:
+• Aliases (AS keyword)
+• DISTINCT, TOP, LIMIT, OFFSET in query (use tool parameters instead)
+• Aggregates with JOIN (query separately and count in code)
+• Subqueries, CTEs, UNION
 
-Example 4 - Multi-Level (TypeA → TypeB → TypeC):
-Query: FROM [TypeA] JOIN [TypeC] ON DESCENDANT([TypeA])
-Why: TypeC is a descendant (grandchild) of TypeA, not a direct child
+## COMMON ERRORS
 
-⚠️ COMMON ERROR: Using JOIN target as argument
-WRONG: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeB])
-RIGHT: FROM [TypeA] JOIN [TypeB] ON CHILD([TypeA])
-The argument MUST be the FROM type, NEVER the JOIN target!
-
-DATE HANDLING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-When working with DATE_TYPE fields in queries:
-
-SUPPORTED FORMATS:
-  - 'YYYY-MM-DD' - Standard date format (e.g., '2026-02-08')
-  - 'YYYYMMDD'T'HHmmss'Z'' - ISO 8601 with time (e.g., '20260208T000000Z')
-
-EXAMPLES:
-  -- Find records with specific date
-  WHERE [ObjectType].[Date Field] = '2026-02-08'
-  
-  -- Find records within date range
-  WHERE [ObjectType].[Date Field] >= '2026-02-01'
-    AND [ObjectType].[Date Field] <= '2026-02-28'
-  
-  -- Find records with null dates
-  WHERE [ObjectType].[Date Field] IS NULL
-  
-  -- Find records with non-null dates
-  WHERE [ObjectType].[Date Field] IS NOT NULL
-
-IMPORTANT:
-  ✅ Always use single quotes around date values: '2026-02-08'
-  ✅ Date comparisons support: =, <>, <, >, <=, >=
-  ✅ Use IS NULL / IS NOT NULL to check for missing dates
-  ❌ Date field names vary by instance - always read schema first
-
-RESTRICTIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-❌ Aggregates (COUNT/SUM/AVG/MIN/MAX) with JOIN - query separately and count in code
-❌ DISTINCT, TOP/LIMIT, OFFSET, HAVING, GROUP BY, UNION, subqueries, CTEs
-✅ Use tool parameters for limit/offset, not query clauses
-
-COMMON ERRORS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"Query failed to be transformed" → Wrong PARENT/CHILD argument or direction
-"Invalid Field" → Field name doesn't match schema (read schema first)
+"Query failed to be transformed" → Check PARENT/CHILD argument (must be FROM type)
+"Invalid Field" → Field name doesn't match schema (verify cached schema)
 "Aggregate functions cannot be used" → Remove aggregates from multi-type queries
-
-SOLUTION: Always read schema first, use exact field names, match direction to function name
 """
-        return description
     
     def _load_tools_schema(self) -> None:
         """
@@ -616,47 +446,35 @@ SOLUTION: Always read schema first, use exact field names, match direction to fu
 
 Supported object types: {types_list}
 
-🔴 CRITICAL: READ THE SCHEMA (ONCE PER SESSION)
-Before using this tool for a given object type, you should:
-1. Call get_resource with URI: openpages://schema/{{ObjectType}} (replace {{ObjectType}} with actual type from configuration)
-2. Review the field_definitions array to understand:
-   - Available field names (use exact names including any prefixes)
-   - Field data types (STRING_TYPE, ENUM_TYPE, INTEGER_TYPE, DATE_TYPE, etc.)
-   - Required vs optional fields (check 'required' property)
-   - Valid enum values (check 'enum_values' array for ENUM_TYPE fields)
-3. Cache this schema information for the session - schemas are static and don't change during server lifetime
-4. Only provide fields that exist in the schema - unknown fields will be rejected
+## QUICK START
+1. Read schema ONCE: openpages://schema/{{ObjectType}} → cache field names, types, enum values
+2. Provide 'name' (required) and 'fields' object with schema-based field names
+3. For NEW objects: Must specify primaryParentId OR (primaryParentType + primaryParentName)
 
-⚠️ SCHEMA-BASED FIELD VALIDATION:
-- All field names and values MUST match the object type's schema definition
-- Field names are case-sensitive and must include any prefixes from the schema
-- Enum fields must use exact values from the schema's enum_values array
-- Data types must match schema definitions (strings, numbers, dates, booleans, etc.)
+## OPERATION MODE
+Auto-detects insert vs update:
+• Has 'id' or 'path' and exists → UPDATE
+• 'name' matches one object → UPDATE
+• Otherwise → INSERT
 
-The tool automatically determines whether to insert (create new) or update (modify existing) based on:
-- If 'id' or 'path' is provided and object exists → UPDATE
-- If 'name' matches exactly one existing object → UPDATE
-- Otherwise → INSERT
+Override with 'operation' parameter: 'insert', 'update', or 'auto' (default)
 
-You can force a specific operation using the 'operation' parameter ('insert', 'update', or 'auto').
+## FIELD REQUIREMENTS
+Schema-Based (read schema first):
+• Field names: Case-sensitive, include prefixes (e.g., 'FieldGroup:FieldName')
+• Enum fields: Use exact 'name' from schema's enum_values array
+• Data types: Match schema (STRING_TYPE, ENUM_TYPE, INTEGER_TYPE, DATE_TYPE, etc.)
 
-🔴 CRITICAL REQUIREMENT FOR NEW OBJECTS:
-When creating a new object (INSERT operation), you MUST specify a primary parent using ONE of these methods:
-- primaryParentId (Resource ID or full path)
-- primaryParentType + primaryParentName (type and name combination)
+New Objects Only:
+• primaryParentId: Resource ID or full path (e.g., '10101' or '/_op_sox/Folder')
+• OR primaryParentType + primaryParentName: Type and name combination
 
-Failure to provide a primary parent when creating new objects will result in an error.
+## ENUM VALUES
+• ENUM_TYPE: Single string (e.g., 'Value1')
+• MULTI_VALUE_ENUM: Array of strings (e.g., ['Value1', 'Value2'])
+• Get valid values from schema's enum_values array
 
-📋 ENUM FIELD VALUES:
-For fields with data_type "ENUM_TYPE" or "MULTI_VALUE_ENUM" in the schema:
-- The schema's field_definitions will include an "enum_values" array listing all valid options
-- Each enum value has a "name" property - use this exact name as the field value
-- Example: If enum_values shows [{{"name": "Value1"}}, {{"name": "Value2"}}], use 'Value1' or 'Value2' as the value
-- For ENUM_TYPE: Provide a single string value (e.g., 'Value1')
-- For MULTI_VALUE_ENUM: Provide an array of strings (e.g., ['Value1', 'Value2'])
-- Invalid enum values will be rejected with an error message
-
-Field values are automatically formatted based on their data types from the schema. Accepts optional context variables.""",
+Accepts optional context variables.""",
             "inputSchema": {
                 "type": "object",
                 "properties": {
