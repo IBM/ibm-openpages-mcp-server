@@ -121,10 +121,6 @@ class Settings(BaseSettings):
 
     # Authentication framework settings
     AUTH_ENABLED: bool = True
-    AUTH_API_KEY_HEADER: str = "X-Api-Key"
-    AUTH_TOKEN_CACHE_TTL: int = 3600  # seconds
-    AUTH_TOKEN_CACHE_MAX_SIZE: int = 100
-    AUTH_RETRY_ON_401: bool = True
     
     # Path to object types configuration file
     OBJECT_TYPES_CONFIG_PATH: str = "object_types.json"

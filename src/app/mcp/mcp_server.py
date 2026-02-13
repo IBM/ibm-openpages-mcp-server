@@ -105,13 +105,8 @@ class MCPServer:
             raise RuntimeError(f"Failed to initialize tool modules: {e}")
         
         # Initialize auth service
-        from src.app.auth.cache import TokenCache
         from src.app.auth.service import AuthService
-        self.token_cache = TokenCache(
-            default_ttl=self.settings.AUTH_TOKEN_CACHE_TTL,
-            max_size=self.settings.AUTH_TOKEN_CACHE_MAX_SIZE
-        )
-        self.auth_service = AuthService(self.settings, self.token_cache)
+        self.auth_service = AuthService(self.settings)
 
         # Initialize remaining modular components
         # Pass self reference to ToolHandlers for schema loading capability

@@ -1,10 +1,8 @@
 """
 Token Exchange Module
 
-Standalone async functions for exchanging API keys for tokens
+Standalone async functions for exchanging credentials for tokens
 across IBM Cloud IAM, MCSP, and CP4D authentication services.
-
-Extracted from OpenPagesClient to enable reuse by the auth middleware.
 """
 
 import logging
@@ -172,29 +170,3 @@ async def fetch_cp4d_token(username: str, password: str, auth_url: str, ssl_veri
     except httpx.RequestError as e:
         logger.error(f"Request error fetching CP4D token: {e}")
         raise RuntimeError(f"Network error during CP4D token exchange: {e}") from e
-
-
-async def exchange_api_key(api_key: str, auth_url: str, ssl_verify: bool = True) -> str:
-    """
-    High-level API key exchange: detect auth type and fetch token.
-
-    Args:
-        api_key: API key to exchange
-        auth_url: Authentication URL (used to detect auth type)
-        ssl_verify: Whether to verify SSL certificates
-
-    Returns:
-        Access token string
-
-    Raises:
-        ValueError: If auth type does not support API key exchange
-        RuntimeError: If token exchange fails
-    """
-    auth_type = detect_auth_type(auth_url)
-
-    if auth_type == 'ibm_cloud':
-        return await fetch_ibm_cloud_token(api_key, auth_url)
-    elif auth_type == 'mcsp':
-        return await fetch_mcsp_token(api_key, auth_url)
-    else:
-        raise ValueError(f"API key exchange not supported for auth type: {auth_type}")

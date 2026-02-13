@@ -149,7 +149,6 @@ All authentication settings are managed through Pydantic Settings (`src/app/conf
 | `OPENPAGES_INSTANCE_NAME` | `""` | Optional, for CP4D deployments |
 | `SSL_VERIFY` | `True` | Disable for self-signed certs (CP4D) |
 | `OPENPAGES_BASE_URL` | `""` | Full URL including CP4D instance path |
-
 See `.env.example` for all available options.
 
 ## Key Code References

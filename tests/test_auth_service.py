@@ -6,7 +6,6 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from src.app.auth.service import AuthService, AuthResult
-from src.app.auth.cache import TokenCache
 from src.app.auth.providers import PassthroughTokenProvider, ServerCredentialProvider
 
 
@@ -49,82 +48,40 @@ class TestAuthService:
     def _make_settings(self, auth_enabled=True):
         settings = MagicMock()
         settings.AUTH_ENABLED = auth_enabled
-        settings.OPENPAGES_AUTHENTICATION_URL = "https://iam.cloud.ibm.com/identity/token"
-        settings.SSL_VERIFY = True
         return settings
 
     @pytest.mark.asyncio
-    async def test_context_token_wins_over_api_key_token(self):
-        """Precedence: context_token wins over api_key_token"""
+    async def test_context_token_produces_passthrough(self):
+        """context_token resolves to PassthroughTokenProvider"""
         settings = self._make_settings()
-        cache = TokenCache()
-        service = AuthService(settings, cache)
+        service = AuthService(settings)
 
         result = await service.resolve_for_request(
             context_token="Bearer wxo_token",
-            api_key_token="Bearer api_key_token",
         )
 
         assert result.auth_override == "Bearer wxo_token"
 
     @pytest.mark.asyncio
-    async def test_api_key_token_wins_over_none(self):
-        """Precedence: api_key_token wins over None (server creds)"""
-        settings = self._make_settings()
-        cache = TokenCache()
-        service = AuthService(settings, cache)
-
-        result = await service.resolve_for_request(
-            context_token=None,
-            api_key_token="Bearer exchanged_token",
-        )
-
-        assert result.auth_override == "Bearer exchanged_token"
-
-    @pytest.mark.asyncio
     async def test_server_creds_when_nothing_provided(self):
-        """Precedence: None -> auth_override is None (server credentials)"""
+        """No context_token -> auth_override is None (server credentials)"""
         settings = self._make_settings()
-        cache = TokenCache()
-        service = AuthService(settings, cache)
+        service = AuthService(settings)
 
         result = await service.resolve_for_request(
             context_token=None,
-            api_key_token=None,
         )
 
         assert result.auth_override is None
 
     @pytest.mark.asyncio
-    async def test_resolve_with_retry_api_key(self):
-        """resolve_for_request_with_retry with api_key uses ApiKeyTokenProvider"""
+    async def test_context_token_wins_over_fallback(self):
+        """context_token takes precedence over server credentials"""
         settings = self._make_settings()
-        cache = TokenCache()
-        service = AuthService(settings, cache)
+        service = AuthService(settings)
 
-        with patch("src.app.auth.providers.exchange_api_key", new_callable=AsyncMock) as mock_exchange:
-            mock_exchange.return_value = "new_token"
-
-            result = await service.resolve_for_request_with_retry(
-                context_token=None,
-                api_key="my_api_key",
-                api_key_token=None,
-            )
-
-            assert result.auth_override == "Bearer new_token"
-            assert result.provider.can_retry() is True
-
-    @pytest.mark.asyncio
-    async def test_resolve_with_retry_context_token_wins(self):
-        """context_token takes precedence even with api_key present"""
-        settings = self._make_settings()
-        cache = TokenCache()
-        service = AuthService(settings, cache)
-
-        result = await service.resolve_for_request_with_retry(
+        result = await service.resolve_for_request(
             context_token="Bearer wxo_token",
-            api_key="my_api_key",
-            api_key_token=None,
         )
 
         assert result.auth_override == "Bearer wxo_token"

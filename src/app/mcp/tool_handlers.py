@@ -56,46 +56,31 @@ class ToolHandlers:
 
     async def _resolve_auth_override(self, context) -> tuple:
         """
-        Resolve auth override from context variable and middleware ContextVar.
+        Resolve auth override from context variable.
 
         Returns:
             Tuple of (auth_override_string_or_None, AuthResult_or_None)
         """
-        if not self.auth_service or not getattr(self.settings, 'AUTH_ENABLED', True) is False:
-            if not self.auth_service:
-                return None, None
+        if not self.auth_service:
+            return None, None
 
-        from src.app.auth.context_vars import auth_token_var, auth_api_key_var
-
-        auth_result = await self.auth_service.resolve_for_request_with_retry(
+        auth_result = await self.auth_service.resolve_for_request(
             context_token=context.op_auth_header,
-            api_key=auth_api_key_var.get(),
-            api_key_token=auth_token_var.get(),
         )
         return auth_result.auth_override, auth_result
 
-    async def _execute_with_retry(self, tool_method, auth_result, **kwargs):
+    async def _execute_tool(self, tool_method, **kwargs):
         """
-        Execute tool method with optional 401 retry.
+        Execute a tool method.
 
         Args:
             tool_method: Async callable to execute
-            auth_result: AuthResult for retry support
             **kwargs: Arguments to pass to the tool method
 
         Returns:
             Result from tool_method
         """
-        try:
-            return await tool_method(**kwargs)
-        except (RuntimeError, Exception) as e:
-            if auth_result and "401" in str(e) and getattr(self.settings, 'AUTH_RETRY_ON_401', True) and auth_result.provider.can_retry():
-                new_token = await auth_result.retry()
-                if new_token:
-                    logger.info("Retrying with refreshed token after 401")
-                    kwargs['auth_override'] = new_token
-                    return await tool_method(**kwargs)
-            raise
+        return await tool_method(**kwargs)
     
     @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     async def handle_echo_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -265,11 +250,11 @@ class ToolHandlers:
                     cleaned_args["resource_id"] = resource_id
             
             # Now perform the delete operation
-            result = await self._execute_with_retry(
-                tool.delete_object, auth_result,
+            result = await self._execute_tool(
+                tool.delete_object,
                 arguments=cleaned_args, auth_override=auth_override
             )
-            
+
             # Format the response
             logger.debug(f"Generic delete operation completed successfully for {object_type}")
             return {
@@ -314,8 +299,8 @@ class ToolHandlers:
 
         logger.info("Executing OpenPages query tool")
         try:
-            result = await self._execute_with_retry(
-                self.query_tool.execute_query, auth_result,
+            result = await self._execute_tool(
+                self.query_tool.execute_query,
                 arguments=cleaned_args, auth_override=auth_override
             )
             return {
@@ -404,20 +389,20 @@ class ToolHandlers:
             # Call the appropriate method based on the operation
             if operation == 'upsert':
                 logger.info(f"Executing upsert operation for {obj_type}")
-                result = await self._execute_with_retry(
-                    tool.upsert_object, auth_result,
+                result = await self._execute_tool(
+                    tool.upsert_object,
                     arguments=cleaned_args, auth_override=auth_override
                 )
             elif operation == 'query':
                 logger.info(f"Executing query operation for {obj_type}")
-                result = await self._execute_with_retry(
-                    tool.query_objects, auth_result,
+                result = await self._execute_tool(
+                    tool.query_objects,
                     arguments=cleaned_args, auth_override=auth_override
                 )
             elif operation == 'delete':
                 logger.info(f"Executing delete operation for {obj_type}")
-                result = await self._execute_with_retry(
-                    tool.delete_object, auth_result,
+                result = await self._execute_tool(
+                    tool.delete_object,
                     arguments=cleaned_args, auth_override=auth_override
                 )
             else:
