@@ -153,7 +153,7 @@ class QueryTool(BaseTool):
         super().__init__(client)
         
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def execute_query(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def execute_query(self, arguments: Dict[str, Any], auth_override: Optional[str] = None) -> List[TextContent]:
         """
         Execute a query against OpenPages using the OpenPages query language
         
@@ -212,7 +212,7 @@ class QueryTool(BaseTool):
         
         try:
             # Execute the query
-            result = await self.client.query(query, offset=offset, limit=limit)
+            result = await self.client.query(query, offset=offset, limit=limit, auth_override=auth_override)
             
             # Extract rows
             rows = result.get('rows', [])
@@ -243,7 +243,7 @@ class QueryTool(BaseTool):
                     try:
                         # Fetch the schema to get valid field names
                         # Note: This is an error recovery path - normal operations should use cached schemas
-                        type_def = await self.client.get_type_definition(object_type)
+                        type_def = await self.client.get_type_definition(object_type, auth_override=auth_override)
                         if type_def and 'field_definitions' in type_def:
                             field_names = [f"[{field['name']}]" for field in type_def.get('field_definitions', []) if field.get('name')]
                             # Limit to first 20 fields to keep message manageable
