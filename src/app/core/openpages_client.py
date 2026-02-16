@@ -289,6 +289,50 @@ class OpenPagesClient:
             await self.initialize_auth()
             return self.headers
 
+    def _clear_bearer_token(self):
+        """
+        Remove the cached bearer token from headers, forcing re-authentication
+        on the next request via initialize_auth().
+        """
+        if 'Authorization' in self.headers and self.auth_type == "bearer":
+            del self.headers['Authorization']
+            logger.info("Cleared cached bearer token for re-authentication")
+
+    async def _request_with_auth_retry(self, method: str, url: str, auth_override: Optional[str] = None, **kwargs) -> httpx.Response:
+        """
+        Make an HTTP request with automatic 401 retry for server credentials.
+
+        On a 401 HTTPStatusError when using server credentials (auth_override is None),
+        clears the cached bearer token, re-authenticates, and retries once.
+        Passthrough tokens (auth_override set) are NOT retried — the caller owns that token.
+
+        Args:
+            method: HTTP method (GET, POST, PUT, DELETE)
+            url: Full request URL
+            auth_override: Optional auth header override for per-request auth
+            **kwargs: Additional arguments passed to httpx (json, timeout, params, etc.)
+
+        Returns:
+            httpx.Response object
+        """
+        request_headers = await self._get_request_headers(auth_override)
+
+        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
+            try:
+                response = await client.request(method, url, headers=request_headers, **kwargs)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401 and auth_override is None and self.auth_type == "bearer":
+                    logger.warning(f"Received 401 for {method} {url}, attempting token refresh and retry")
+                    self._clear_bearer_token()
+                    await self.initialize_auth()
+                    retry_headers = await self._get_request_headers(auth_override)
+                    response = await client.request(method, url, headers=retry_headers, **kwargs)
+                    response.raise_for_status()
+                    return response
+                raise
+
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def query(self, statement: str, offset: int = 0, limit: int = 100, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -304,9 +348,6 @@ class OpenPagesClient:
         """
         logger.info(f"Executing OpenPages query (limit={limit}, offset={offset})")
         logger.debug(f"Query statement: {statement[:100]}..." if len(statement) > 100 else f"Query statement: {statement}")
-
-        # Get request headers (with optional auth override)
-        request_headers = await self._get_request_headers(auth_override)
 
         # Check if the base URL has a valid protocol
         if not (self.base_url.startswith('http://') or self.base_url.startswith('https://')):
@@ -328,45 +369,32 @@ class OpenPagesClient:
         logger.info(f"OpenPages API Query Request: {full_url}")
         logger.info(f"Request Body: {request_body}")
 
-        # Use SSL verification setting from config
-        if not self.settings.SSL_VERIFY:
-            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+        try:
+            response = await self._request_with_auth_retry(
+                "POST", full_url, auth_override=auth_override, json=request_body, timeout=30.0
+            )
+            response_json = response.json()
 
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.post(
-                    full_url,
-                    headers=request_headers,
-                    json=request_body,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                response_json = response.json()
-                
-                # Log the response, but truncate if too large
-                if settings.DEBUG:
-                    logger.info(f"OpenPages API Query Response Status: {response.status_code}")
-                    response_str = str(response_json)
-                    if len(response_str) > 1000:
-                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
-                    else:
-                        logger.info(f"Response Body: {response_json}")
-                
-                logger.debug(f"query() completed successfully, returned {len(response_json.get('rows', []))} rows")
-                return response_json
-            except httpx.HTTPStatusError as e:
-                # This exception has response attribute
-                logger.error(f"HTTP status error during query: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                # Re-raise the error with a more descriptive message
-                error_message = f"OpenPages API error ({e.response.status_code}): {e.response.text}"
-                raise RuntimeError(error_message) from e
-            except httpx.RequestError as e:
-                # Network-related errors
-                logger.error(f"Request error during query: {e}")
-                # Re-raise the error with a more descriptive message
-                raise RuntimeError(f"Network error during query: {str(e)}") from e
+            # Log the response, but truncate if too large
+            if settings.DEBUG:
+                logger.info(f"OpenPages API Query Response Status: {response.status_code}")
+                response_str = str(response_json)
+                if len(response_str) > 1000:
+                    logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                else:
+                    logger.info(f"Response Body: {response_json}")
+
+            logger.debug(f"query() completed successfully, returned {len(response_json.get('rows', []))} rows")
+            return response_json
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error during query: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            error_message = f"OpenPages API error ({e.response.status_code}): {e.response.text}"
+            raise RuntimeError(error_message) from e
+        except httpx.RequestError as e:
+            logger.error(f"Request error during query: {e}")
+            raise RuntimeError(f"Network error during query: {str(e)}") from e
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def get_content(self, resource_id: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
@@ -382,47 +410,34 @@ class OpenPagesClient:
         """
         logger.info(f"Getting content for resource ID: {resource_id}")
 
-        # Get request headers (with optional auth override)
-        request_headers = await self._get_request_headers(auth_override)
-
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Get Content Request: {url}")
 
-        # Use SSL verification setting from config
-        if not self.settings.SSL_VERIFY:
-            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+        try:
+            response = await self._request_with_auth_retry(
+                "GET", url, auth_override=auth_override, timeout=30.0
+            )
+            response_json = response.json()
 
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.get(
-                    url,
-                    headers=request_headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                response_json = response.json()
-                
-                # Log the response, but truncate if too large
-                if settings.DEBUG:
-                    logger.info(f"OpenPages API Get Content Response Status: {response.status_code}")
-                    response_str = str(response_json)
-                    if len(response_str) > 1000:
-                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
-                    else:
-                        logger.info(f"Response Body: {response_json}")
-                
-                return response_json
-            except httpx.HTTPStatusError as e:
-                # This exception has response attribute
-                logger.error(f"HTTP status error getting content: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                raise
-            except httpx.RequestError as e:
-                # Network-related errors
-                logger.error(f"Request error getting content: {e}")
-                raise
+            # Log the response, but truncate if too large
+            if settings.DEBUG:
+                logger.info(f"OpenPages API Get Content Response Status: {response.status_code}")
+                response_str = str(response_json)
+                if len(response_str) > 1000:
+                    logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                else:
+                    logger.info(f"Response Body: {response_json}")
+
+            return response_json
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error getting content: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Request error getting content: {e}")
+            raise
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def create_content(self, content_data: Dict[str, Any], auth_override: Optional[str] = None) -> Dict[str, Any]:
@@ -438,49 +453,35 @@ class OpenPagesClient:
         """
         logger.info(f"Creating content of type: {content_data.get('type_definition_id', 'unknown')}")
 
-        # Get request headers (with optional auth override)
-        request_headers = await self._get_request_headers(auth_override)
-
         api_path = self._get_api_path("/api/v2/contents")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Create Content Request: {url}")
         logger.debug(f"Request Body: {content_data}")
 
-        # Use SSL verification setting from config
-        if not self.settings.SSL_VERIFY:
-            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+        try:
+            response = await self._request_with_auth_retry(
+                "POST", url, auth_override=auth_override, json=content_data, timeout=30.0
+            )
+            response_json = response.json()
 
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.post(
-                    url,
-                    headers=request_headers,
-                    json=content_data,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                response_json = response.json()
-                
-                # Log the response, but truncate if too large
-                if settings.DEBUG:
-                    logger.info(f"OpenPages API Create Content Response Status: {response.status_code}")
-                    response_str = str(response_json)
-                    if len(response_str) > 1000:
-                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
-                    else:
-                        logger.info(f"Response Body: {response_json}")
-                
-                return response_json
-            except httpx.HTTPStatusError as e:
-                # This exception has response attribute
-                logger.error(f"HTTP status error creating content: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                raise
-            except httpx.RequestError as e:
-                # Network-related errors
-                logger.error(f"Request error creating content: {e}")
-                raise
+            # Log the response, but truncate if too large
+            if settings.DEBUG:
+                logger.info(f"OpenPages API Create Content Response Status: {response.status_code}")
+                response_str = str(response_json)
+                if len(response_str) > 1000:
+                    logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                else:
+                    logger.info(f"Response Body: {response_json}")
+
+            return response_json
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error creating content: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Request error creating content: {e}")
+            raise
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def update_content(self, resource_id: str, content_data: Dict[str, Any], auth_override: Optional[str] = None) -> Dict[str, Any]:
@@ -497,49 +498,35 @@ class OpenPagesClient:
         """
         logger.info(f"Updating content: {resource_id} (type: {content_data.get('type_definition_id', 'unknown')})")
 
-        # Get request headers (with optional auth override)
-        request_headers = await self._get_request_headers(auth_override)
-
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Update Content Request: {url}")
         logger.debug(f"Request Body: {content_data}")
 
-        # Use SSL verification setting from config
-        if not self.settings.SSL_VERIFY:
-            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+        try:
+            response = await self._request_with_auth_retry(
+                "PUT", url, auth_override=auth_override, json=content_data, timeout=30.0
+            )
+            response_json = response.json()
 
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.put(
-                    url,
-                    headers=request_headers,
-                    json=content_data,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                response_json = response.json()
-                
-                # Log the response, but truncate if too large
-                if settings.DEBUG:
-                    logger.info(f"OpenPages API Update Content Response Status: {response.status_code}")
-                    response_str = str(response_json)
-                    if len(response_str) > 1000:
-                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
-                    else:
-                        logger.info(f"Response Body: {response_json}")
-                
-                return response_json
-            except httpx.HTTPStatusError as e:
-                # This exception has response attribute
-                logger.error(f"HTTP status error updating content: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                raise
-            except httpx.RequestError as e:
-                # Network-related errors
-                logger.error(f"Request error updating content: {e}")
-                raise
+            # Log the response, but truncate if too large
+            if settings.DEBUG:
+                logger.info(f"OpenPages API Update Content Response Status: {response.status_code}")
+                response_str = str(response_json)
+                if len(response_str) > 1000:
+                    logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                else:
+                    logger.info(f"Response Body: {response_json}")
+
+            return response_json
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error updating content: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Request error updating content: {e}")
+            raise
     
     async def get_current_user(self, auth_override: Optional[str] = None) -> Optional[str]:
         """
@@ -589,47 +576,34 @@ class OpenPagesClient:
         Returns:
             Type definition data including field definitions
         """
-        # Get request headers (with optional auth override)
-        request_headers = await self._get_request_headers(auth_override)
-
         api_path = self._get_api_path(f"/api/v2/types/{type_name}")
         url = f"{self.base_url}{api_path}"
         logger.info(f"OpenPages API Get Type Definition Request: {url}")
 
-        # Use SSL verification setting from config
-        if not self.settings.SSL_VERIFY:
-            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+        try:
+            response = await self._request_with_auth_retry(
+                "GET", url, auth_override=auth_override, timeout=30.0
+            )
+            response_json = response.json()
 
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.get(
-                    url,
-                    headers=request_headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                response_json = response.json()
-                
-                # Log the response, but truncate if too large
-                if settings.DEBUG:
-                    logger.info(f"OpenPages API Get Type Definition Response Status: {response.status_code}")
-                    response_str = str(response_json)
-                    if len(response_str) > 1000:
-                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
-                    else:
-                        logger.info(f"Response Body: {response_json}")
-                
-                return response_json
-            except httpx.HTTPStatusError as e:
-                # This exception has response attribute
-                logger.error(f"HTTP status error getting type definition: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                raise
-            except httpx.RequestError as e:
-                # Network-related errors
-                logger.error(f"Request error getting type definition: {e}")
-                raise
+            # Log the response, but truncate if too large
+            if settings.DEBUG:
+                logger.info(f"OpenPages API Get Type Definition Response Status: {response.status_code}")
+                response_str = str(response_json)
+                if len(response_str) > 1000:
+                    logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                else:
+                    logger.info(f"Response Body: {response_json}")
+
+            return response_json
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error getting type definition: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Request error getting type definition: {e}")
+            raise
     
     async def get_type_associations(self, type_name: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -768,55 +742,42 @@ class OpenPagesClient:
         """
         logger.info(f"Deleting content: {resource_id}")
 
-        # Get request headers (with optional auth override)
-        request_headers = await self._get_request_headers(auth_override)
-
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Delete Content Request: {url}")
 
-        # Use SSL verification setting from config
-        if not self.settings.SSL_VERIFY:
-            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+        try:
+            response = await self._request_with_auth_retry(
+                "DELETE", url, auth_override=auth_override, timeout=30.0
+            )
 
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.delete(
-                    url,
-                    headers=request_headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                
-                # For DELETE operations, the response might be empty
+            # For DELETE operations, the response might be empty
+            if response.text:
+                response_json = response.json()
+            else:
+                response_json = {"status": "success", "message": "Content deleted successfully"}
+
+            # Log the response
+            if self.settings.DEBUG:
+                logger.info(f"OpenPages API Delete Content Response Status: {response.status_code}")
                 if response.text:
-                    response_json = response.json()
-                else:
-                    response_json = {"status": "success", "message": "Content deleted successfully"}
-                
-                # Log the response
-                if self.settings.DEBUG:
-                    logger.info(f"OpenPages API Delete Content Response Status: {response.status_code}")
-                    if response.text:
-                        response_str = str(response_json)
-                        if len(response_str) > 1000:
-                            logger.info(f"Response Body (truncated): {response_str[:1000]}...")
-                        else:
-                            logger.info(f"Response Body: {response_json}")
+                    response_str = str(response_json)
+                    if len(response_str) > 1000:
+                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
                     else:
-                        logger.info("Response Body: Empty (successful deletion)")
-                
-                return response_json
-            except httpx.HTTPStatusError as e:
-                # This exception has response attribute
-                logger.error(f"HTTP status error deleting content: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                raise
-            except httpx.RequestError as e:
-                # Network-related errors
-                logger.error(f"Request error deleting content: {e}")
-                raise
+                        logger.info(f"Response Body: {response_json}")
+                else:
+                    logger.info("Response Body: Empty (successful deletion)")
+
+            return response_json
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error deleting content: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Request error deleting content: {e}")
+            raise
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def add_associations(self, resource_id: str, associations: List[Dict[str, Any]]) -> Dict[str, Any]:
