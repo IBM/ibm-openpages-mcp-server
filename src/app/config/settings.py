@@ -118,6 +118,9 @@ class Settings(BaseSettings):
     
     # Global namespace for generic tools
     NAMESPACE: str = ""  # Namespace prefix for generic tools (e.g., "openpages")
+
+    # Authentication framework settings
+    AUTH_ENABLED: bool = True
     
     # Path to object types configuration file
     OBJECT_TYPES_CONFIG_PATH: str = "object_types.json"
