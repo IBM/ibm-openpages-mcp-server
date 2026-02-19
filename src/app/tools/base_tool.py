@@ -36,16 +36,18 @@ class BaseTool:
         self.schema_builder = schema_builder
         self.output_format = settings.OUTPUT_FORMAT
         
-    async def get_type_definition(self, object_type: str) -> Dict[str, Any]:
+    async def get_type_definition(self, object_type: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Get type definition from OpenPages (uses cache if schema_builder is available)
-        
+
+
         Args:
             object_type: Type of object (e.g., "SOXIssue", "SOXControl")
-            
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             Dict containing the type definition
-            
+
         Raises:
             Exception: If the type definition cannot be retrieved
         """
@@ -56,7 +58,7 @@ class BaseTool:
                 type_info = await self.schema_builder.get_type_definition(object_type)
             else:
                 logger.info(f"Fetching type definition directly for: {object_type}")
-                type_info = await self.client.get_type_definition(object_type)
+                type_info = await self.client.get_type_definition(object_type, auth_override=auth_override)
             
             if not type_info or "field_definitions" not in type_info:
                 logger.warning(f"No field definitions found for {object_type}")
@@ -372,14 +374,15 @@ class BaseTool:
         """
         return f"{self.client.base_url}/app/jspview/react/grc/task-view/{resource_id}"
         
-    async def resolve_path_to_id(self, path: str, object_type: str = "") -> str:
+    async def resolve_path_to_id(self, path: str, object_type: str = "", auth_override: Optional[str] = None) -> str:
         """
         Resolve a path to a resource ID using the contents API
-        
+
         Args:
             path: Path to resolve (e.g., "/High Oaks Bank/Africa and Middle East/Test Issue #1")
             object_type: Type of object (e.g., "Issue", "SOXControl")
-            
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             Resource ID if path was resolved successfully, otherwise returns the original path
         """
@@ -398,7 +401,7 @@ class BaseTool:
             logger.debug(f"Encoded path for API call: {encoded_path}")
             
             # Make GET call to contents API
-            content_result = await self.client.get_content(encoded_path)
+            content_result = await self.client.get_content(encoded_path, auth_override=auth_override)
             
             # Extract the ID from the result
             if content_result and "id" in content_result:

@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
     # Initialize the MCP server using the singleton pattern
     initialize_server()
     logger.info("MCP Server initialized")
-    
+
     yield
     
     logger.info("Shutting down GRC MCP Server")

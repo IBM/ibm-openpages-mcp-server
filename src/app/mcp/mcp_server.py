@@ -104,13 +104,21 @@ class MCPServer:
             logger.error(f"Failed to initialize tool modules: {e}")
             raise RuntimeError(f"Failed to initialize tool modules: {e}")
         
+        # Initialize auth service
+        from src.app.auth.service import AuthService
+        self.auth_service = AuthService(self.settings)
+
         # Initialize remaining modular components
         # Pass self reference to ToolHandlers for schema loading capability
         self.resource_handlers = ResourceHandlers(self.schema_builder, self.settings)
         self.prompt_handlers = PromptHandlers(self.settings)
-        
-        # Pass resource_handlers and self to tool_handlers so tools can access schemas and trigger dynamic schema loading
-        self.tool_handlers = ToolHandlers(self.object_tools, self.settings, self.query_tool, self.resource_handlers, mcp_server=self)
+
+        # Pass resource_handlers, self, and auth_service to tool_handlers
+        self.tool_handlers = ToolHandlers(
+            self.object_tools, self.settings, self.query_tool,
+            self.resource_handlers, mcp_server=self,
+            auth_service=self.auth_service
+        )
         
         # Load tools schema from JSON file
         self._load_tools_schema()

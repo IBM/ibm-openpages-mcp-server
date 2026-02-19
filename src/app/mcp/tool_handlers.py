@@ -31,7 +31,7 @@ class ToolHandlers:
     the execution of different tool operations.
     """
     
-    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None, resource_handlers=None, mcp_server=None):
+    def __init__(self, object_tools: Dict[str, Any], settings, query_tool=None, resource_handlers=None, mcp_server=None, auth_service=None):
         """
         Initialize tool handlers
         
@@ -41,17 +41,47 @@ class ToolHandlers:
             query_tool: OpenPages query tool instance (optional)
             resource_handlers: ResourceHandlers instance for schema access (optional)
             mcp_server: MCP server instance for dynamic schema loading (optional)
+            auth_service: AuthService instance for per-request authentication (optional)
         """
         self.object_tools = object_tools
         self.settings = settings
         self.query_tool = query_tool
         self.resource_handlers = resource_handlers
         self.mcp_server = mcp_server
+        self.auth_service = auth_service
 
         # Build the generic delete and upsert tool names based on namespace
         namespace = settings.NAMESPACE
         self.generic_delete_tool_name = f"{namespace}_delete_object" if namespace else "delete_object"
         self.generic_upsert_tool_name = f"{namespace}_upsert_object" if namespace else "upsert_object"
+    
+    async def _resolve_auth_override(self, context) -> tuple:
+        """
+        Resolve auth override from context variable.
+
+        Returns:
+            Tuple of (auth_override_string_or_None, AuthResult_or_None)
+        """
+        if not self.auth_service:
+            return None, None
+
+        auth_result = await self.auth_service.resolve_for_request(
+            context_token=context.op_auth_header,
+        )
+        return auth_result.auth_override, auth_result
+
+    async def _execute_tool(self, tool_method, **kwargs):
+        """
+        Execute a tool method.
+
+        Args:
+            tool_method: Async callable to execute
+            **kwargs: Arguments to pass to the tool method
+
+        Returns:
+            Result from tool_method
+        """
+        return await tool_method(**kwargs)
     
     @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
     async def handle_echo_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -97,6 +127,9 @@ class ToolHandlers:
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Delete tool context: {context}")
         
+        # Resolve auth override
+        auth_override, auth_result = await self._resolve_auth_override(context)
+
         object_type_input = cleaned_args.get("object_type", "")
         resource_id = cleaned_args.get("resource_id")
         path = cleaned_args.get("path")
@@ -194,7 +227,7 @@ class ToolHandlers:
                 # Query for the object
                 query = f"SELECT [Resource ID], [Name] FROM [{type_id}] WHERE [Name] = '{name}' LIMIT 2"
                 client = tool.client
-                result_query = await client.query(query)
+                result_query = await client.query(query, auth_override=auth_override)
                 existing_objects = result_query.get('rows', [])
                 
                 if len(existing_objects) == 0:
@@ -218,7 +251,10 @@ class ToolHandlers:
                     cleaned_args["resource_id"] = resource_id
             
             # Now perform the delete operation
-            result = await tool.delete_object(cleaned_args)
+            result = await self._execute_tool(
+                tool.delete_object,
+                arguments=cleaned_args, auth_override=auth_override
+            )
             
             # Format the response
             logger.debug(f"Generic delete operation completed successfully for {object_type}")
@@ -376,6 +412,9 @@ class ToolHandlers:
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Query tool context: {context}")
         
+        # Resolve auth override
+        auth_override, auth_result = await self._resolve_auth_override(context)
+
         if not self.query_tool:
             logger.error("OpenPages query tool not initialized")
             return {
@@ -386,7 +425,10 @@ class ToolHandlers:
         
         logger.info("Executing OpenPages query tool")
         try:
-            result = await self.query_tool.execute_query(cleaned_args)
+            result = await self._execute_tool(
+                self.query_tool.execute_query,
+                arguments=cleaned_args, auth_override=auth_override
+            )
             return {
                 "result": [{"type": "text", "text": item.text} for item in result]
             }
@@ -414,6 +456,9 @@ class ToolHandlers:
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Generic tool '{tool_name}' context: {context}")
         
+        # Resolve auth override
+        auth_override, auth_result = await self._resolve_auth_override(context)
+
         logger.info(f"Handling generic tool: {tool_name}")
         
         # Parse the tool name to determine namespace, operation and object type
@@ -470,13 +515,22 @@ class ToolHandlers:
             # Call the appropriate method based on the operation
             if operation == 'upsert':
                 logger.info(f"Executing upsert operation for {obj_type}")
-                result = await tool.upsert_object(cleaned_args)
+                result = await self._execute_tool(
+                    tool.upsert_object,
+                    arguments=cleaned_args, auth_override=auth_override
+                )
             elif operation == 'query':
                 logger.info(f"Executing query operation for {obj_type}")
-                result = await tool.query_objects(cleaned_args)
+                result = await self._execute_tool(
+                    tool.query_objects,
+                    arguments=cleaned_args, auth_override=auth_override
+                )
             elif operation == 'delete':
                 logger.info(f"Executing delete operation for {obj_type}")
-                result = await tool.delete_object(cleaned_args)
+                result = await self._execute_tool(
+                    tool.delete_object,
+                    arguments=cleaned_args, auth_override=auth_override
+                )
             else:
                 logger.warning(f"Unknown operation: {operation}")
                 return {
