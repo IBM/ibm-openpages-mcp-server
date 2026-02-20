@@ -593,6 +593,20 @@ class GenericObjectTools(BaseTool):
                     field_name = field_def.get('name')
                     field_type = field_def.get('data_type', 'STRING_TYPE')
                     
+                    # Validate enum values against schema
+                    if field_type in ("ENUM_TYPE", "MULTI_VALUE_ENUM"):
+                        enum_values = field_def.get('enum_values', [])
+                        valid_values = [ev.get('name') for ev in enum_values if ev.get('name')]
+                        
+                        if valid_values:
+                            # Check if the provided value is valid
+                            values_to_check = arg_value if isinstance(arg_value, list) else [arg_value]
+                            for val in values_to_check:
+                                val_str = val if isinstance(val, str) else (val.get('name') if isinstance(val, dict) else str(val))
+                                if val_str not in valid_values:
+                                    logger.error(f"Invalid enum value '{val_str}' for field '{field_name}'. Valid values: {valid_values}")
+                                    return [TextContent(type="text", text=f"Error: Invalid value '{val_str}' for field '{field_name}'. Valid values are: {', '.join(valid_values)}")]
+                    
                     # Format the value based on field type using base class method
                     # Pass field_name to enable user field detection
                     formatted_value = await self.format_field_value(arg_value, field_type, field_name)
@@ -611,13 +625,12 @@ class GenericObjectTools(BaseTool):
                         })
                     logger.info(f"Added field {field_name} with value {formatted_value}")
                 else:
-                    # If no matching field definition found, add it as is
-                    # This might happen for custom fields or if the field name doesn't match exactly
-                    logger.warning(f"No field definition found for {arg_name}, adding as is")
-                    content_data["fields"].append({
-                        "name": arg_name,
-                        "value": arg_value
-                    })
+                    # If no matching field definition found, this is an error
+                    # We should only use fields that are defined in the schema
+                    logger.error(f"Field '{arg_name}' not found in schema for {self.type_id}. Skipping this field.")
+                    logger.error(f"Available fields: {list(field_def_map.keys())}")
+                    # Skip this field rather than adding it with unknown type
+                    continue
                 
         except Exception as e:
             logger.error(f"Error processing field definitions: {e}")
@@ -829,6 +842,20 @@ class GenericObjectTools(BaseTool):
                     field_name = field_def.get('name')
                     field_type = field_def.get('data_type', 'STRING_TYPE')
                     
+                    # Validate enum values against schema
+                    if field_type in ("ENUM_TYPE", "MULTI_VALUE_ENUM"):
+                        enum_values = field_def.get('enum_values', [])
+                        valid_values = [ev.get('name') for ev in enum_values if ev.get('name')]
+                        
+                        if valid_values:
+                            # Check if the provided value is valid
+                            values_to_check = arg_value if isinstance(arg_value, list) else [arg_value]
+                            for val in values_to_check:
+                                val_str = val if isinstance(val, str) else (val.get('name') if isinstance(val, dict) else str(val))
+                                if val_str not in valid_values:
+                                    logger.error(f"Invalid enum value '{val_str}' for field '{field_name}'. Valid values: {valid_values}")
+                                    return [TextContent(type="text", text=f"Error: Invalid value '{val_str}' for field '{field_name}'. Valid values are: {', '.join(valid_values)}")]
+                    
                     # Format the value based on field type using base class method
                     # Pass field_name to enable user field detection
                     formatted_value = await self.format_field_value(arg_value, field_type, field_name)
@@ -847,13 +874,12 @@ class GenericObjectTools(BaseTool):
                         })
                     logger.info(f"Added field {field_name} with value {formatted_value}")
                 else:
-                    # If no matching field definition found, add it as is
-                    # This might happen for custom fields or if the field name doesn't match exactly
-                    logger.warning(f"No field definition found for {arg_name}, adding as is")
-                    content_data["fields"].append({
-                        "name": arg_name,
-                        "value": arg_value
-                    })
+                    # If no matching field definition found, this is an error
+                    # We should only use fields that are defined in the schema
+                    logger.error(f"Field '{arg_name}' not found in schema for {self.type_id}. Skipping this field.")
+                    logger.error(f"Available fields: {list(field_def_map.keys())}")
+                    # Skip this field rather than adding it with unknown type
+                    continue
                     
         except Exception as e:
             logger.error(f"Error processing field definitions: {e}")

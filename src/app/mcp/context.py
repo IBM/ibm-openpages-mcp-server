@@ -113,8 +113,23 @@ class ContextVariables:
         return self._data.copy()
     
     def __repr__(self) -> str:
-        """String representation of context variables"""
-        return f"ContextVariables({self._data})"
+        """String representation of context variables with sensitive data obfuscated"""
+        sanitized_data = self._get_sanitized_data()
+        return f"ContextVariables({sanitized_data})"
+    
+    def _get_sanitized_data(self) -> Dict[str, Any]:
+        """
+        Get sanitized copy of context data with sensitive values obfuscated
+        
+        Returns:
+            Dictionary with op_auth_header obfuscated
+        """
+        sanitized = self._data.copy()
+        if "op_auth_header" in sanitized:
+            # Show None if value is None, otherwise show *******
+            auth_value = sanitized["op_auth_header"]
+            sanitized["op_auth_header"] = None if auth_value is None else "*******"
+        return sanitized
     
     @property
     def op_username(self) -> Optional[str]:

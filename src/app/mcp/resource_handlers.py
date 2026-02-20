@@ -64,7 +64,7 @@ class ResourceHandlers:
         resources.append({
             "uri": "openpages://catalog/object_types",
             "name": "Object Types Catalog",
-            "description": "Catalog of all available OpenPages object types with their IDs, names, labels, descriptions, and schema URIs. Read this ONCE at session start and cache the list of available types. Schemas are static during server lifetime.",
+            "description": "Catalog of all available OpenPages object types with their IDs, names, labels, descriptions, and schema URIs.",
             "mimeType": "application/json"
         })
         logger.debug("Added object types catalog resource")
@@ -85,7 +85,7 @@ class ResourceHandlers:
             resource = {
                 "uri": resource_uri,
                 "name": f"{display_name} Schema",
-                "description": f"Schema definition for {display_name} objects including field names, types, validation rules, and enum values. Read ONCE per session and cache - schemas are static during server lifetime.",
+                "description": f"Schema definition for {display_name} objects including field names, types, validation rules, and enum values.",
                 "mimeType": "application/json"
             }
             
@@ -406,18 +406,34 @@ class ResourceHandlers:
                 continue
             
             if relationship_type == "Parent":
+                # Determine the join function based on direction
+                # Schema shows "parent" → Use CHILD to navigate up
+                join_function = "CHILD"
+                join_syntax = f"FROM [{type_id}] JOIN [{associated_type}] ON {join_function}([{type_id}])"
+                
                 relationships.append({
                     "direction": "parent",
                     "type": associated_type,
                     "label": localized_label,
-                    "description": f"This {type_id} can be a child of {associated_type} objects"
+                    "description": f"This {type_id} can be a child of {associated_type} objects",
+                    "join_function": join_function,
+                    "join_syntax": join_syntax,
+                    "explanation": f"{type_id} has 'parent' relationship to {associated_type}, so use OPPOSITE direction (CHILD) with FROM type as argument"
                 })
             elif relationship_type == "Child":
+                # Determine the join function based on direction
+                # Schema shows "child" → Use PARENT to navigate down
+                join_function = "PARENT"
+                join_syntax = f"FROM [{type_id}] JOIN [{associated_type}] ON {join_function}([{type_id}])"
+                
                 relationships.append({
                     "direction": "child",
                     "type": associated_type,
                     "label": localized_label,
-                    "description": f"This {type_id} can have {associated_type} objects as children"
+                    "description": f"This {type_id} can have {associated_type} objects as children",
+                    "join_function": join_function,
+                    "join_syntax": join_syntax,
+                    "explanation": f"{type_id} has 'child' relationship to {associated_type}, so use OPPOSITE direction (PARENT) with FROM type as argument"
                 })
         
         logger.debug(f"Extracted {len(relationships)} hierarchical relationships for {type_id} (filtered to configured types)")
@@ -438,6 +454,21 @@ class ResourceHandlers:
         """
         import json
         
+        # Build query examples based on hierarchical relationships
+        query_examples = {}
+        hierarchical_rels = schema_content.get("hierarchical_relationships", [])
+        type_id = schema_content.get("type_id")
+        
+        if hierarchical_rels:
+            for rel in hierarchical_rels:
+                rel_type = rel.get("type")
+                direction = rel.get("direction")
+                
+                if direction == "parent":
+                    query_examples["find_parent_objects"] = f"SELECT [{type_id}].[Resource ID], [{type_id}].[Name], [{rel_type}].[Resource ID], [{rel_type}].[Name] FROM [{type_id}] JOIN [{rel_type}] ON CHILD([{type_id}])"
+                elif direction == "child":
+                    query_examples["find_child_objects"] = f"SELECT [{type_id}].[Resource ID], [{type_id}].[Name], [{rel_type}].[Resource ID], [{rel_type}].[Name] FROM [{type_id}] JOIN [{rel_type}] ON PARENT([{type_id}])"
+        
         # Add usage guidance to the schema
         schema_with_guidance = {
             **schema_content,
@@ -449,6 +480,10 @@ class ResourceHandlers:
                 "enum_fields": "For ENUM_TYPE fields, use exact values from enum_values array"
             }
         }
+        
+        # Add query examples if available
+        if query_examples:
+            schema_with_guidance["query_examples"] = query_examples
         
         return json.dumps(schema_with_guidance, indent=2)
     

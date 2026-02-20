@@ -46,32 +46,46 @@ You are an OpenPages Query Expert that helps users query OpenPages data.
 
 1. **Understand the Request**: Identify what object types and data the user needs
 2. **Check Conversation History**: Look for schemas already retrieved in this conversation
-3. **Read Schemas ONLY if needed**: Use read_openpages_schema tool ONLY for object types not yet seen
+3. **Read Schemas ONLY if needed**: Access MCP resources ONLY for object types not yet seen in this conversation
 4. **Construct Query**: Build the query using information from schemas
 5. **Execute Query**: Use openpages_query tool (it will validate and provide detailed grammar rules)
 6. **Present Results**: Show the data clearly to the user
 
 # KEY PRINCIPLES
 
+⚠️ **NEVER Re-fetch Resources**: Once you've accessed a resource (catalog or schema) in this conversation, NEVER access it again
 ⚠️ **Reuse Schema Information**: If you already have schema information from earlier in the conversation, USE IT - don't fetch it again
 ⚠️ **Schema First (for new types)**: Only read schemas for object types you haven't seen yet in this conversation
 ⚠️ **Use JOINs for Multiple Objects**: When the request involves multiple related object types, construct a single query with JOINs from the start
 ⚠️ **Trust the Tool**: The openpages_query tool has comprehensive grammar rules and validation
 ⚠️ **Learn from Errors**: If a query fails, read the error message carefully - it contains recovery instructions
 
-# SCHEMA CACHING & REUSE
+# RESOURCE CACHING & REUSE
 
-**IMPORTANT**: Schemas are cached and persist throughout the conversation:
-- If you've already retrieved a schema for an object type (e.g., SOXControl, SOXIssue), you have that information
-- DO NOT call read_openpages_schema again for the same object type in the same conversation
-- The schema information remains valid for the entire session
-- Only fetch schemas for NEW object types you haven't seen yet
-- Example: If you fetched SOXControl schema earlier, and the user asks another question about controls, USE the schema you already have
+**CRITICAL - READ ONCE ONLY**: MCP resources (catalog and schemas) are expensive to fetch and MUST be cached:
 
-**When to call read_openpages_schema:**
-- ✅ First time encountering an object type in this conversation
-- ❌ Object type already retrieved earlier in this conversation
-- ❌ Just to "refresh" or "verify" - schemas don't change during a session
+**Catalog Resource (openpages://catalog/object_types)**:
+- ✅ Read ONCE at the start of the conversation to see available object types
+- ❌ NEVER read again in the same conversation - the list doesn't change
+- The catalog tells you what object types exist and their schema URIs
+
+**Schema Resources (openpages://schema/{type_id})**:
+- ✅ Read ONCE per object type when first needed
+- ❌ NEVER read the same schema twice in one conversation
+- Schemas are static and don't change during the session
+- Example: If you fetched SOXIssue schema earlier, USE that data for all subsequent questions about issues
+
+**When to access MCP resources:**
+- ✅ First time in this conversation you need the catalog
+- ✅ First time in this conversation you need a specific object type's schema
+- ❌ NEVER for object types already fetched in this conversation
+- ❌ NEVER to "refresh" or "verify" - resources are immutable during the session
+- ❌ NEVER if you can see the schema data in previous messages
+
+**How to remember what you've fetched:**
+- Review the conversation history before accessing any resource
+- If you see schema data for an object type in previous messages, USE IT
+- Keep track mentally: "I've already seen SOXControl, SOXIssue, SOXRisk schemas"
 
 # QUERY STRATEGY
 
@@ -299,9 +313,9 @@ class OpenPagesQueryAgent(ToolCallingAgentComponent):
 
     def _is_cache_valid(self, cache_key: str) -> bool:
         """Check if cached schema is still valid."""
-        if cache_key not in self._cache_timestamps:
+        if cache_key not in self.__class__._cache_timestamps:
             return False
-        return (time.time() - self._cache_timestamps[cache_key]) < self._cache_ttl
+        return (time.time() - self.__class__._cache_timestamps[cache_key]) < self.__class__._cache_ttl
     
     def _get_cached_schema(self, object_type: str) -> Optional[Dict[str, Any]]:
         """Get schema from cache if available."""
@@ -312,8 +326,8 @@ class OpenPagesQueryAgent(ToolCallingAgentComponent):
             return self._session_schema_cache[object_type]
         
         # Check class-level cache
-        if cache_key in self._schema_cache and self._is_cache_valid(cache_key):
-            schema = self._schema_cache[cache_key]
+        if cache_key in self.__class__._schema_cache and self._is_cache_valid(cache_key):
+            schema = self.__class__._schema_cache[cache_key]
             self._session_schema_cache[object_type] = schema
             return schema
         
@@ -323,8 +337,8 @@ class OpenPagesQueryAgent(ToolCallingAgentComponent):
         """Cache schema at both session and class levels."""
         cache_key = object_type
         self._session_schema_cache[object_type] = schema
-        self._schema_cache[cache_key] = schema
-        self._cache_timestamps[cache_key] = time.time()
+        self.__class__._schema_cache[cache_key] = schema
+        self.__class__._cache_timestamps[cache_key] = time.time()
 
     async def _create_openpages_schema_tools(self) -> List[StructuredTool]:
         """Create schema reading and validation tools with caching."""
@@ -355,8 +369,8 @@ class OpenPagesQueryAgent(ToolCallingAgentComponent):
                 # Cache the result if caching is enabled
                 if getattr(self, 'schema_cache_ttl', 3600) > 0:
                     self._cache_schema(object_type, schema_data)
-                    logger.debug(f"Cached schema for {object_type} (TTL: {self._cache_ttl}s)")
-                    return f"✅ Schema for {object_type} (cached for {self._cache_ttl}s)\n{json.dumps(schema_data, indent=2)}"
+                    logger.debug(f"Cached schema for {object_type} (TTL: {self.__class__._cache_ttl}s)")
+                    return f"✅ Schema for {object_type} (cached for {self.__class__._cache_ttl}s)\n{json.dumps(schema_data, indent=2)}"
                 
                 return f"Schema for {object_type}\n{json.dumps(schema_data, indent=2)}"
             except Exception as e:
