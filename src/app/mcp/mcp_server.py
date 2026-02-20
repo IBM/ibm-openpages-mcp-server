@@ -457,7 +457,14 @@ Supported object types: {types_list}
 ## QUICK START
 1. Read schema ONCE: openpages://schema/{{ObjectType}} → cache field names, types, enum values
 2. Provide 'name' (required) and 'fields' object with schema-based field names
-3. For NEW objects: Must specify primaryParentId OR (primaryParentType + primaryParentName)
+3. For NEW objects: Must specify primaryParentId OR (primaryParentType + primaryParentName) OR copy_from
+
+## COPYING/DUPLICATING OBJECTS
+• Use 'copy_from' parameter with source object's Resource ID, full path, or name
+• All properties (parent, fields, description) are copied automatically
+• Override any field by explicitly providing it in the request
+• Supports: Resource ID (e.g., '10509'), full path (e.g., '/issue-IS001-001'), or name (e.g., 'issue-IS001-001')
+• Example: {{"object_type": "issue", "name": "New-Issue", "copy_from": "10509"}}
 
 ## OPERATION MODE
 Auto-detects insert vs update:
@@ -508,9 +515,13 @@ Accepts optional context variables.""",
                         "enum": ["insert", "update", "auto"],
                         "description": "Operation mode: 'insert' (force create), 'update' (force update), or 'auto' (intelligent decision, default)"
                     },
+                    "copy_from": {
+                        "type": "string",
+                        "description": "Resource ID, full path, or name of an existing object to copy properties from. Supports: Resource ID (e.g., '10509'), full path (e.g., '/issue-IS001-001' or 'Issue/issue-IS001-001'), or name (e.g., 'issue-IS001-001'). When specified, all fields (including primaryParentId, description, title, and custom fields) will be copied from the source object. You can override any field by explicitly providing it. If multiple objects have the same name, use Resource ID or path instead. This is useful for duplicating objects."
+                    },
                     "primaryParentId": {
                         "type": "string",
-                        "description": "🔴 REQUIRED FOR NEW OBJECTS: The main hierarchical parent (typically for folder location). Supports: Resource ID (e.g., '10101'), full path (e.g., '/_op_sox/Project/Default/Folder'), or use primaryParentType+primaryParentName instead. For ADDITIONAL/SECONDARY parents, use associateParent_* fields. When creating a new object, you MUST provide either this field OR both primaryParentType+primaryParentName."
+                        "description": "🔴 REQUIRED FOR NEW OBJECTS (unless using copy_from): The main hierarchical parent (typically for folder location). Supports: Resource ID (e.g., '10101'), full path (e.g., '/_op_sox/Project/Default/Folder'), or use primaryParentType+primaryParentName instead. For ADDITIONAL/SECONDARY parents, use associateParent_* fields. When creating a new object, you MUST provide either this field OR both primaryParentType+primaryParentName OR use copy_from parameter."
                     },
                     "primaryParentType": {
                         "type": "string",

@@ -378,6 +378,184 @@ class ToolHandlers:
                         merged_args[field_name] = field_value
                         logger.debug(f"Added field from 'fields' object: {field_name} = {field_value}")
             
+            # Handle copy_from parameter
+            copy_from = cleaned_args.get('copy_from')
+            if copy_from:
+                logger.info(f"Copying properties from source object: {copy_from}")
+                
+                try:
+                    # Get the schema to identify read-only fields
+                    type_info = await tool.get_type_definition(type_id)
+                    field_definitions = type_info.get('field_definitions', [])
+                    
+                    # Build a set of read-only field names for filtering later
+                    read_only_fields = set()
+                    for field_def in field_definitions:
+                        if field_def.get('read_only', False):
+                            read_only_fields.add(field_def.get('name'))
+                    
+                    logger.debug(f"Read-only fields to exclude: {read_only_fields}")
+                    
+                    # Determine how to look up the source object
+                    source_object_data = None
+                    
+                    # METHOD 1: Try as Resource ID (numeric string)
+                    if copy_from.isdigit():
+                        logger.debug(f"Attempting to copy from Resource ID: {copy_from}")
+                        source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Resource ID] = '{copy_from}' LIMIT 1"
+                        source_result = await tool.client.query(source_query)
+                        source_rows = source_result.get('rows', [])
+                        if source_rows:
+                            source_object_data = source_rows[0]
+                            logger.info(f"Found source object by Resource ID: {copy_from}")
+                    
+                    # METHOD 2: Try as full path (contains '/')
+                    elif '/' in copy_from:
+                        logger.debug(f"Attempting to copy from path: {copy_from}")
+                        try:
+                            # Use the path_prefix from object config to build full path
+                            path_prefix = tool.path_prefix  # e.g., "Issue" for SOXIssue
+                            full_path = f"{path_prefix}/{copy_from}" if not copy_from.startswith('/') else copy_from
+                            
+                            # URL encode the path for API call
+                            import urllib.parse
+                            encoded_path = urllib.parse.quote(full_path, safe='')
+                            
+                            # Get object by path using the client's get_content method
+                            obj_data = await tool.client.get_content(encoded_path)
+                            
+                            if obj_data:
+                                # Now query to get all fields in the same format as query results
+                                resource_id = obj_data.get('id')
+                                if resource_id:
+                                    source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Resource ID] = '{resource_id}' LIMIT 1"
+                                    source_result = await tool.client.query(source_query)
+                                    source_rows = source_result.get('rows', [])
+                                    if source_rows:
+                                        source_object_data = source_rows[0]
+                                        logger.info(f"Found source object by path: {copy_from} (ID: {resource_id})")
+                        except Exception as path_error:
+                            logger.debug(f"Path lookup failed: {path_error}, will try name lookup")
+                    
+                    # METHOD 3: Try as Name (fallback)
+                    if not source_object_data:
+                        logger.debug(f"Attempting to copy from Name: {copy_from}")
+                        source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Name] = '{copy_from}' LIMIT 2"
+                        source_result = await tool.client.query(source_query)
+                        source_rows = source_result.get('rows', [])
+                        
+                        if len(source_rows) == 0:
+                            logger.warning(f"Source object not found for copy_from: {copy_from}")
+                            return {
+                                "result": [
+                                    {"type": "text", "text": f"Error: Source object '{copy_from}' not found. Tried Resource ID, path, and name lookup."}
+                                ]
+                            }
+                        elif len(source_rows) > 1:
+                            obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}"
+                                                 for obj in source_rows])
+                            return {
+                                "result": [
+                                    {"type": "text", "text": f"Error: Multiple objects found with name '{copy_from}'. Please use Resource ID or full path instead:\n{obj_list}"}
+                                ]
+                            }
+                        else:
+                            source_object_data = source_rows[0]
+                            logger.info(f"Found source object by Name: {copy_from}")
+                    
+                    # If still not found, return error
+                    if not source_object_data:
+                        return {
+                            "result": [
+                                {"type": "text", "text": f"Error: Source object '{copy_from}' not found for copying"}
+                            ]
+                        }
+                    
+                    # Extract all field values from source object
+                    source_fields = {}
+                    location_value = None
+                    
+                    # System fields that should never be copied (always skip these)
+                    system_fields = {'Resource ID', 'Name', 'Created By', 'Creation Date',
+                                    'Last Modified By', 'Last Modification Date', 'Orphan', 'Location'}
+                    
+                    for field in source_object_data['fields']:
+                        field_name = field['name']
+                        field_value = field.get('value')
+                        
+                        # Save location for parent extraction
+                        if field_name == 'Location':
+                            location_value = field_value
+                            continue
+                        
+                        # Skip system fields
+                        if field_name in system_fields:
+                            continue
+                        
+                        # Skip read-only fields from schema
+                        if field_name in read_only_fields:
+                            logger.debug(f"Skipping read-only field: {field_name}")
+                            continue
+                        
+                        # Skip null values
+                        if field_value is None:
+                            continue
+                        
+                        # Handle Description and Title as top-level parameters
+                        if field_name == 'Description':
+                            source_fields['description'] = field_value  # lowercase for top-level
+                            logger.debug(f"Will copy Description to top-level: {field_value}")
+                        elif field_name == 'Title':
+                            source_fields['title'] = field_value  # lowercase for top-level
+                            logger.debug(f"Will copy Title to top-level: {field_value}")
+                        else:
+                            # All other editable fields
+                            source_fields[field_name] = field_value
+                            logger.debug(f"Will copy field: {field_name} = {field_value}")
+                    
+                    # Extract parent from Location field and resolve to Resource ID
+                    # Note: Parent resolution may fail for folder paths, in which case we create at root
+                    if location_value and '/' in location_value:
+                        # Parent is everything except the last segment
+                        parts = location_value.split('/')
+                        if len(parts) > 1:
+                            parent_path = '/'.join(parts[:-1])
+                            # If parent_path is empty, object is at root - don't set primaryParentId
+                            if parent_path and parent_path != '/':
+                                # Resolve parent path to Resource ID
+                                try:
+                                    parent_id = await tool.resolve_path_to_id(parent_path)
+                                    # Only set if we got a valid numeric ID back (not the path itself)
+                                    if parent_id and parent_id.isdigit() and parent_id != parent_path:
+                                        source_fields['primaryParentId'] = parent_id
+                                        logger.info(f"Resolved parent path '{parent_path}' to Resource ID: {parent_id}")
+                                    else:
+                                        logger.warning(f"Could not resolve parent path '{parent_path}' to numeric Resource ID (got: {parent_id}), will create at root level")
+                                except Exception as e:
+                                    logger.warning(f"Error resolving parent path '{parent_path}': {e}. Will create at root level")
+                            else:
+                                logger.info(f"Source object is at root level, primaryParentId not set")
+                    
+                    # CRITICAL: Merge source fields with user-provided fields
+                    # User-provided fields take precedence (override source values)
+                    for key, value in source_fields.items():
+                        # Only add if NOT already provided by user
+                        if key not in merged_args and key not in fields:
+                            merged_args[key] = value
+                            logger.debug(f"Copied field from source: {key} = {value}")
+                        else:
+                            logger.debug(f"User override for field: {key} (source value ignored)")
+                    
+                    logger.info(f"Successfully copied {len(source_fields)} fields from source object")
+                    
+                except Exception as e:
+                    logger.error(f"Error copying from source object: {e}", exc_info=True)
+                    return {
+                        "result": [
+                            {"type": "text", "text": f"Error copying from source object '{copy_from}': {str(e)}"}
+                        ]
+                    }
+            
             # Now perform the upsert operation with merged arguments
             result = await tool.upsert_object(merged_args)
             
