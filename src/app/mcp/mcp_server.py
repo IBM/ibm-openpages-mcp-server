@@ -24,6 +24,7 @@ from src.app.mcp.resource_handlers import ResourceHandlers
 from src.app.mcp.prompt_handlers import PromptHandlers
 from src.app.mcp.request_processor import RequestProcessor
 from src.app.mcp.context import build_context_schema
+from src.app.utils import build_tool_name
 
 # Version information
 __version__ = "1.0.0"
@@ -346,6 +347,8 @@ NOT Supported:
         # Add generic delete tool that works for all object types
         self._add_generic_delete_tool()
         
+        # Add generic associate and dissociate tools
+        self._add_generic_associate_dissociate_tools()
         # Add generic upsert tool that works for all object types
         self._add_generic_upsert_tool()
         
@@ -377,7 +380,7 @@ NOT Supported:
         namespace = self.settings.NAMESPACE
         
         # Build tool name with namespace if present
-        tool_name = f"{namespace}_delete_object" if namespace else "delete_object"
+        tool_name = build_tool_name("delete_object", namespace)
         
         # Build description with available types
         types_list = ", ".join(object_type_descriptions)
@@ -550,6 +553,162 @@ Accepts optional context variables.""",
             }
         })
         logger.info(f"Added generic {tool_name} tool supporting {len(object_type_enum)} configured object types: {', '.join(object_type_enum)}")
+
+    def _add_generic_associate_dissociate_tools(self) -> None:
+        """
+        Add generic associate and dissociate tools that work for all configured object types
+        """
+        logger.info("Adding generic associate and dissociate tools")
+        
+        # Build enum of configured object types
+        object_type_enum = []
+        object_type_descriptions = []
+        
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name", tool_prefix)
+            
+            if tool_prefix:
+                object_type_enum.append(tool_prefix)
+                object_type_descriptions.append(f"'{tool_prefix}' ({type_id} - {display_name})")
+        
+        # Get namespace from settings
+        namespace = self.settings.NAMESPACE
+        
+        # Get context schema
+        context_properties = build_context_schema()
+        
+        # Build tool names with namespace if present
+        associate_tool_name = build_tool_name("associate_objects", namespace)
+        dissociate_tool_name = build_tool_name("dissociate_objects", namespace)
+        
+        # Build description with available types
+        types_list = ", ".join(object_type_descriptions)
+        
+        # Add associate tool
+        self.tools.append({
+            "name": associate_tool_name,
+            "description": f"Associate objects in OpenPages using parent/child relationships. ⚠️ CRITICAL: You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "object_type": {
+                        "type": "string",
+                        "enum": object_type_enum,
+                        "description": f"Type of source object. Must be one of: {', '.join(object_type_enum)}. Use the tool_prefix value (e.g., 'issue' for SOXIssue, 'control' for SOXControl)."
+                    },
+                    "resource_id": {
+                        "type": "string",
+                        "description": "Resource ID of the source object (one of resource_id, path, or name is required)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Full path of the source object (one of resource_id, path, or name is required)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the source object (one of resource_id, path, or name is required)"
+                    },
+                    "associations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "relationship_type": {
+                                    "type": "string",
+                                    "enum": ["Parent", "Child"],
+                                    "description": "Type of relationship: 'Parent' or 'Child' (only these are supported by REST API). Check the resource schema to see which relationship types are available for this object type."
+                                },
+                                "target_id": {
+                                    "type": "string",
+                                    "description": "Resource ID of target object (one of target_id, target_name, or target_path is required)"
+                                },
+                                "target_name": {
+                                    "type": "string",
+                                    "description": "Name of target object (requires target_type)"
+                                },
+                                "target_path": {
+                                    "type": "string",
+                                    "description": "Full path to target object"
+                                },
+                                "target_type": {
+                                    "type": "string",
+                                    "description": "OpenPages type ID of target object (e.g., 'SOXRisk', 'SOXControl', 'SOXIssue' - NOT the tool_prefix like 'risk', 'control', 'issue'). REQUIRED when using target_name, RECOMMENDED for validation. Check the resource schema at openpages://schema/{ObjectType} to see the exact type IDs and which target types are valid for the chosen relationship_type."
+                                }
+                            },
+                            "required": ["relationship_type"]
+                        },
+                        "description": "Array of associations to create. Each association must specify a valid relationship_type and target_type combination as defined in the resource schema (openpages://schema/{ObjectType})."
+                    },
+                    **context_properties
+                },
+                "required": ["object_type", "associations"]
+            }
+        })
+        logger.info(f"Added generic {associate_tool_name} tool")
+        
+        # Add dissociate tool
+        self.tools.append({
+            "name": dissociate_tool_name,
+            "description": f"Dissociate objects in OpenPages using parent/child relationships. ⚠️ CRITICAL: You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "object_type": {
+                        "type": "string",
+                        "enum": object_type_enum,
+                        "description": f"Type of source object. Must be one of: {', '.join(object_type_enum)}. Use the tool_prefix value (e.g., 'issue' for SOXIssue, 'control' for SOXControl)."
+                    },
+                    "resource_id": {
+                        "type": "string",
+                        "description": "Resource ID of the source object (one of resource_id, path, or name is required)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Full path of the source object (one of resource_id, path, or name is required)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the source object (one of resource_id, path, or name is required)"
+                    },
+                    "associations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "relationship_type": {
+                                    "type": "string",
+                                    "enum": ["Parent", "Child"],
+                                    "description": "Type of relationship: 'Parent' or 'Child' (only these are supported by REST API). Check the resource schema to see which relationship types are available for this object type."
+                                },
+                                "target_id": {
+                                    "type": "string",
+                                    "description": "Resource ID of target object (one of target_id, target_name, or target_path is required)"
+                                },
+                                "target_name": {
+                                    "type": "string",
+                                    "description": "Name of target object (requires target_type)"
+                                },
+                                "target_path": {
+                                    "type": "string",
+                                    "description": "Full path to target object"
+                                },
+                                "target_type": {
+                                    "type": "string",
+                                    "description": "OpenPages type ID of target object (e.g., 'SOXRisk', 'SOXControl', 'SOXIssue' - NOT the tool_prefix like 'risk', 'control', 'issue'). REQUIRED when using target_name, RECOMMENDED for validation. Check the resource schema at openpages://schema/{ObjectType} to see the exact type IDs and which target types are valid for the chosen relationship_type."
+                                }
+                            },
+                            "required": ["relationship_type"]
+                        },
+                        "description": "Array of associations to remove. Each association must specify a valid relationship_type and target_type combination as defined in the resource schema (openpages://schema/{ObjectType})."
+                    },
+                    **context_properties
+                },
+                "required": ["object_type", "associations"]
+            }
+        })
+        logger.info(f"Added generic {dissociate_tool_name} tool")
         
     def _add_dynamic_tools_to_schema(self) -> None:
         """

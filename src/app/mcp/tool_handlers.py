@@ -19,6 +19,7 @@ from typing import Dict, Any
 
 from src.app.observability.logger import get_logger, log_method_call
 from src.app.mcp.context import extract_context_from_arguments
+from src.app.utils import build_tool_name
 
 logger = get_logger(__name__)
 
@@ -50,9 +51,11 @@ class ToolHandlers:
         self.mcp_server = mcp_server
         self.auth_service = auth_service
 
-        # Build the generic delete and upsert tool names based on namespace
+        # Build the generic tool names based on namespace
         namespace = settings.NAMESPACE
-        self.generic_delete_tool_name = f"{namespace}_delete_object" if namespace else "delete_object"
+        self.generic_delete_tool_name = build_tool_name("delete_object", namespace)
+        self.generic_associate_tool_name = build_tool_name("associate_objects", namespace)
+        self.generic_dissociate_tool_name = build_tool_name("dissociate_objects", namespace)
         self.generic_upsert_tool_name = f"{namespace}_upsert_object" if namespace else "upsert_object"
     
     async def _resolve_auth_override(self, context) -> tuple:
@@ -575,6 +578,188 @@ class ToolHandlers:
                     {"type": "text", "text": f"Error upserting {object_type}: {str(e)}"}
                 ]
             }
+
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def handle_generic_associate_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle the generic associate_objects tool that works for all configured object types
+        
+        Args:
+            arguments: Tool arguments containing 'object_type', source identifier, 'associations' array,
+                      and optional context variables
+            
+        Returns:
+            Dict containing the association result
+        """
+        # Extract context variables from arguments
+        cleaned_args, context = extract_context_from_arguments(arguments)
+        logger.debug(f"Associate tool context: {context}")
+        
+        object_type_input = cleaned_args.get("object_type", "")
+        
+        if not object_type_input:
+            logger.error("object_type not provided in associate_objects request")
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: object_type is required"}
+                ]
+            }
+        
+        # Normalize object_type: accept tool_prefix, type_id, or display_name
+        object_type = None
+        
+        # Build a mapping of all valid identifiers to tool_prefix
+        type_mapping = {}
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            config_type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name")
+            
+            if tool_prefix:
+                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
+                if config_type_id:
+                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
+                if display_name:
+                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
+        
+        # Look up the normalized object_type
+        lookup_key = object_type_input.lower()
+        if lookup_key in type_mapping:
+            object_type, type_id = type_mapping[lookup_key]
+            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
+        else:
+            logger.warning(f"Invalid object_type: {object_type_input}")
+            available_types = list(set([v[0] for v in type_mapping.values()]))
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
+                ]
+            }
+        
+        # Check if we have a tool for this object type
+        if object_type not in self.object_tools:
+            logger.warning(f"No tool available for object type: {object_type}")
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
+                ]
+            }
+        
+        # Get the appropriate tool
+        tool = self.object_tools[object_type]
+        logger.info(f"Executing generic associate operation for {object_type}")
+        
+        try:
+            # Perform the associate operation
+            result = await tool.associate_objects(cleaned_args)
+            
+            # Format the response
+            logger.debug(f"Generic associate operation completed successfully for {object_type}")
+            return {
+                "result": [{"type": "text", "text": item.text} for item in result]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling associate_objects for {object_type}: {e}", exc_info=True, extra_fields={
+                "object_type": object_type,
+                "error_type": type(e).__name__
+            })
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error associating {object_type}: {str(e)}"}
+                ]
+            }
+    
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def handle_generic_dissociate_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle the generic dissociate_objects tool that works for all configured object types
+        
+        Args:
+            arguments: Tool arguments containing 'object_type', source identifier, 'associations' array,
+                      and optional context variables
+            
+        Returns:
+            Dict containing the dissociation result
+        """
+        # Extract context variables from arguments
+        cleaned_args, context = extract_context_from_arguments(arguments)
+        logger.debug(f"Dissociate tool context: {context}")
+        
+        object_type_input = cleaned_args.get("object_type", "")
+        
+        if not object_type_input:
+            logger.error("object_type not provided in dissociate_objects request")
+            return {
+                "result": [
+                    {"type": "text", "text": "Error: object_type is required"}
+                ]
+            }
+        
+        # Normalize object_type: accept tool_prefix, type_id, or display_name
+        object_type = None
+        
+        # Build a mapping of all valid identifiers to tool_prefix
+        type_mapping = {}
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            config_type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name")
+            
+            if tool_prefix:
+                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
+                if config_type_id:
+                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
+                if display_name:
+                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
+        
+        # Look up the normalized object_type
+        lookup_key = object_type_input.lower()
+        if lookup_key in type_mapping:
+            object_type, type_id = type_mapping[lookup_key]
+            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
+        else:
+            logger.warning(f"Invalid object_type: {object_type_input}")
+            available_types = list(set([v[0] for v in type_mapping.values()]))
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
+                ]
+            }
+        
+        # Check if we have a tool for this object type
+        if object_type not in self.object_tools:
+            logger.warning(f"No tool available for object type: {object_type}")
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
+                ]
+            }
+        
+        # Get the appropriate tool
+        tool = self.object_tools[object_type]
+        logger.info(f"Executing generic dissociate operation for {object_type}")
+        
+        try:
+            # Perform the dissociate operation
+            result = await tool.dissociate_objects(cleaned_args)
+            
+            # Format the response
+            logger.debug(f"Generic dissociate operation completed successfully for {object_type}")
+            return {
+                "result": [{"type": "text", "text": item.text} for item in result]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling dissociate_objects for {object_type}: {e}", exc_info=True, extra_fields={
+                "object_type": object_type,
+                "error_type": type(e).__name__
+            })
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error dissociating {object_type}: {str(e)}"}
+                ]
+            }
     
     async def handle_openpages_query_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1037,6 +1222,8 @@ class ToolHandlers:
             special_tool_handlers = {
                 "echo": self.handle_echo_tool,
                 self.generic_delete_tool_name: self.handle_generic_delete_tool,
+                self.generic_associate_tool_name: self.handle_generic_associate_tool,
+                self.generic_dissociate_tool_name: self.handle_generic_dissociate_tool,
                 self.generic_upsert_tool_name: self.handle_generic_upsert_tool,
                 "execute_openpages_query": self.handle_openpages_query_tool,
                 "list_resources": self.handle_list_resources_tool,

@@ -64,4 +64,27 @@ def get_env_file_path(env_file: Optional[str] = None) -> str:
     # Default to .env in the current directory even if it doesn't exist
     return '.env'
 
+def build_tool_name(base_name: str, namespace: Optional[str] = None) -> str:
+    """
+    Build a tool name with optional namespace prefix
+    
+    Args:
+        base_name: The base name of the tool (e.g., 'associate_objects', 'delete_object')
+        namespace: Optional namespace to prefix the tool name with
+        
+    Returns:
+        Tool name with namespace prefix if provided, otherwise just the base name
+        
+    Examples:
+        >>> build_tool_name('associate_objects', 'openpages')
+        'openpages_associate_objects'
+        >>> build_tool_name('associate_objects', None)
+        'associate_objects'
+        >>> build_tool_name('delete_object')
+        'delete_object'
+    """
+    if namespace:
+        return f"{namespace}_{base_name}"
+    return base_name
+
 # Made with Bob

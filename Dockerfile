@@ -39,8 +39,9 @@ ENV PYTHONPATH="${PYTHONPATH}:/app"
 # Checks the /health/ready endpoint every 30 seconds
 # Starts checking after 30 seconds, with 10 second timeout
 # Marks unhealthy after 3 consecutive failures
+# Uses PORT environment variable to support custom ports
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8000/health/ready || exit 1
+    CMD curl -f http://localhost:${PORT:-8000}/health/ready || exit 1
 
 # Default command - run in remote mode (HTTP server)
 # For local mode (stdio), use: python main.py --mode local

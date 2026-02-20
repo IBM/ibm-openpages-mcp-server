@@ -6,15 +6,16 @@ Provides functionality to interact with IBM OpenPages REST API
 import logging
 import base64
 from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta
 import httpx  # type: ignore
 from src.app.config.settings import Settings, settings
-from src.app.observability.logger import get_logger, log_method_call
+from src.app.observability.logger import StructuredLogger, get_logger, log_method_call
 
 # Type annotation for better error handling
 HTTPXError = httpx.HTTPError
 
 # Configure logging
-logger = get_logger(__name__)
+logger: StructuredLogger = get_logger(__name__)
 
 class OpenPagesClient:
     """Client for interacting with IBM OpenPages API"""
@@ -349,6 +350,7 @@ class OpenPagesClient:
         logger.info(f"Executing OpenPages query (limit={limit}, offset={offset})")
         logger.debug(f"Query statement: {statement[:100]}..." if len(statement) > 100 else f"Query statement: {statement}")
 
+
         # Check if the base URL has a valid protocol
         if not (self.base_url.startswith('http://') or self.base_url.startswith('https://')):
             logger.error(f"Invalid base URL (missing protocol): {self.base_url}")
@@ -369,6 +371,7 @@ class OpenPagesClient:
         logger.info(f"OpenPages API Query Request: {full_url}")
         logger.info(f"Request Body: {request_body}")
 
+        # Use _request_with_auth_retry for reactive 401 handling and auth_override support
         try:
             response = await self._request_with_auth_retry(
                 "POST", full_url, auth_override=auth_override, json=request_body, timeout=30.0
@@ -409,6 +412,7 @@ class OpenPagesClient:
             Content data
         """
         logger.info(f"Getting content for resource ID: {resource_id}")
+
 
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
         url = f"{self.base_url}{api_path}"
@@ -453,11 +457,11 @@ class OpenPagesClient:
         """
         logger.info(f"Creating content of type: {content_data.get('type_definition_id', 'unknown')}")
 
+
         api_path = self._get_api_path("/api/v2/contents")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Create Content Request: {url}")
         logger.debug(f"Request Body: {content_data}")
-
         try:
             response = await self._request_with_auth_retry(
                 "POST", url, auth_override=auth_override, json=content_data, timeout=30.0
@@ -497,6 +501,7 @@ class OpenPagesClient:
             Updated content data
         """
         logger.info(f"Updating content: {resource_id} (type: {content_data.get('type_definition_id', 'unknown')})")
+
 
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
         url = f"{self.base_url}{api_path}"
@@ -576,6 +581,7 @@ class OpenPagesClient:
         Returns:
             Type definition data including field definitions
         """
+        
         api_path = self._get_api_path(f"/api/v2/types/{type_name}")
         url = f"{self.base_url}{api_path}"
         logger.info(f"OpenPages API Get Type Definition Request: {url}")
@@ -616,65 +622,54 @@ class OpenPagesClient:
         Returns:
             Type association data including parent and child relationships
         """
-        # Get request headers (with optional auth override)
-        request_headers = await self._get_request_headers(auth_override)
-
+        
         api_path = self._get_api_path(f"/api/v2/types/{type_name}/associations?includeLocalizedLabels=false")
         url = f"{self.base_url}{api_path}"
         logger.info(f"OpenPages API Get Type Associations Request: {url}")
 
-        # Use SSL verification setting from config
-        if not self.settings.SSL_VERIFY:
-            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
-
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.get(
-                    url,
-                    headers=request_headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                response_json = response.json()
-                
-                # Log the response, but truncate if too large
-                if settings.DEBUG:
-                    logger.info(f"OpenPages API Get Type Associations Response Status: {response.status_code}")
-                    response_str = str(response_json)
-                    if len(response_str) > 1000:
-                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
-                    else:
-                        logger.info(f"Response Body: {response_json}")
-                
-                return response_json
-            except httpx.HTTPStatusError as e:
-                # This exception has response attribute
-                logger.error(f"HTTP status error getting type associations: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-                # Return empty dict on error rather than raising
-                return {}
-            except httpx.RequestError as e:
-                # Network-related errors
-                logger.error(f"Request error getting type associations: {e}")
-                # Return empty dict on error rather than raising
-                return {}
+        try:
+            response = await self._request_with_auth_retry(
+                "GET", url, auth_override=auth_override, timeout=30.0
+            )
+            response_json = response.json()
+            
+            # Log the response, but truncate if too large
+            if settings.DEBUG:
+                logger.info(f"OpenPages API Get Type Associations Response Status: {response.status_code}")
+                response_str = str(response_json)
+                if len(response_str) > 1000:
+                    logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                else:
+                    logger.info(f"Response Body: {response_json}")
+            
+            return response_json
+        except httpx.HTTPStatusError as e:
+            # This exception has response attribute
+            logger.error(f"HTTP status error getting type associations: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            # Return empty dict on error rather than raising
+            return {}
+        except httpx.RequestError as e:
+            # Network-related errors
+            logger.error(f"Request error getting type associations: {e}")
+            # Return empty dict on error rather than raising
+            return {}
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def get_username_by_email(self, email: str) -> Optional[str]:
+    async def get_username_by_email(self, email: str, auth_override: Optional[str] = None) -> Optional[str]:
         """
         Get username by email using SCIM Users API
 
         Args:
             email: Email address of the user
+            auth_override: Optional auth header override for per-request auth
 
         Returns:
             Username if found, None otherwise
         """
         logger.info(f"Getting username for email: {email}")
 
-        # Ensure authentication is initialized
-        await self.initialize_auth()
 
         # URL encode the filter parameter
         import urllib.parse
@@ -685,48 +680,39 @@ class OpenPagesClient:
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages SCIM Users API Request: {url}")
 
-        # Use SSL verification setting from config
-        if not self.settings.SSL_VERIFY:
-            logger.warning("SSL verification is disabled. This is not recommended for production environments.")
+        try:
+            response = await self._request_with_auth_retry(
+                "GET", url, auth_override=auth_override, timeout=30.0
+            )
+            response_json = response.json()
 
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.get(
-                    url,
-                    headers=self.headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                response_json = response.json()
-
-                # Log the response
-                if settings.DEBUG:
-                    logger.info(f"OpenPages SCIM Users API Response Status: {response.status_code}")
-                    response_str = str(response_json)
-                    if len(response_str) > 1000:
-                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
-                    else:
-                        logger.info(f"Response Body: {response_json}")
-
-                # Extract username from response
-                resources = response_json.get('Resources', [])
-                if resources and len(resources) > 0:
-                    user = resources[0]
-                    username = user.get('userName')
-                    logger.info(f"Resolved email {email} to username: {username}")
-                    return username
+            # Log the response
+            if settings.DEBUG:
+                logger.info(f"OpenPages SCIM Users API Response Status: {response.status_code}")
+                response_str = str(response_json)
+                if len(response_str) > 1000:
+                    logger.info(f"Response Body (truncated): {response_str[:1000]}...")
                 else:
-                    logger.warning(f"No user found with email: {email}")
-                    return None
+                    logger.info(f"Response Body: {response_json}")
 
-            except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP status error getting username by email: {e}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
+            # Extract username from response
+            resources = response_json.get('Resources', [])
+            if resources and len(resources) > 0:
+                user = resources[0]
+                username = user.get('userName')
+                logger.info(f"Resolved email {email} to username: {username}")
+                return username
+            else:
+                logger.warning(f"No user found with email: {email}")
                 return None
-            except httpx.RequestError as e:
-                logger.error(f"Request error getting username by email: {e}")
-                return None
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error getting username by email: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            return None
+        except httpx.RequestError as e:
+            logger.error(f"Request error getting username by email: {e}")
+            return None
 
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def delete_content(self, resource_id: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
@@ -741,7 +727,7 @@ class OpenPagesClient:
             Response data from the delete operation
         """
         logger.info(f"Deleting content: {resource_id}")
-
+        
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}")
         url = f"{self.base_url}{api_path}"
         logger.debug(f"OpenPages API Delete Content Request: {url}")
@@ -797,8 +783,6 @@ class OpenPagesClient:
         """
         logger.info(f"Adding {len(associations)} association(s) to resource: {resource_id}")
         
-        # Ensure authentication is initialized
-        await self.initialize_auth()
         
         api_path = self._get_api_path(f"/api/v2/contents/{resource_id}/associations")
         url = f"{self.base_url}{api_path}"
@@ -853,57 +837,52 @@ class OpenPagesClient:
         if self.settings.DEBUG:
             logger.debug(f"Association payload: {association_payload}")
         
-        # Send all associations in a single API call
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.post(
-                    url,
-                    headers=self.headers,
-                    json=association_payload,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                
-                # The response might be empty for successful association creation
-                if response.text:
-                    response_json = response.json()
-                else:
-                    response_json = {
-                        "status": "success",
-                        "message": f"Added {len(associations_array)} association(s)",
-                        "associations": associations_array
-                    }
-                
-                logger.info(f"Successfully added {len(associations_array)} association(s) to {resource_id}")
-                
-                return {
+        # Send all associations in a single API call using retry mechanism
+        try:
+            response = await self._request_with_auth_retry(
+                "POST", url, auth_override=None, json=association_payload, timeout=30.0
+            )
+            
+            # The response might be empty for successful association creation
+            if response.text:
+                response_json = response.json()
+            else:
+                response_json = {
                     "status": "success",
-                    "total": len(associations_array),
-                    "successful": len(associations_array),
-                    "failed": 0,
-                    "result": response_json
+                    "message": f"Added {len(associations_array)} association(s)",
+                    "associations": associations_array
                 }
-                
-            except httpx.HTTPStatusError as e:
-                error_msg = f"Failed to add associations: {e.response.text}"
-                logger.error(error_msg)
-                return {
-                    "status": "error",
-                    "total": len(associations_array),
-                    "successful": 0,
-                    "failed": len(associations_array),
-                    "error": e.response.text
-                }
-            except httpx.RequestError as e:
-                error_msg = f"Request error adding associations: {e}"
-                logger.error(error_msg)
-                return {
-                    "status": "error",
-                    "total": len(associations_array),
-                    "successful": 0,
-                    "failed": len(associations_array),
-                    "error": str(e)
-                }
+            
+            logger.info(f"Successfully added {len(associations_array)} association(s) to {resource_id}")
+            
+            return {
+                "status": "success",
+                "total": len(associations_array),
+                "successful": len(associations_array),
+                "failed": 0,
+                "result": response_json
+            }
+            
+        except httpx.HTTPStatusError as e:
+            error_msg = f"Failed to add associations: {e.response.text}"
+            logger.error(error_msg)
+            return {
+                "status": "error",
+                "total": len(associations_array),
+                "successful": 0,
+                "failed": len(associations_array),
+                "error": e.response.text
+            }
+        except httpx.RequestError as e:
+            error_msg = f"Request error adding associations: {e}"
+            logger.error(error_msg)
+            return {
+                "status": "error",
+                "total": len(associations_array),
+                "successful": 0,
+                "failed": len(associations_array),
+                "error": str(e)
+            }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def remove_associations(self, resource_id: str, associations: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -929,8 +908,6 @@ class OpenPagesClient:
         """
         logger.info(f"Removing {len(associations)} association(s) from resource: {resource_id}")
         
-        # Ensure authentication is initialized
-        await self.initialize_auth()
         
         # Group associations by relationship type
         grouped_associations = {}
@@ -980,55 +957,51 @@ class OpenPagesClient:
         if not self.settings.SSL_VERIFY:
             logger.warning("SSL verification is disabled. This is not recommended for production environments.")
         
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.delete(
-                    url,
-                    headers=self.headers,
-                    params=query_params,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                
-                # The response might be empty for successful removal
-                if response.text:
-                    response_json = response.json()
-                else:
-                    response_json = {
-                        "status": "success",
-                        "message": f"Removed {len(associations)} association(s)",
-                        "removed": grouped_associations
-                    }
-                
-                logger.info(f"Successfully removed {len(associations)} association(s) from {resource_id}")
-                
-                return {
+        # Use retry mechanism for DELETE request
+        try:
+            response = await self._request_with_auth_retry(
+                "DELETE", url, auth_override=None, params=query_params, timeout=30.0
+            )
+            
+            # The response might be empty for successful removal
+            if response.text:
+                response_json = response.json()
+            else:
+                response_json = {
                     "status": "success",
-                    "total": len(associations),
-                    "successful": len(associations),
-                    "failed": 0,
-                    "result": response_json
+                    "message": f"Removed {len(associations)} association(s)",
+                    "removed": grouped_associations
                 }
-                
-            except httpx.HTTPStatusError as e:
-                error_msg = f"Failed to remove associations: {e.response.text}"
-                logger.error(error_msg)
-                return {
-                    "status": "error",
-                    "total": len(associations),
-                    "successful": 0,
-                    "failed": len(associations),
-                    "error": e.response.text
-                }
-            except httpx.RequestError as e:
-                error_msg = f"Request error removing associations: {e}"
-                logger.error(error_msg)
-                return {
-                    "status": "error",
-                    "total": len(associations),
-                    "successful": 0,
-                    "failed": len(associations),
-                    "error": str(e)
-                }
+            
+            logger.info(f"Successfully removed {len(associations)} association(s) from {resource_id}")
+            
+            return {
+                "status": "success",
+                "total": len(associations),
+                "successful": len(associations),
+                "failed": 0,
+                "result": response_json
+            }
+            
+        except httpx.HTTPStatusError as e:
+            error_msg = f"Failed to remove associations: {e.response.text}"
+            logger.error(error_msg)
+            return {
+                "status": "error",
+                "total": len(associations),
+                "successful": 0,
+                "failed": len(associations),
+                "error": e.response.text
+            }
+        except httpx.RequestError as e:
+            error_msg = f"Request error removing associations: {e}"
+            logger.error(error_msg)
+            return {
+                "status": "error",
+                "total": len(associations),
+                "successful": 0,
+                "failed": len(associations),
+                "error": str(e)
+            }
 
 # Made with Bob

@@ -18,7 +18,7 @@ services:
       
       # Server Settings
       - HOST=${HOST:-0.0.0.0}
-      - PORT=${PORT:-8000}
+      - PORT=8000
       
       # OpenPages Configuration
       - OPENPAGES_BASE_URL=${OPENPAGES_BASE_URL:-https://openpages-server.example.com}
@@ -113,3 +113,4 @@ networks:
   #   driver: local
 
 # Made with Bob
+

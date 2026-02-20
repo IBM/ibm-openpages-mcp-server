@@ -7,6 +7,8 @@ import logging
 import json
 import urllib.parse
 from typing import Any, Dict, List, Optional
+from datetime import datetime
+from dateutil import parser as date_parser
 
 from mcp.types import TextContent  # type: ignore
 from src.app.core.openpages_client import OpenPagesClient
@@ -182,9 +184,36 @@ class BaseTool:
         
         # Handle date/time types
         if field_type in ("DATE_TYPE", "DATETIME_TYPE", "TIMESTAMP_TYPE"):
-            # OpenPages typically expects ISO 8601 format or epoch milliseconds
-            # Return as-is if it's already a string (assume correct format)
-            return str(field_value)
+            # OpenPages expects ISO 8601 format (YYYY-MM-DD for dates, YYYY-MM-DDTHH:MM:SS for datetime)
+            try:
+                # If it's already a datetime object, format it
+                if isinstance(field_value, datetime):
+                    if field_type == "DATE_TYPE":
+                        return field_value.strftime("%Y-%m-%d")
+                    else:
+                        return field_value.isoformat()
+                
+                # If it's a string, try to parse it and convert to ISO 8601
+                if isinstance(field_value, str):
+                    # Try to parse the date string using dateutil parser (handles many formats)
+                    try:
+                        parsed_date = date_parser.parse(field_value)
+                        if field_type == "DATE_TYPE":
+                            # For DATE_TYPE, return only the date part (YYYY-MM-DD)
+                            return parsed_date.strftime("%Y-%m-%d")
+                        else:
+                            # For DATETIME_TYPE and TIMESTAMP_TYPE, return full ISO format
+                            return parsed_date.isoformat()
+                    except (ValueError, date_parser.ParserError) as e:
+                        logger.warning(f"Could not parse date string '{field_value}': {e}. Using as-is.")
+                        return str(field_value)
+                
+                # For other types (int/float timestamps), convert to ISO format
+                return str(field_value)
+                
+            except Exception as e:
+                logger.error(f"Error formatting date/time value '{field_value}': {e}. Using as-is.")
+                return str(field_value)
             
         # Handle numeric types
         if field_type == "INTEGER_TYPE":
@@ -193,12 +222,90 @@ class BaseTool:
             except (ValueError, TypeError):
                 logger.warning(f"Could not convert {field_value} to integer, using as-is")
                 return field_value
-        elif field_type in ("DECIMAL_TYPE", "FLOAT_TYPE", "DOUBLE_TYPE", "CURRENCY_TYPE"):
+        elif field_type in ("DECIMAL_TYPE", "FLOAT_TYPE", "DOUBLE_TYPE"):
             try:
                 return float(field_value)
             except (ValueError, TypeError):
                 logger.warning(f"Could not convert {field_value} to float, using as-is")
                 return field_value
+        
+        # Handle currency types (special structure required by OpenPages)
+        elif field_type == "CURRENCY_TYPE":
+            # Currency fields require local_amount and local_currency structure
+            # Input can be:
+            # 1. Simple number: 10000 -> uses default currency
+            # 2. Dict with amount: {"amount": 10000} -> uses default currency
+            # 3. Dict with amount and currency: {"amount": 10000, "currency": "USD"}
+            # 4. Dict with local_amount and local_currency: {"local_amount": 10000, "local_currency": {"iso_code": "USD"}}
+            
+            if isinstance(field_value, dict):
+                # Check if already in correct format
+                if "local_amount" in field_value and "local_currency" in field_value:
+                    return field_value
+                
+                # Extract amount and currency from dict
+                amount = field_value.get("amount", field_value.get("local_amount"))
+                currency_code = field_value.get("currency")
+                
+                # Validate that amount field exists
+                if amount is None:
+                    raise ValueError(
+                        f"Currency object must have 'amount' or 'local_amount' field. "
+                        f"Received: {field_value}. "
+                        f"Valid formats: {{'amount': 100.50, 'currency': 'USD'}} or numeric value"
+                    )
+                
+                # Validate amount is numeric
+                try:
+                    amount = float(amount)
+                except (ValueError, TypeError) as e:
+                    raise ValueError(
+                        f"Currency amount must be numeric. Got '{amount}' of type {type(amount).__name__}. "
+                        f"Error: {str(e)}"
+                    )
+                
+                # If currency is provided as dict with iso_code, extract it
+                if isinstance(currency_code, dict):
+                    currency_code = currency_code.get("iso_code")
+                    if not currency_code:
+                        raise ValueError(
+                            f"Currency object with nested currency must have 'iso_code'. "
+                            f"Received: {field_value.get('currency')}"
+                        )
+                
+                # Use default currency if not specified
+                if not currency_code:
+                    currency_code = settings.DEFAULT_CURRENCY
+                    logger.debug(f"Using default currency {currency_code} for amount {amount}")
+                
+                # Validate currency code format (basic ISO 4217 check)
+                if not isinstance(currency_code, str) or len(currency_code) != 3:
+                    raise ValueError(
+                        f"Currency code must be a 3-letter ISO 4217 code (e.g., USD, EUR, GBP). "
+                        f"Got: '{currency_code}'"
+                    )
+                
+                return {
+                    "local_amount": amount,
+                    "local_currency": {"iso_code": currency_code.upper()}
+                }
+            else:
+                # Simple numeric value - use default currency
+                try:
+                    amount = float(field_value)
+                    currency_code = settings.DEFAULT_CURRENCY
+                    logger.debug(f"Converting simple currency value {amount} to structured format with {currency_code}")
+                    return {
+                        "local_amount": amount,
+                        "local_currency": {"iso_code": currency_code}
+                    }
+                except (ValueError, TypeError) as e:
+                    raise ValueError(
+                        f"Currency value must be numeric or a currency object. "
+                        f"Got '{field_value}' of type {type(field_value).__name__}. "
+                        f"Valid formats: 100.50 or {{'amount': 100.50, 'currency': 'USD'}}. "
+                        f"Error: {str(e)}"
+                    )
         
         # Handle boolean types
         elif field_type == "BOOLEAN_TYPE":

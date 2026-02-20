@@ -122,6 +122,9 @@ class Settings(BaseSettings):
     # Authentication framework settings
     AUTH_ENABLED: bool = True
     
+    # Default currency for CURRENCY_TYPE fields
+    DEFAULT_CURRENCY: str = "USD"  # ISO 4217 currency code
+    
     # Path to object types configuration file
     OBJECT_TYPES_CONFIG_PATH: str = "object_types.json"
     

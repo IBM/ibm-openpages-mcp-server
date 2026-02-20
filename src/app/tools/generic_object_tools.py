@@ -226,7 +226,9 @@ class GenericObjectTools(BaseTool):
         - dissociate{RelationshipType}_{ObjectType} - to remove associations
 
         Examples: associateParent_SOXBusEntity, dissociateChild_SOXControl
-
+        
+        Note: Only Parent and Child relationship types are supported by OpenPages REST API.
+        
         Supports multiple input formats:
         - Resource ID (numeric): "12345"
         - Full path: "/grc/folder/ObjectName"
@@ -259,7 +261,12 @@ class GenericObjectTools(BaseTool):
 
                 relationship_type = assoc.get("relationship", "")
                 associated_type = assoc.get("name", "")
-
+                
+                # ONLY support Parent and Child relationships (REST API limitation)
+                if relationship_type not in ["Parent", "Child"]:
+                    logger.debug(f"Skipping unsupported relationship type '{relationship_type}' (only Parent and Child are supported by REST API)")
+                    continue
+                
                 if relationship_type and associated_type:
                     # Create the expected field name pattern
                     field_pattern = f"associate{relationship_type}_{associated_type}".lower()
@@ -486,46 +493,42 @@ class GenericObjectTools(BaseTool):
             # Use base class method to get type definition
             type_info = await self.get_type_definition(self.type_id, auth_override=auth_override)
             field_definitions = type_info.get('field_definitions', [])
-
-            # Create mappings for field names and labels
-            field_def_map = {}  # Maps field names to definitions (case-sensitive)
-            field_def_map_lower = {}  # Maps lowercase field names to definitions (case-insensitive)
-            label_to_field_map = {}  # Maps lowercase labels to field names
-            simple_name_map = {}  # Maps lowercase simple names to field names
-            conflict_map = {}  # Tracks potential conflicts
-
+            # Create mapping: property_name (from schema) -> technical field name
+            # This handles both friendly names and technical names
+            property_to_technical = {}  # Maps property names to technical field names
+            field_def_map = {}  # Maps technical field names to definitions
+            
             for field_def in field_definitions:
-                field_name = field_def.get('name')
-                if field_name:
-                    # 1. Map full field name to definition (case-sensitive)
-                    field_def_map[field_name] = field_def
-
-                    # Also map lowercase version for case-insensitive matching
-                    field_name_lower = field_name.lower()
-                    if field_name_lower in field_def_map_lower:
-                        conflict_map[field_name_lower] = True
-                        logger.warning(f"Field name conflict: '{field_name_lower}' maps to multiple fields")
-                    field_def_map_lower[field_name_lower] = field_def
-
-                    # 2. Get user-friendly label and map it to field name (case-insensitive)
-                    label = field_def.get('localized_label')
-                    if label:
-                        label_lower = label.lower()
-                        if label_lower in label_to_field_map:
-                            conflict_map[label_lower] = True
-                            logger.warning(f"Label conflict: '{label}' maps to both '{label_to_field_map[label_lower]}' and '{field_name}'")
-                        else:
-                            label_to_field_map[label_lower] = field_name
-
-                    # 3. Map simple name (without prefix) to field name (case-insensitive)
-                    simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
-                    simple_name_lower = simple_name.lower()
-                    if simple_name_lower in simple_name_map:
-                        conflict_map[simple_name_lower] = True
-                        logger.warning(f"Simple name conflict: '{simple_name}' maps to both '{simple_name_map[simple_name_lower]}' and '{field_name}'")
+                field_name = field_def.get('name')  # Technical name
+                if not field_name:
+                    continue
+                
+                # Map technical name to itself
+                field_def_map[field_name] = field_def
+                property_to_technical[field_name.lower()] = field_name
+                
+                # Also map normalized technical name (spaces -> underscores) if different
+                normalized_field_name = field_name.replace(' ', '_').lower()
+                if normalized_field_name != field_name.lower():
+                    property_to_technical[normalized_field_name] = field_name
+                
+                # Map friendly label to technical name (if label exists and is unique)
+                label = field_def.get('localized_label')
+                if label:
+                    label_lower = label.lower()
+                    # Check if this label is already mapped (conflict detection)
+                    if label_lower in property_to_technical and property_to_technical[label_lower] != field_name:
+                        # Conflict: multiple fields have same label
+                        # Remove the mapping so it won't be used
+                        logger.warning(f"Label '{label}' maps to multiple fields, will require technical name")
+                        property_to_technical.pop(label_lower, None)
                     else:
-                        simple_name_map[simple_name_lower] = field_name
-
+                        # Map both original label and normalized version (spaces -> underscores)
+                        property_to_technical[label_lower] = field_name
+                        normalized_label = label.replace(' ', '_').lower()
+                        if normalized_label != label_lower:
+                            property_to_technical[normalized_label] = field_name
+            
             # Process all arguments and map them to OpenPages fields
             for arg_name, arg_value in arguments.items():
                 # Skip special fields that are handled separately
@@ -540,57 +543,19 @@ class GenericObjectTools(BaseTool):
                 if arg_value is None or arg_value == '':
                     continue
                 
-                # Try to find the matching field definition
-                field_def = None
-                field_name = None
+                # Map property name to technical field name
                 arg_name_lower = arg_name.lower()
+                technical_field_name = property_to_technical.get(arg_name_lower)
                 
-                # 1. First try direct match with full field name (case-sensitive)
-                if arg_name in field_def_map:
-                    field_def = field_def_map[arg_name]
-                    field_name = arg_name
-                    logger.debug(f"Field '{arg_name}' matched by exact name")
+                if not technical_field_name:
+                    # No mapping found - this shouldn't happen if schema is correct
+                    logger.warning(f"No field mapping found for '{arg_name}', trying as-is")
+                    technical_field_name = arg_name
                 
-                # 2. Try case-insensitive match with full field name
-                elif arg_name_lower in field_def_map_lower:
-                    # Check if this is a conflicted field name
-                    if arg_name_lower in conflict_map:
-                        logger.warning(f"Using ambiguous field name: '{arg_name}' has multiple possible matches")
-                        # In case of conflict, prefer the exact match if available
-                        for actual_name in field_def_map:
-                            if actual_name.lower() == arg_name_lower:
-                                field_name = actual_name
-                                field_def = field_def_map[actual_name]
-                                logger.debug(f"Ambiguous field '{arg_name}' resolved to exact match '{field_name}'")
-                                break
-                        # If no exact match found, use the first one
-                        if not field_name:
-                            field_def = field_def_map_lower[arg_name_lower]
-                            field_name = field_def.get('name')
-                            logger.debug(f"Ambiguous field '{arg_name}' using first match '{field_name}'")
-                    else:
-                        field_def = field_def_map_lower[arg_name_lower]
-                        field_name = field_def.get('name')
-                        logger.debug(f"Field '{arg_name}' matched by case-insensitive name to '{field_name}'")
-                
-                # 3. Try match with user-friendly label (case-insensitive)
-                elif arg_name_lower in label_to_field_map:
-                    if arg_name_lower in conflict_map:
-                        logger.warning(f"Ambiguous label: '{arg_name}' could refer to multiple fields")
-                    field_name = label_to_field_map[arg_name_lower]
-                    field_def = field_def_map.get(field_name)
-                    logger.debug(f"Field '{arg_name}' matched by label to '{field_name}'")
-                
-                # 4. Try match with simple name (without prefix) (case-insensitive)
-                elif arg_name_lower in simple_name_map:
-                    if arg_name_lower in conflict_map:
-                        logger.warning(f"Ambiguous simple name: '{arg_name}' could refer to multiple fields")
-                    field_name = simple_name_map[arg_name_lower]
-                    field_def = field_def_map.get(field_name)
-                    logger.debug(f"Field '{arg_name}' matched by simple name to '{field_name}'")
+                # Get field definition
+                field_def = field_def_map.get(technical_field_name)
                 
                 if field_def:
-                    field_name = field_def.get('name')
                     field_type = field_def.get('data_type', 'STRING_TYPE')
                     
                     # Validate enum values against schema
@@ -608,22 +573,38 @@ class GenericObjectTools(BaseTool):
                                     return [TextContent(type="text", text=f"Error: Invalid value '{val_str}' for field '{field_name}'. Valid values are: {', '.join(valid_values)}")]
                     
                     # Format the value based on field type using base class method
-                    # Pass field_name to enable user field detection
-                    formatted_value = await self.format_field_value(arg_value, field_type, field_name)
+                    formatted_value = await self.format_field_value(arg_value, field_type, technical_field_name)
                     
                     # Add the field to the content data
-                    # Multi-value enum fields use "values" (plural), others use "value" (singular)
+                    # Different field types have different payload structures
                     if field_type == "MULTI_VALUE_ENUM":
+                        # Multi-value enum fields use "values" (plural)
                         content_data["fields"].append({
-                            "name": field_name,
+                            "name": technical_field_name,
                             "values": formatted_value if isinstance(formatted_value, list) else [formatted_value]
                         })
+                    elif field_type == "CURRENCY_TYPE":
+                        # Currency fields use local_amount and local_currency at field level
+                        # formatted_value is already a dict with these keys from format_field_value
+                        if isinstance(formatted_value, dict) and "local_amount" in formatted_value:
+                            content_data["fields"].append({
+                                "name": technical_field_name,
+                                "local_amount": formatted_value["local_amount"],
+                                "local_currency": formatted_value["local_currency"]
+                            })
+                        else:
+                            # Fallback to regular value if format is unexpected
+                            content_data["fields"].append({
+                                "name": technical_field_name,
+                                "value": formatted_value
+                            })
                     else:
+                        # All other field types use "value" (singular)
                         content_data["fields"].append({
-                            "name": field_name,
+                            "name": technical_field_name,
                             "value": formatted_value
                         })
-                    logger.info(f"Added field {field_name} with value {formatted_value}")
+                    logger.info(f"Mapped '{arg_name}' -> '{technical_field_name}' with value {formatted_value}")
                 else:
                     # If no matching field definition found, this is an error
                     # We should only use fields that are defined in the schema
@@ -632,6 +613,10 @@ class GenericObjectTools(BaseTool):
                     # Skip this field rather than adding it with unknown type
                     continue
                 
+        except ValueError as e:
+            # Re-raise ValueError for ambiguous field names so LLM can handle it
+            logger.error(f"Field validation error: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error processing field definitions: {e}")
             # Continue with basic fields if there's an error
@@ -716,6 +701,15 @@ class GenericObjectTools(BaseTool):
         title = arguments.get('title')
         description = arguments.get('description')
         
+        # Track if we have any actual field updates
+        has_field_updates = False
+        
+        # Check if we have any non-None and non-empty basic field updates
+        if title is not None and title != '':
+            has_field_updates = True
+        if description is not None and description != '':
+            has_field_updates = True
+        
         # Prepare content data
         content_data: dict[str, Any] = {
             "fields": [],
@@ -735,46 +729,42 @@ class GenericObjectTools(BaseTool):
             # Use base class method to get type definition
             type_info = await self.get_type_definition(self.type_id, auth_override=auth_override)
             field_definitions = type_info.get('field_definitions', [])
-
-            # Create mappings for field names and labels
-            field_def_map = {}  # Maps field names to definitions (case-sensitive)
-            field_def_map_lower = {}  # Maps lowercase field names to definitions (case-insensitive)
-            label_to_field_map = {}  # Maps lowercase labels to field names
-            simple_name_map = {}  # Maps lowercase simple names to field names
-            conflict_map = {}  # Tracks potential conflicts
-
+            # Create mapping: property_name (from schema) -> technical field name
+            # This handles both friendly names and technical names
+            property_to_technical = {}  # Maps property names to technical field names
+            field_def_map = {}  # Maps technical field names to definitions
+            
             for field_def in field_definitions:
-                field_name = field_def.get('name')
-                if field_name:
-                    # 1. Map full field name to definition (case-sensitive)
-                    field_def_map[field_name] = field_def
-
-                    # Also map lowercase version for case-insensitive matching
-                    field_name_lower = field_name.lower()
-                    if field_name_lower in field_def_map_lower:
-                        conflict_map[field_name_lower] = True
-                        logger.warning(f"Field name conflict: '{field_name_lower}' maps to multiple fields")
-                    field_def_map_lower[field_name_lower] = field_def
-
-                    # 2. Get user-friendly label and map it to field name (case-insensitive)
-                    label = field_def.get('localized_label')
-                    if label:
-                        label_lower = label.lower()
-                        if label_lower in label_to_field_map:
-                            conflict_map[label_lower] = True
-                            logger.warning(f"Label conflict: '{label}' maps to both '{label_to_field_map[label_lower]}' and '{field_name}'")
-                        else:
-                            label_to_field_map[label_lower] = field_name
-
-                    # 3. Map simple name (without prefix) to field name (case-insensitive)
-                    simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
-                    simple_name_lower = simple_name.lower()
-                    if simple_name_lower in simple_name_map:
-                        conflict_map[simple_name_lower] = True
-                        logger.warning(f"Simple name conflict: '{simple_name}' maps to both '{simple_name_map[simple_name_lower]}' and '{field_name}'")
+                field_name = field_def.get('name')  # Technical name
+                if not field_name:
+                    continue
+                
+                # Map technical name to itself
+                field_def_map[field_name] = field_def
+                property_to_technical[field_name.lower()] = field_name
+                
+                # Also map normalized technical name (spaces -> underscores) if different
+                normalized_field_name = field_name.replace(' ', '_').lower()
+                if normalized_field_name != field_name.lower():
+                    property_to_technical[normalized_field_name] = field_name
+                
+                # Map friendly label to technical name (if label exists and is unique)
+                label = field_def.get('localized_label')
+                if label:
+                    label_lower = label.lower()
+                    # Check if this label is already mapped (conflict detection)
+                    if label_lower in property_to_technical and property_to_technical[label_lower] != field_name:
+                        # Conflict: multiple fields have same label
+                        # Remove the mapping so it won't be used
+                        logger.warning(f"Label '{label}' maps to multiple fields, will require technical name")
+                        property_to_technical.pop(label_lower, None)
                     else:
-                        simple_name_map[simple_name_lower] = field_name
-
+                        # Map both original label and normalized version (spaces -> underscores)
+                        property_to_technical[label_lower] = field_name
+                        normalized_label = label.replace(' ', '_').lower()
+                        if normalized_label != label_lower:
+                            property_to_technical[normalized_label] = field_name
+            
             # Process all arguments and map them to OpenPages fields
             for arg_name, arg_value in arguments.items():
                 # Skip special fields that are handled separately
@@ -789,57 +779,22 @@ class GenericObjectTools(BaseTool):
                 if arg_value is None or arg_value == '':
                     continue
                 
-                # Try to find the matching field definition
-                field_def = None
-                field_name = None
+                # Mark that we have field updates
+                has_field_updates = True
+                
+                # Map property name to technical field name
                 arg_name_lower = arg_name.lower()
+                technical_field_name = property_to_technical.get(arg_name_lower)
                 
-                # 1. First try direct match with full field name (case-sensitive)
-                if arg_name in field_def_map:
-                    field_def = field_def_map[arg_name]
-                    field_name = arg_name
-                    logger.debug(f"Field '{arg_name}' matched by exact name")
+                if not technical_field_name:
+                    # No mapping found - this shouldn't happen if schema is correct
+                    logger.warning(f"No field mapping found for '{arg_name}', trying as-is")
+                    technical_field_name = arg_name
                 
-                # 2. Try case-insensitive match with full field name
-                elif arg_name_lower in field_def_map_lower:
-                    # Check if this is a conflicted field name
-                    if arg_name_lower in conflict_map:
-                        logger.warning(f"Using ambiguous field name: '{arg_name}' has multiple possible matches")
-                        # In case of conflict, prefer the exact match if available
-                        for actual_name in field_def_map:
-                            if actual_name.lower() == arg_name_lower:
-                                field_name = actual_name
-                                field_def = field_def_map[actual_name]
-                                logger.debug(f"Ambiguous field '{arg_name}' resolved to exact match '{field_name}'")
-                                break
-                        # If no exact match found, use the first one
-                        if not field_name:
-                            field_def = field_def_map_lower[arg_name_lower]
-                            field_name = field_def.get('name')
-                            logger.debug(f"Ambiguous field '{arg_name}' using first match '{field_name}'")
-                    else:
-                        field_def = field_def_map_lower[arg_name_lower]
-                        field_name = field_def.get('name')
-                        logger.debug(f"Field '{arg_name}' matched by case-insensitive name to '{field_name}'")
-                
-                # 3. Try match with user-friendly label (case-insensitive)
-                elif arg_name_lower in label_to_field_map:
-                    if arg_name_lower in conflict_map:
-                        logger.warning(f"Ambiguous label: '{arg_name}' could refer to multiple fields")
-                    field_name = label_to_field_map[arg_name_lower]
-                    field_def = field_def_map.get(field_name)
-                    logger.debug(f"Field '{arg_name}' matched by label to '{field_name}'")
-                
-                # 4. Try match with simple name (without prefix) (case-insensitive)
-                elif arg_name_lower in simple_name_map:
-                    if arg_name_lower in conflict_map:
-                        logger.warning(f"Ambiguous simple name: '{arg_name}' could refer to multiple fields")
-                    field_name = simple_name_map[arg_name_lower]
-                    field_def = field_def_map.get(field_name)
-                    logger.debug(f"Field '{arg_name}' matched by simple name to '{field_name}'")
+                # Get field definition
+                field_def = field_def_map.get(technical_field_name)
                 
                 if field_def:
-                    field_name = field_def.get('name')
                     field_type = field_def.get('data_type', 'STRING_TYPE')
                     
                     # Validate enum values against schema
@@ -857,22 +812,38 @@ class GenericObjectTools(BaseTool):
                                     return [TextContent(type="text", text=f"Error: Invalid value '{val_str}' for field '{field_name}'. Valid values are: {', '.join(valid_values)}")]
                     
                     # Format the value based on field type using base class method
-                    # Pass field_name to enable user field detection
-                    formatted_value = await self.format_field_value(arg_value, field_type, field_name)
+                    formatted_value = await self.format_field_value(arg_value, field_type, technical_field_name)
                     
                     # Add the field to the content data
-                    # Multi-value enum fields use "values" (plural), others use "value" (singular)
+                    # Different field types have different payload structures
                     if field_type == "MULTI_VALUE_ENUM":
+                        # Multi-value enum fields use "values" (plural)
                         content_data["fields"].append({
-                            "name": field_name,
+                            "name": technical_field_name,
                             "values": formatted_value if isinstance(formatted_value, list) else [formatted_value]
                         })
+                    elif field_type == "CURRENCY_TYPE":
+                        # Currency fields use local_amount and local_currency at field level
+                        # formatted_value is already a dict with these keys from format_field_value
+                        if isinstance(formatted_value, dict) and "local_amount" in formatted_value:
+                            content_data["fields"].append({
+                                "name": technical_field_name,
+                                "local_amount": formatted_value["local_amount"],
+                                "local_currency": formatted_value["local_currency"]
+                            })
+                        else:
+                            # Fallback to regular value if format is unexpected
+                            content_data["fields"].append({
+                                "name": technical_field_name,
+                                "value": formatted_value
+                            })
                     else:
+                        # All other field types use "value" (singular)
                         content_data["fields"].append({
-                            "name": field_name,
+                            "name": technical_field_name,
                             "value": formatted_value
                         })
-                    logger.info(f"Added field {field_name} with value {formatted_value}")
+                    logger.info(f"Mapped '{arg_name}' -> '{technical_field_name}' with value {formatted_value}")
                 else:
                     # If no matching field definition found, this is an error
                     # We should only use fields that are defined in the schema
@@ -886,14 +857,22 @@ class GenericObjectTools(BaseTool):
             # Continue with basic fields if there's an error
         
         try:
-            # Update the object
-            logger.info(f"Updating {self.display_name.lower()} {object_id}: {content_data}")
-            result = await self.client.update_content(object_id, content_data, auth_override=auth_override)
+            # Only perform update if we have actual field changes
+            updated_resource_id = object_id
             
-            # Extract resource ID from the result
-            updated_resource_id = result.get("id")
-            if not updated_resource_id:
-                return [TextContent(type="text", text=f"Error: Failed to update {self.display_name.lower()} (no resource ID returned)")]
+            if has_field_updates:
+                # Update the object
+                logger.info(f"Updating {self.display_name.lower()} {object_id}: {content_data}")
+                result = await self.client.update_content(object_id, content_data, auth_override=auth_override)
+                
+                # Extract resource ID from the result
+                updated_resource_id = result.get("id")
+                if not updated_resource_id:
+                    return [TextContent(type="text", text=f"Error: Failed to update {self.display_name.lower()} (no resource ID returned)")]
+            else:
+                logger.info(f"No field updates needed for {self.display_name.lower()} {object_id}, skipping update call")
+                # Use the provided object_id as the resource_id for associations
+                updated_resource_id = object_id
             
             # Process associations AFTER object is updated
             associations_to_add, associations_to_remove = await self._process_association_fields(arguments)
@@ -957,6 +936,15 @@ class GenericObjectTools(BaseTool):
         Args:
             arguments: Tool arguments
                 - name: Filter objects by name (partial match, optional)
+                - title: Filter objects by title (partial match, optional)
+                - description: Filter objects by description (partial match, optional)
+                - created_by: Filter by creator username/email
+                - creation_date_from: Filter by creation date (from)
+                - creation_date_to: Filter by creation date (to)
+                - last_modified_by: Filter by last modifier username/email
+                - last_modification_date_from: Filter by last modification date (from)
+                - last_modification_date_to: Filter by last modification date (to)
+                - location: Filter by location path
                 - owner_filter: Filter by current user ownership (default: False)
                 - filters: Dynamic field filters as key-value pairs (optional, for backward compatibility)
                   Example: {"Priority": "High", "Status": "Active", "Owner": "John"}
@@ -972,7 +960,18 @@ class GenericObjectTools(BaseTool):
             List of text content with objects information
         """
         logger.info(f"Querying {self.display_name}s with filters")
+        
+        # Extract system field filters
         name_filter = arguments.get('name')
+        title_filter = arguments.get('title')
+        description_filter = arguments.get('description')
+        created_by_filter = arguments.get('created_by')
+        creation_date_from = arguments.get('creation_date_from')
+        creation_date_to = arguments.get('creation_date_to')
+        last_modified_by_filter = arguments.get('last_modified_by')
+        last_modification_date_from = arguments.get('last_modification_date_from')
+        last_modification_date_to = arguments.get('last_modification_date_to')
+        location_filter = arguments.get('location')
         owner_filter = arguments.get('owner_filter', False)
         
         # Collect filters from both sources:
@@ -1075,18 +1074,61 @@ class GenericObjectTools(BaseTool):
         WHERE [Resource ID] IS NOT NULL
         """
         
-        # Add name filter if specified
+        # Add system field filters
         if name_filter:
-            query += f" AND [Name] LIKE '%{name_filter}%'"
+            # Support wildcards
+            name_escaped = name_filter.replace('*', '%').replace("'", "''")
+            if '%' in name_escaped:
+                query += f" AND [Name] LIKE '{name_escaped}'"
+            else:
+                query += f" AND [Name] LIKE '%{name_escaped}%'"
+        
+        if title_filter:
+            title_escaped = title_filter.replace('*', '%').replace("'", "''")
+            if '%' in title_escaped:
+                query += f" AND [Title] LIKE '{title_escaped}'"
+            else:
+                query += f" AND [Title] LIKE '%{title_escaped}%'"
+        
+        if description_filter:
+            desc_escaped = description_filter.replace('*', '%').replace("'", "''")
+            if '%' in desc_escaped:
+                query += f" AND [Description] LIKE '{desc_escaped}'"
+            else:
+                query += f" AND [Description] LIKE '%{desc_escaped}%'"
+        
+        if created_by_filter:
+            created_by_escaped = created_by_filter.replace("'", "''")
+            query += f" AND [Created By] = '{created_by_escaped}'"
+        
+        if creation_date_from:
+            query += f" AND [Creation Date] >= '{creation_date_from}'"
+        
+        if creation_date_to:
+            query += f" AND [Creation Date] <= '{creation_date_to}'"
+        
+        if last_modified_by_filter:
+            last_modified_by_escaped = last_modified_by_filter.replace("'", "''")
+            query += f" AND [Last Modified By] = '{last_modified_by_escaped}'"
+        
+        if last_modification_date_from:
+            query += f" AND [Last Modification Date] >= '{last_modification_date_from}'"
+        
+        if last_modification_date_to:
+            query += f" AND [Last Modification Date] <= '{last_modification_date_to}'"
+        
+        if location_filter:
+            location_escaped = location_filter.replace('*', '%').replace("'", "''")
+            if '%' in location_escaped:
+                query += f" AND [Location] LIKE '{location_escaped}'"
+            else:
+                query += f" AND [Location] = '{location_escaped}'"
         
         # Add owner filter if requested
         if owner_filter:
             current_user = await self.client.get_current_user(auth_override=auth_override)
             if current_user:
                 query += f" AND [Owner] = '{current_user}'"
-        
-        # Note: status_filter is now handled through the dynamic filters mechanism
-        # Users should use filters={'Status': 'value'} instead
         
         # Process dynamic filters
         if dynamic_filters and isinstance(dynamic_filters, dict):
@@ -1185,11 +1227,11 @@ class GenericObjectTools(BaseTool):
                 
         query += f" ORDER BY {', '.join(sort_clauses)}" if sort_clauses else ""
         
-        # Add limit
-        query += f" LIMIT {limit}"
+        # Note: Do not add LIMIT to SQL query - OpenPages API ignores it
+        # Instead, pass limit parameter to client.query() method
         
-        logger.info(f"Executing query for {self.display_name.lower()}s: {query}")
-        result = await self.client.query(query, auth_override=auth_override)
+        logger.info(f"Executing query for {self.display_name.lower()}s with limit={limit}: {query}")
+        result = await self.client.query(query, limit=limit, auth_override=auth_override)
         
         # Format results
         items = []
@@ -1289,5 +1331,383 @@ class GenericObjectTools(BaseTool):
         except Exception as e:
             logger.error(f"Error deleting {self.display_name.lower()}: {e}")
             return [TextContent(type="text", text=f"Error deleting {self.display_name.lower()}: {str(e)}")]
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def associate_objects(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        """
+        Associate objects with the specified object using parent/child relationships
+        
+        This tool creates associations between objects. Only Parent and Child relationship
+        types are supported by the OpenPages REST API.
+        
+        Args:
+            arguments: Tool arguments
+                - resource_id: Resource ID of the source object
+                - path: Path of the source object (alternative to resource_id)
+                - name: Name of the source object (alternative to resource_id/path)
+                - associations: Array of association objects, each containing:
+                    - relationship_type: Type of relationship ("Parent" or "Child")
+                    - target_id: Resource ID of target object (or target_name/target_path/target_type)
+                    - target_name: Name of target object (requires target_type)
+                    - target_path: Full path to target object
+                    - target_type: Type of target object (used with target_name)
+                
+        Returns:
+            List of text content with association confirmation
+        """
+        logger.info(f"Associating objects with {self.display_name}")
+        
+        # Extract source object identifier
+        resource_id = arguments.get('resource_id')
+        path = arguments.get('path')
+        name = arguments.get('name')
+        
+        if not resource_id and not path and not name:
+            return [TextContent(type="text", text="Error: One of resource_id, path, or name is required")]
+        
+        # Resolve source object ID
+        source_id = None
+        if resource_id:
+            source_id = resource_id
+        elif path:
+            source_id = await self.resolve_path_to_id(path)
+            if not source_id:
+                return [TextContent(type="text", text=f"Error: Could not resolve path '{path}' to a resource ID")]
+        elif name:
+            # Query by name
+            try:
+                query = f"SELECT [Resource ID] FROM [{self.type_id}] WHERE [Name] = '{name}' LIMIT 2"
+                result = await self.client.query(query)
+                rows = result.get('rows', [])
+                
+                if len(rows) == 0:
+                    return [TextContent(type="text", text=f"Error: No {self.display_name.lower()} found with name '{name}'")]
+                elif len(rows) > 1:
+                    return [TextContent(type="text", text=f"Error: Multiple {self.display_name.lower()} objects found with name '{name}'. Please use resource_id or path instead.")]
+                
+                source_id = rows[0]['fields'][0]['value']
+            except Exception as e:
+                logger.error(f"Error querying for {self.display_name.lower()} by name '{name}': {e}")
+                return [TextContent(type="text", text=f"Error: Could not find {self.display_name.lower()} with name '{name}': {str(e)}")]
+        
+        # Extract associations
+        associations = arguments.get('associations', [])
+        if not associations:
+            return [TextContent(type="text", text="Error: 'associations' array is required")]
+        
+        if not isinstance(associations, list):
+            return [TextContent(type="text", text="Error: 'associations' must be an array")]
+        
+        # Get type definition to validate associations against schema
+        try:
+            type_info = await self.get_type_definition(self.type_id)
+            type_associations = type_info.get('associations', [])
+            
+            # If associations is a dict, extract the array
+            if isinstance(type_associations, dict):
+                type_associations = type_associations.get('associations', [])
+            
+            # Build a map of valid associations from schema
+            valid_associations = {}
+            for type_assoc in type_associations:
+                if not type_assoc.get("enabled", True):
+                    continue
+                
+                relationship_type = type_assoc.get("relationship", "")
+                associated_type = type_assoc.get("name", "")
+                
+                # Only Parent and Child are supported by REST API
+                if relationship_type in ["Parent", "Child"] and associated_type:
+                    key = f"{relationship_type}:{associated_type}"
+                    valid_associations[key] = {
+                        "relationship_type": relationship_type,
+                        "associated_type": associated_type,
+                        "label": type_assoc.get("localizedLabel", associated_type)
+                    }
+            
+            logger.debug(f"Valid associations for {self.type_id}: {list(valid_associations.keys())}")
+        except Exception as e:
+            logger.warning(f"Could not load type definition for schema validation: {e}. Proceeding without schema validation.")
+            valid_associations = None
+        
+        # Process and validate associations
+        associations_to_add = []
+        for assoc in associations:
+            if not isinstance(assoc, dict):
+                logger.warning(f"Skipping invalid association (not a dict): {assoc}")
+                continue
+            
+            relationship_type = assoc.get('relationship_type')
+            if not relationship_type:
+                return [TextContent(type="text", text="Error: Each association must have 'relationship_type'")]
+            
+            # Validate relationship type - only Parent and Child are supported
+            if relationship_type not in ['Parent', 'Child']:
+                return [TextContent(type="text", text=f"Error: Only 'Parent' and 'Child' relationship types are supported by OpenPages REST API. Got: '{relationship_type}'")]
+            
+            # Resolve target object ID
+            target_id = assoc.get('target_id')
+            target_name = assoc.get('target_name')
+            target_path = assoc.get('target_path')
+            target_type = assoc.get('target_type')
+            
+            if not target_id and not target_name and not target_path:
+                return [TextContent(type="text", text="Error: Each association must have one of 'target_id', 'target_name', or 'target_path'")]
+            
+            resolved_target_id = None
+            resolved_target_type = target_type  # May be None initially
+            
+            if target_id:
+                resolved_target_id = target_id
+                # If we have schema validation and target_type is provided, validate it
+                if valid_associations and target_type:
+                    resolved_target_type = target_type
+            elif target_path:
+                resolved_target_id = await self.resolve_path_to_id(target_path)
+                if not resolved_target_id:
+                    return [TextContent(type="text", text=f"Error: Could not resolve target path '{target_path}' to a resource ID")]
+                # If target_type provided, use it for validation
+                if target_type:
+                    resolved_target_type = target_type
+            elif target_name:
+                if not target_type:
+                    return [TextContent(type="text", text="Error: 'target_type' is required when using 'target_name'")]
+                
+                resolved_target_type = target_type
+                
+                # Resolve by name and type
+                resolved_target_id = await self._resolve_association_value(
+                    {"type": target_type, "name": target_name},
+                    target_type
+                )
+                if not resolved_target_id:
+                    return [TextContent(type="text", text=f"Error: Could not find {target_type} with name '{target_name}'")]
+            
+            # Validate against schema if available
+            if valid_associations and resolved_target_type:
+                validation_key = f"{relationship_type}:{resolved_target_type}"
+                if validation_key not in valid_associations:
+                    available = [f"{v['relationship_type']} -> {v['associated_type']}" for v in valid_associations.values()]
+                    return [TextContent(type="text", text=f"Error: Association '{relationship_type}' to type '{resolved_target_type}' is not valid for {self.type_id}. Available associations: {', '.join(available) if available else 'none'}. Please check the resource schema at openpages://schema/{self.type_id}")]
+                
+                logger.info(f"Validated association: {validation_key} for {self.type_id}")
+            elif valid_associations and not resolved_target_type:
+                logger.warning(f"Cannot validate association without target_type. Consider providing 'target_type' for validation.")
+            
+            associations_to_add.append({
+                "relationship_type": relationship_type,
+                "target_id": resolved_target_id
+            })
+        
+        if not associations_to_add:
+            return [TextContent(type="text", text="Error: No valid associations to add")]
+        
+        # Add associations
+        try:
+            logger.info(f"Adding {len(associations_to_add)} association(s) to object {source_id}")
+            await self.client.add_associations(source_id, associations_to_add)
+            
+            response_data = {
+                "message": f"Successfully added {len(associations_to_add)} association(s)",
+                "operation": "ASSOCIATE",
+                "source_resource_id": source_id,
+                "associations_added": len(associations_to_add),
+                "associations": associations_to_add
+            }
+            
+            return self.format_response(response_data, "associate")
+            
+        except Exception as e:
+            logger.error(f"Error adding associations to {source_id}: {e}")
+            return [TextContent(type="text", text=f"Error adding associations: {str(e)}")]
+    
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def dissociate_objects(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        """
+        Dissociate objects from the specified object using parent/child relationships
+        
+        This tool removes associations between objects. Only Parent and Child relationship
+        types are supported by the OpenPages REST API.
+        
+        Args:
+            arguments: Tool arguments
+                - resource_id: Resource ID of the source object
+                - path: Path of the source object (alternative to resource_id)
+                - name: Name of the source object (alternative to resource_id/path)
+                - associations: Array of association objects, each containing:
+                    - relationship_type: Type of relationship ("Parent" or "Child")
+                    - target_id: Resource ID of target object (or target_name/target_path/target_type)
+                    - target_name: Name of target object (requires target_type)
+                    - target_path: Full path to target object
+                    - target_type: Type of target object (used with target_name)
+                
+        Returns:
+            List of text content with dissociation confirmation
+        """
+        logger.info(f"Dissociating objects from {self.display_name}")
+        
+        # Extract source object identifier
+        resource_id = arguments.get('resource_id')
+        path = arguments.get('path')
+        name = arguments.get('name')
+        
+        if not resource_id and not path and not name:
+            return [TextContent(type="text", text="Error: One of resource_id, path, or name is required")]
+        
+        # Resolve source object ID
+        source_id = None
+        if resource_id:
+            source_id = resource_id
+        elif path:
+            source_id = await self.resolve_path_to_id(path)
+            if not source_id:
+                return [TextContent(type="text", text=f"Error: Could not resolve path '{path}' to a resource ID")]
+        elif name:
+            # Query by name
+            try:
+                query = f"SELECT [Resource ID] FROM [{self.type_id}] WHERE [Name] = '{name}' LIMIT 2"
+                result = await self.client.query(query)
+                rows = result.get('rows', [])
+                
+                if len(rows) == 0:
+                    return [TextContent(type="text", text=f"Error: No {self.display_name.lower()} found with name '{name}'")]
+                elif len(rows) > 1:
+                    return [TextContent(type="text", text=f"Error: Multiple {self.display_name.lower()} objects found with name '{name}'. Please use resource_id or path instead.")]
+                
+                source_id = rows[0]['fields'][0]['value']
+            except Exception as e:
+                logger.error(f"Error querying for {self.display_name.lower()} by name '{name}': {e}")
+                return [TextContent(type="text", text=f"Error: Could not find {self.display_name.lower()} with name '{name}': {str(e)}")]
+        
+        # Extract associations
+        associations = arguments.get('associations', [])
+        if not associations:
+            return [TextContent(type="text", text="Error: 'associations' array is required")]
+        
+        if not isinstance(associations, list):
+            return [TextContent(type="text", text="Error: 'associations' must be an array")]
+        
+        # Get type definition to validate associations against schema
+        try:
+            type_info = await self.get_type_definition(self.type_id)
+            type_associations = type_info.get('associations', [])
+            
+            # If associations is a dict, extract the array
+            if isinstance(type_associations, dict):
+                type_associations = type_associations.get('associations', [])
+            
+            # Build a map of valid associations from schema
+            valid_associations = {}
+            for type_assoc in type_associations:
+                if not type_assoc.get("enabled", True):
+                    continue
+                
+                relationship_type = type_assoc.get("relationship", "")
+                associated_type = type_assoc.get("name", "")
+                
+                # Only Parent and Child are supported by REST API
+                if relationship_type in ["Parent", "Child"] and associated_type:
+                    key = f"{relationship_type}:{associated_type}"
+                    valid_associations[key] = {
+                        "relationship_type": relationship_type,
+                        "associated_type": associated_type,
+                        "label": type_assoc.get("localizedLabel", associated_type)
+                    }
+            
+            logger.debug(f"Valid associations for {self.type_id}: {list(valid_associations.keys())}")
+        except Exception as e:
+            logger.warning(f"Could not load type definition for schema validation: {e}. Proceeding without schema validation.")
+            valid_associations = None
+        
+        # Process and validate associations
+        associations_to_remove = []
+        for assoc in associations:
+            if not isinstance(assoc, dict):
+                logger.warning(f"Skipping invalid association (not a dict): {assoc}")
+                continue
+            
+            relationship_type = assoc.get('relationship_type')
+            if not relationship_type:
+                return [TextContent(type="text", text="Error: Each association must have 'relationship_type'")]
+            
+            # Validate relationship type - only Parent and Child are supported
+            if relationship_type not in ['Parent', 'Child']:
+                return [TextContent(type="text", text=f"Error: Only 'Parent' and 'Child' relationship types are supported by OpenPages REST API. Got: '{relationship_type}'")]
+            
+            # Resolve target object ID
+            target_id = assoc.get('target_id')
+            target_name = assoc.get('target_name')
+            target_path = assoc.get('target_path')
+            target_type = assoc.get('target_type')
+            
+            if not target_id and not target_name and not target_path:
+                return [TextContent(type="text", text="Error: Each association must have one of 'target_id', 'target_name', or 'target_path'")]
+            
+            resolved_target_id = None
+            resolved_target_type = target_type  # May be None initially
+            
+            if target_id:
+                resolved_target_id = target_id
+                # If we have schema validation and target_type is provided, validate it
+                if valid_associations and target_type:
+                    resolved_target_type = target_type
+            elif target_path:
+                resolved_target_id = await self.resolve_path_to_id(target_path)
+                if not resolved_target_id:
+                    return [TextContent(type="text", text=f"Error: Could not resolve target path '{target_path}' to a resource ID")]
+                # If target_type provided, use it for validation
+                if target_type:
+                    resolved_target_type = target_type
+            elif target_name:
+                if not target_type:
+                    return [TextContent(type="text", text="Error: 'target_type' is required when using 'target_name'")]
+                
+                resolved_target_type = target_type
+                
+                # Resolve by name and type
+                resolved_target_id = await self._resolve_association_value(
+                    {"type": target_type, "name": target_name},
+                    target_type
+                )
+                if not resolved_target_id:
+                    return [TextContent(type="text", text=f"Error: Could not find {target_type} with name '{target_name}'")]
+            
+            # Validate against schema if available
+            if valid_associations and resolved_target_type:
+                validation_key = f"{relationship_type}:{resolved_target_type}"
+                if validation_key not in valid_associations:
+                    available = [f"{v['relationship_type']} -> {v['associated_type']}" for v in valid_associations.values()]
+                    return [TextContent(type="text", text=f"Error: Association '{relationship_type}' to type '{resolved_target_type}' is not valid for {self.type_id}. Available associations: {', '.join(available) if available else 'none'}. Please check the resource schema at openpages://schema/{self.type_id}")]
+                
+                logger.info(f"Validated association: {validation_key} for {self.type_id}")
+            elif valid_associations and not resolved_target_type:
+                logger.warning(f"Cannot validate association without target_type. Consider providing 'target_type' for validation.")
+            
+            associations_to_remove.append({
+                "relationship_type": relationship_type,
+                "target_id": resolved_target_id
+            })
+        
+        if not associations_to_remove:
+            return [TextContent(type="text", text="Error: No valid associations to remove")]
+        
+        # Remove associations
+        try:
+            logger.info(f"Removing {len(associations_to_remove)} association(s) from object {source_id}")
+            await self.client.remove_associations(source_id, associations_to_remove)
+            
+            response_data = {
+                "message": f"Successfully removed {len(associations_to_remove)} association(s)",
+                "operation": "DISSOCIATE",
+                "source_resource_id": source_id,
+                "associations_removed": len(associations_to_remove),
+                "associations": associations_to_remove
+            }
+            
+            return self.format_response(response_data, "dissociate")
+            
+        except Exception as e:
+            logger.error(f"Error removing associations from {source_id}: {e}")
+            return [TextContent(type="text", text=f"Error removing associations: {str(e)}")]
+
 
 # Made with Bob

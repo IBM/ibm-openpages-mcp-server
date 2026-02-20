@@ -1,6 +1,5 @@
 """
 Tests for bearer token auto-refresh on 401 responses.
-
 Validates that:
 - _clear_bearer_token() removes the cached Authorization header
 - initialize_auth() re-fetches after token is cleared

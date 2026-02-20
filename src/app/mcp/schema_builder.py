@@ -156,6 +156,20 @@ class SchemaBuilder:
             logger.error(error_msg)
             raise RuntimeError(error_msg)
         
+        # Check if title is required for this object type
+        # Look for "Title" field in field_definitions to determine if it's required
+        title_is_required = False
+        for field in type_def.get("field_definitions", []):
+            field_name = field.get("name", "")
+            if field_name == "Title":
+                title_is_required = field.get("required", False)
+                if title_is_required:
+                    logger.info(f"Title is required for {object_type}")
+                    schema["required"].append("title")
+                    # Update description to indicate it's required
+                    schema["properties"]["title"]["description"] = f"Title of the {object_label} (required)"
+                break
+        
         # Common fields to skip (already included or system fields)
         skip_fields = [
             "Name", "Title", "Description", "Resource ID",
@@ -200,7 +214,23 @@ class SchemaBuilder:
             fields_to_include = list(valid_fields_map.values())
             logger.warning(f"Config: include_all_fields=False but no fields specified -> Defaulting to all {len(fields_to_include)} fields for {object_type}")
         
-        # Add fields to schema
+        # Add fields to schema using friendly names as primary property names
+        # Track used property names to detect and resolve conflicts
+        used_property_names = {}  # Maps property_name -> field_name
+        label_conflicts = {}  # Tracks labels that map to multiple fields
+        
+        # First pass: detect label conflicts
+        for field in fields_to_include:
+            field_name = field.get("name")
+            label = field.get("localized_label")
+            
+            if label:
+                label_lower = label.lower()
+                if label_lower not in label_conflicts:
+                    label_conflicts[label_lower] = []
+                label_conflicts[label_lower].append(field_name)
+        
+        # Second pass: add fields to schema
         for field in fields_to_include:
             field_name = field.get("name")
             if not field_name:
@@ -210,45 +240,84 @@ class SchemaBuilder:
             field_type = field.get("data_type", "STRING_TYPE")
             json_type = "string"  # Default type
             json_format = None
+            is_multi_value_enum = False
             
             # Map OpenPages types to JSON schema types
             if field_type == "DATE_TYPE":
                 json_type = "string"
                 json_format = "date"
+                # Add additional guidance for date format
+            elif field_type in ("DATETIME_TYPE", "TIMESTAMP_TYPE"):
+                json_type = "string"
+                json_format = "date-time"
             elif field_type == "BOOLEAN_TYPE":
                 json_type = "boolean"
             elif field_type == "INTEGER_TYPE":
                 json_type = "integer"
-            elif field_type == "DECIMAL_TYPE":
+            elif field_type in ("DECIMAL_TYPE", "FLOAT_TYPE", "DOUBLE_TYPE"):
                 json_type = "number"
+            elif field_type == "CURRENCY_TYPE":
+                # Currency fields can accept multiple formats
+                # We'll define it as accepting either a number or an object
+                json_type = "number"  # Primary type for simple usage
             elif field_type == "ENUM_TYPE":
                 json_type = "string"
+            elif field_type == "MULTI_VALUE_ENUM":
+                json_type = "array"
+                is_multi_value_enum = True
                 
-            # Create property definition using actual description from OpenPages type API
-            field_description = field.get("description", "")
+            # Get field label
             label = field.get("localized_label")
+            field_description = field.get("description", "")
             
-            # Build description: prioritize actual description from API
+            # Determine property name to use in schema
+            # Use friendly label if available and not conflicting, otherwise use technical name
+            property_name = field_name  # Default to technical name
+            
+            if label:
+                label_lower = label.lower()
+                # Check if this label is unique (no conflicts)
+                if len(label_conflicts.get(label_lower, [])) == 1:
+                    # No conflict, use friendly label as property name
+                    # Normalize: replace spaces with underscores for better LLM/client compatibility
+                    property_name = label.replace(' ', '_')
+                    logger.debug(f"Using friendly name '{property_name}' (from label '{label}') for field '{field_name}'")
+                else:
+                    # Conflict detected, use technical name
+                    # Also normalize spaces in technical name for consistency
+                    property_name = field_name.replace(' ', '_')
+                    logger.warning(f"Label conflict for '{label}' (used by {len(label_conflicts[label_lower])} fields), using technical name '{property_name}' (from '{field_name}')")
+            
+            # Track the property name
+            used_property_names[property_name] = field_name
+            
+            # Build description
             if field_description:
-                # Use the actual description from OpenPages
                 if label and label != field_name:
-                    # Add label for clarity if it's different from field name
-                    final_description = f"{label}: {field_description}"
+                    final_description = f"{field_description}"
                 else:
                     final_description = field_description
             elif label:
-                # Fallback to label if no description
-                final_description = f"{label} ({field_name})"
+                final_description = f"{label}"
             else:
-                # Last resort: just the field name
                 final_description = f"Field: {field_name}"
+            
+            # Add special guidance for currency fields
+            if field_type == "CURRENCY_TYPE":
+                from src.app.config.settings import settings
+                final_description = f"{final_description}. Accepts: number (uses {settings.DEFAULT_CURRENCY}), or object with 'amount' and optional 'currency' (ISO code)"
+            
+            # Add technical name to description if using friendly name
+            if property_name != field_name:
+                final_description = f"{final_description} (Technical name: {field_name})"
             
             prop_def: Dict[str, Any] = {
                 "type": json_type,
-                "description": final_description
+                "description": final_description,
+                "x-technical-name": field_name  # Always store technical name for mapping
             }
             
-            # Add label as separate property for reference
+            # Add label as metadata
             if label:
                 prop_def["x-label"] = label
             
@@ -260,20 +329,26 @@ class SchemaBuilder:
             enum_values = field.get("enum_values", [])
             if enum_values and field_type == "ENUM_TYPE":
                 prop_def["enum"] = [v.get("name") for v in enum_values if v.get("name")]
+            elif enum_values and is_multi_value_enum:
+                # For multi-value enums, define items with enum constraint
+                prop_def["items"] = {
+                    "type": "string",
+                    "enum": [v.get("name") for v in enum_values if v.get("name")]
+                }
                 
-            # Add to schema
-            schema["properties"][field_name] = prop_def
+            # Add to schema using resolved property name
+            schema["properties"][property_name] = prop_def
             
-            # Add to required list if field is required
+            # Add to required list if field is required (use property name, not field name)
             if field.get("required", False):
-                schema["required"].append(field_name)
+                schema["required"].append(property_name)
                 
         logger.debug(f"Built schema for {object_type} with {len(schema['properties'])} properties")
         return schema
         
     async def build_dynamic_schema_for_query_object(
-        self, 
-        object_type: str = "Model", 
+        self,
+        object_type: str = "Model",
         obj_config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
@@ -299,17 +374,57 @@ class SchemaBuilder:
         elif "Risk" in object_type:
             object_label = "risks"
         
-        # Start with basic schema
+        # Start with basic schema including system field filters
         schema: Dict[str, Any] = {
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": f"Filter {object_label} by name (partial match, optional)"
+                    "description": f"Filter {object_label} by Name (partial match, optional). Use '*' or '%' for wildcards. Example: 'Risk*' or '%Control%'"
+                },
+                "title": {
+                    "type": "string",
+                    "description": f"Filter {object_label} by Title (partial match, optional). Use '*' or '%' for wildcards."
+                },
+                "description": {
+                    "type": "string",
+                    "description": f"Filter {object_label} by Description (partial match, optional). Use '*' or '%' for wildcards. Example: '*IT risk*'"
+                },
+                "created_by": {
+                    "type": "string",
+                    "description": f"Filter {object_label} by Created By username or email. Example: 'john.doe@company.com'"
+                },
+                "creation_date_from": {
+                    "type": "string",
+                    "format": "date",
+                    "description": f"Filter {object_label} created on or after this date (Creation Date >= value). Format: YYYY-MM-DD. Example: '2024-01-01'"
+                },
+                "creation_date_to": {
+                    "type": "string",
+                    "format": "date",
+                    "description": f"Filter {object_label} created on or before this date (Creation Date <= value). Format: YYYY-MM-DD. Example: '2024-12-31'"
+                },
+                "last_modified_by": {
+                    "type": "string",
+                    "description": f"Filter {object_label} by Last Modified By username or email."
+                },
+                "last_modification_date_from": {
+                    "type": "string",
+                    "format": "date",
+                    "description": f"Filter {object_label} modified on or after this date (Last Modification Date >= value). Format: YYYY-MM-DD"
+                },
+                "last_modification_date_to": {
+                    "type": "string",
+                    "format": "date",
+                    "description": f"Filter {object_label} modified on or before this date (Last Modification Date <= value). Format: YYYY-MM-DD"
+                },
+                "location": {
+                    "type": "string",
+                    "description": f"Filter {object_label} by Location path. Use '*' or '%' for wildcards. Example: '/grc/folder/*'"
                 },
                 "owner_filter": {
                     "type": "boolean",
-                    "description": "Filter by current user ownership (default: False)"
+                    "description": "Filter by current user ownership (default: False). When true, returns only objects owned by the current user."
                 },
                 "limit": {
                     "type": "integer",
@@ -319,7 +434,7 @@ class SchemaBuilder:
                 },
                 "fetch_all_properties": {
                     "type": "boolean",
-                    "description": f"Whether to fetch all main properties of the {object_label} (default: False)"
+                    "description": f"Whether to fetch all main properties of the {object_label} (default: False). WARNING: Setting this to true returns excessive data and should be avoided. Use the 'fields' parameter to select specific fields instead."
                 },
                 "fields": {
                     "type": "array",
@@ -527,8 +642,11 @@ class SchemaBuilder:
         """
         Add association fields to schema based on type definition associations
         
-        This method adds dynamic fields for managing associations (Parent, Child, Sibling, Peer, etc.)
+        This method adds dynamic fields for managing associations (Parent and Child only)
         based on the associations available for the object type.
+        
+        Note: Only Parent and Child relationship types are supported by OpenPages REST API.
+        Sibling and Peer associations are not supported.
         
         Args:
             schema: Schema dictionary to modify
@@ -556,6 +674,11 @@ class SchemaBuilder:
             localized_label = assoc.get("localizedLabel", associated_type)
             
             if not associated_type or not relationship_type:
+                continue
+            
+            # ONLY support Parent and Child relationships (REST API limitation)
+            if relationship_type not in ["Parent", "Child"]:
+                logger.debug(f"Skipping unsupported relationship type '{relationship_type}' (only Parent and Child are supported by REST API)")
                 continue
             
             # Only include associations to configured types
@@ -597,13 +720,8 @@ class SchemaBuilder:
                 elif relationship_type == "Child":
                     associate_desc = f"Child association: Link child {label} ({associated_type}) objects to this object."
                     dissociate_desc = f"Remove child association: Unlink child {label} ({associated_type}) objects from this object."
-                elif relationship_type == "Sibling":
-                    associate_desc = f"Sibling association: Link peer {label} ({associated_type}) objects at the same hierarchical level."
-                    dissociate_desc = f"Remove sibling association: Unlink peer {label} ({associated_type}) objects."
-                elif relationship_type == "Peer":
-                    associate_desc = f"Peer association: Link related {label} ({associated_type}) objects without hierarchical relationship."
-                    dissociate_desc = f"Remove peer association: Unlink related {label} ({associated_type}) objects."
                 else:
+                    # This should not happen since we filter above, but keep as fallback
                     associate_desc = f"{relationship_type} association to {label} ({associated_type})."
                     dissociate_desc = f"Remove {relationship_type} association from {label} ({associated_type})."
                 
@@ -782,6 +900,12 @@ class SchemaBuilder:
         # Copy all properties from base_schema
         for prop_name, prop_def in base_schema.get("properties", {}).items():
             upsert_schema["properties"][prop_name] = prop_def
+        
+        # Copy required fields from base_schema (including title if it's required)
+        base_required = base_schema.get("required", [])
+        for req_field in base_required:
+            if req_field not in upsert_schema["required"]:
+                upsert_schema["required"].append(req_field)
         
         # Update primaryParentId description to clarify it's for PRIMARY parent only
         if "primaryParentId" in upsert_schema["properties"]:

@@ -14,8 +14,7 @@
       "namespace": "openpages",
       "tool_descriptions": {
         "upsert": "Create or update a SOX control in OpenPages. Automatically determines whether to insert a new control or update an existing one based on provided identifiers (id, path, or name).",
-        "query": "Search and retrieve SOX controls from OpenPages. Supports filtering by name, owner, and custom field filters. Returns control details including ID, name, description, and selected fields.",
-        "delete": "Delete an existing SOX control from OpenPages. Requires either the resource ID or the full path to the control."
+        "query": "Search and retrieve SOX controls from OpenPages. Supports filtering by name, owner, and custom field filters. Returns control details including ID, name, description, and selected fields."
       },
       "create_fields": {
         "include_all_fields": true,
@@ -23,13 +22,16 @@
           "OPSS-Ctl:Status",
           "OPSS-Ctl:Type",
           "OPSS-Ctl:Frequency",
-          "OPSS-Ctl:Owner"
+          "OPSS-Ctl:Owner",
+          "OPSS-Ctl:Domain",
+          "OPSS-Ctl:Control Type",
+          "OPSS-Ctl:Control Owner"
         ]
       },
       "query_filters": {
         "fields": [
           "OPSS-Ctl:Status",
-          "OPSS-Ctl:Type",
+          "OPSS-Ctl:Control Type",
           "OPSS-Ctl:Frequency",
           "OPSS-Ctl:Owner"
         ]
@@ -43,8 +45,7 @@
       "namespace": "openpages",
       "tool_descriptions": {
         "upsert": "Create or update an issue in OpenPages. Automatically determines whether to insert a new issue or update an existing one based on provided identifiers (id, path, or name).",
-        "query": "Search and retrieve issues from OpenPages. Supports filtering by name, owner, and custom field filters. Returns issue details including ID, name, description, and selected fields.",
-        "delete": "Delete an existing issue from OpenPages. Requires either the resource ID or the full path to the issue."
+        "query": "Search and retrieve issues from OpenPages. Supports filtering by name, owner, and custom field filters. Returns issue details including ID, name, description, and selected fields."
       },
       "create_fields": {
         "include_all_fields": false,
@@ -72,23 +73,38 @@
       "namespace": "openpages",
       "tool_descriptions": {
         "upsert": "Create or update a risk in OpenPages. Automatically determines whether to insert a new risk or update an existing one based on provided identifiers (id, path, or name).",
-        "query": "Search and retrieve risks from OpenPages. Supports filtering by name, owner, and custom field filters. Returns risk details including ID, name, description, and selected fields.",
-        "delete": "Delete an existing risk from OpenPages. Requires either the resource ID or the full path to the risk."
+        "query": "Search and retrieve risks from OpenPages. Supports filtering by name, owner, and custom field filters. Returns risk details including ID, name, description, and selected fields."
       },
       "create_fields": {
-        "include_all_fields": false,
+        "include_all_fields": true,
         "fields": [
-          "OPSS-Risk:Status",
-          "OPSS-Risk:RiskLevel",
-          "OPSS-Risk:Owner"
+          "OPSS-Rsk:Status",
+          "OPSS-Rsk:RiskLevel",
+          "OPSS-Rsk:Owner"
         ]
       },
       "query_filters": {
         "fields": [
-          "OPSS-Risk:Status",
-          "OPSS-Risk:RiskLevel",
-          "OPSS-Risk:Owner"
+          "OPSS-Rsk:Status",
+          "OPSS-Rsk:RiskLevel",
+          "OPSS-Rsk:Owner"
         ]
+      }
+    },
+    {
+      "type_id": "Register",
+      "tool_prefix": "usecase",
+      "display_name": "Use Case",
+      "path_prefix": "Registers",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a usecase in OpenPages. Automatically determines whether to insert a new usecase or update an existing one based on provided identifiers (id, path, or name).",
+        "query": "Search and retrieve usecase from OpenPages. Supports filtering by name, owner, and custom field filters. Returns usecase details including ID, name, description, and selected fields."
+      },
+      "create_fields": {
+        "include_all_fields": true
+      },
+      "query_filters": {
       }
     }
   ]

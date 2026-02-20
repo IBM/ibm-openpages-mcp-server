@@ -1,0 +1,132 @@
+## Query Operations
+
+### Default Fields Returned
+
+Every query automatically returns these fields:
+- resource_id: Unique object identifier
+- name: Object name
+- description: Object description
+- task_view_url: Direct link to view the object in OpenPages UI
+
+Additional fields can be requested using the 'fields' parameter.
+
+### Query Tool Guidelines
+
+CRITICAL: Use system field filters WITHOUT prefix for common fields
+CRITICAL: Use filter_ prefix ONLY for custom/object-specific fields
+CRITICAL: Always use YYYY-MM-DD format for dates
+CRITICAL: NEVER set fetch_all_properties to true - it returns excessive data
+CRITICAL: Use 'fields' parameter to select specific additional fields if needed
+
+### System Field Filters (No Prefix)
+
+Text Filters (Support Wildcards * or %):
+- name: Filter by name (e.g., "name": "Security*" or "name": "*Control*")
+- title: Filter by title
+- description: Filter by description (e.g., "description": "*IT risk*")
+- location: Filter by folder path (e.g., "location": "/grc/risks/*")
+
+User Filters:
+- created_by: Creator username/email (exact match, e.g., "created_by": "john.doe@company.com")
+- last_modified_by: Last modifier username/email (exact match)
+- owner_filter: Boolean, true = current user only (e.g., "owner_filter": true)
+
+Date Range Filters (Format: YYYY-MM-DD):
+- creation_date_from: Created on or after (e.g., "creation_date_from": "2024-01-01")
+- creation_date_to: Created on or before (e.g., "creation_date_to": "2024-12-31")
+- last_modification_date_from: Modified on or after
+- last_modification_date_to: Modified on or before
+
+### Custom Field Filters (Use filter_ Prefix)
+
+For object-specific fields like Status, Priority, Owner:
+- filter_Status: Filter by Status field
+- filter_Priority: Filter by Priority field
+- filter_Owner: Filter by custom Owner field
+
+Check tool schema for available custom filters per object type.
+
+### Sorting
+
+Multi-field sort (recommended):
+{
+  "sort_by": [
+    {"field": "Creation Date", "order": "DESC"},
+    {"field": "Name", "order": "ASC"}
+  ]
+}
+
+Single field sort (backward compatible):
+{
+  "sort_by": "Name",
+  "sort_order": "ASC"
+}
+
+Sortable fields: Name, Title, Description, Creation Date, Last Modification Date, Resource ID, Created By, Last Modified By, Location
+
+### Common Query Patterns
+
+"Last 10 issues created":
+{"limit": 10, "sort_by": [{"field": "Creation Date", "order": "DESC"}]}
+
+"Recent controls by user X":
+{"created_by": "user@email.com", "creation_date_from": "2024-01-01", "sort_by": [{"field": "Creation Date", "order": "DESC"}]}
+
+"Risks with 'IT risk' in description":
+{"description": "*IT risk*", "limit": 50}
+
+"My recent issues":
+{"owner_filter": true, "creation_date_from": "2024-01-01", "sort_by": [{"field": "Creation Date", "order": "DESC"}]}
+
+"Issues created in January 2024":
+{"creation_date_from": "2024-01-01", "creation_date_to": "2024-01-31", "sort_by": [{"field": "Creation Date", "order": "ASC"}]}
+
+"Active high-priority issues by Jane in Q1":
+{"created_by": "jane@company.com", "creation_date_from": "2024-01-01", "creation_date_to": "2024-03-31", "filter_Status": "Active", "filter_Priority": "High"}
+
+"Controls starting with 'Access'":
+{"name": "Access*", "sort_by": [{"field": "Name", "order": "ASC"}]}
+
+"Recently modified controls":
+{"last_modification_date_from": "2024-01-08", "sort_by": [{"field": "Last Modification Date", "order": "DESC"}]}
+
+### Query Construction Rules
+
+1. Time Context:
+   - "recent", "latest", "last X" → sort_by: Creation Date DESC + limit
+   - "modified recently" → last_modification_date_from
+   - "created in [period]" → creation_date_from + creation_date_to
+
+2. User Context:
+   - "my", "mine" → owner_filter: true
+   - "created by [user]" → created_by: "user@email.com"
+   - "modified by [user]" → last_modified_by: "user@email.com"
+
+3. Search Terms:
+   - "name like X" → name: "*X*"
+   - "description contains X" → description: "*X*"
+   - "in folder X" → location: "/path/*"
+
+4. Status/Priority:
+   - "active", "open" → filter_Status
+   - "high priority" → filter_Priority
+
+5. Limits:
+   - "top 5", "last 10" → set limit accordingly
+   - Default: 20, Max: 100
+
+Best Practices:
+✅ Use system fields without prefix (name, description, creation_date_from, etc.)
+✅ Use filter_ prefix for custom fields (filter_Status, filter_Priority)
+✅ Use wildcards (*) for flexible text matching
+✅ Use YYYY-MM-DD for all dates
+✅ Set reasonable limits (20-50 for most queries)
+✅ Sort by Creation Date DESC for "recent" queries
+✅ Use 'fields' parameter to request specific additional fields beyond defaults
+✅ Default fields (resource_id, name, description, task_view_url) are always included
+
+❌ Don't use filter_ prefix for system fields
+❌ Don't forget date format (YYYY-MM-DD)
+❌ Don't set limit > 100
+❌ Don't use wildcards with exact match fields (created_by, last_modified_by)
+❌ NEVER set fetch_all_properties to true (returns excessive data, use 'fields' instead)
