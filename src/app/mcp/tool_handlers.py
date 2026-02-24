@@ -20,6 +20,8 @@ from typing import Dict, Any
 from src.app.observability.logger import get_logger, log_method_call
 from src.app.mcp.context import extract_context_from_arguments
 from src.app.utils import build_tool_name
+from src.app.auth.service import PassthroughAuthError
+from src.app.auth.token_validator import TokenValidationError
 
 logger = get_logger(__name__)
 
@@ -62,6 +64,8 @@ class ToolHandlers:
         """
         Resolve auth override from context variable.
 
+        Raises PassthroughAuthError or TokenValidationError on passthrough failures.
+
         Returns:
             Tuple of (auth_override_string_or_None, AuthResult_or_None)
         """
@@ -70,6 +74,7 @@ class ToolHandlers:
 
         auth_result = await self.auth_service.resolve_for_request(
             context_token=context.op_auth_header,
+            has_context_token_key=context.has_op_auth_header,
         )
         return auth_result.auth_override, auth_result
 
@@ -1229,16 +1234,27 @@ class ToolHandlers:
                 "list_resources": self.handle_list_resources_tool,
                 "get_resource": self.handle_get_resource_tool,
             }
-            
+
             # Check if this is a special tool
             if name in special_tool_handlers:
                 logger.debug(f"Routing to special tool handler: {name}")
                 return await special_tool_handlers[name](arguments)
-            
+
             # Handle all other tools using the generic handler
             logger.debug(f"Routing to generic tool handler: {name}")
             return await self.handle_generic_tool(name, arguments)
-                
+
+        except (PassthroughAuthError, TokenValidationError) as e:
+            logger.warning(f"Authentication failed for tool {name}: {e}", extra_fields={
+                "tool_name": name,
+                "error_type": type(e).__name__,
+            })
+            return {
+                "result": [
+                    {"type": "text", "text": f"Authentication failed: {str(e)}"}
+                ],
+                "_isError": True,
+            }
         except Exception as e:
             logger.error(f"Error calling tool {name}: {e}", exc_info=True, extra_fields={
                 "tool_name": name,
