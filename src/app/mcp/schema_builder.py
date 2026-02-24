@@ -15,6 +15,7 @@ The SchemaBuilder class provides:
 - Context variable support for all tools
 """
 
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 from src.app.mcp.context import build_context_schema
@@ -39,6 +40,7 @@ class SchemaBuilder:
         """
         self.client = client
         self.type_definitions: Dict[str, Any] = {}
+        self._cache_lock = asyncio.Lock()
     
     async def get_type_definition(self, type_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -54,36 +56,43 @@ class SchemaBuilder:
             logger.error("Invalid type_name: empty string")
             return None
             
-        # Check cache first
+        # Check cache first (fast path — no lock needed)
         if type_name in self.type_definitions:
             logger.debug(f"Using cached type definition for {type_name}")
             return self.type_definitions[type_name]
-        
-        try:
-            logger.info(f"Fetching type definition for {type_name}")
-            type_def = await self.client.get_type_definition(type_name)
-            
-            if not type_def:
-                logger.warning(f"Empty type definition returned for {type_name}")
+
+        # Cache miss — acquire lock to prevent redundant concurrent API calls
+        async with self._cache_lock:
+            # Re-check after acquiring lock — another coroutine may have populated the cache
+            if type_name in self.type_definitions:
+                logger.debug(f"Using cached type definition for {type_name} (populated while waiting for lock)")
+                return self.type_definitions[type_name]
+
+            try:
+                logger.info(f"Fetching type definition for {type_name}")
+                type_def = await self.client.get_type_definition(type_name)
+
+                if not type_def:
+                    logger.warning(f"Empty type definition returned for {type_name}")
+                    return None
+
+                # Fetch associations separately
+                logger.info(f"Fetching type associations for {type_name}")
+                associations = await self.client.get_type_associations(type_name)
+
+                # Add associations to type definition
+                if associations:
+                    type_def["associations"] = associations
+                    logger.debug(f"Added associations to type definition for {type_name}")
+
+                # Cache the result
+                self.type_definitions[type_name] = type_def
+                logger.debug(f"Cached type definition for {type_name}")
+                return type_def
+
+            except Exception as e:
+                logger.error(f"Error fetching type definition for {type_name}: {e}")
                 return None
-            
-            # Fetch associations separately
-            logger.info(f"Fetching type associations for {type_name}")
-            associations = await self.client.get_type_associations(type_name)
-            
-            # Add associations to type definition
-            if associations:
-                type_def["associations"] = associations
-                logger.debug(f"Added associations to type definition for {type_name}")
-            
-            # Cache the result
-            self.type_definitions[type_name] = type_def
-            logger.debug(f"Cached type definition for {type_name}")
-            return type_def
-            
-        except Exception as e:
-            logger.error(f"Error fetching type definition for {type_name}: {e}")
-            return None
     
     async def build_dynamic_schema_for_object(
         self, 
