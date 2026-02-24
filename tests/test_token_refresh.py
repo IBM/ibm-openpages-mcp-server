@@ -1,5 +1,6 @@
 """
-Tests for bearer token auto-refresh on 401 responses.
+Tests for bearer token auto-refresh on 401 responses and auth service resolution.
+
 Validates that:
 - _clear_bearer_token() removes the cached Authorization header
 - initialize_auth() re-fetches after token is cleared
@@ -7,12 +8,19 @@ Validates that:
 - 401 with auth_override (passthrough token) is re-raised without retry
 - Non-401 errors are not retried
 - Successful requests pass through without retry
+- AuthService with has_context_token_key strict behavior
 """
+
+import base64
+import json
+import time
 
 import pytest
 import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
 from src.app.core.openpages_client import OpenPagesClient
+from src.app.auth.service import AuthService, PassthroughAuthError
+from src.app.auth.token_validator import TokenValidationError
 
 
 @pytest.fixture
@@ -150,13 +158,10 @@ class TestRequestWithAuthRetry:
     async def test_successful_request_no_retry(self, bearer_client):
         """Successful request should return without any retry."""
         ok_response = _make_200_response()
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=ok_response)
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.request = AsyncMock(return_value=ok_response)
-
+        with patch.object(bearer_client, "_get_http_client", new_callable=AsyncMock, return_value=mock_client):
             response = await bearer_client._request_with_auth_retry(
                 "POST", "https://openpages.example.com/opgrc/api/v2/query",
                 auth_override=None, json={"statement": "SELECT 1"}, timeout=30.0
@@ -170,15 +175,11 @@ class TestRequestWithAuthRetry:
         """401 with server credentials should clear token, re-auth, and retry."""
         fail_response = _make_401_response()
         ok_response = _make_200_response(json_data={"rows": [{"id": 1}]})
+        mock_client = AsyncMock()
+        # First call raises 401, second succeeds
+        mock_client.request = AsyncMock(side_effect=[fail_response, ok_response])
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            # First call raises 401, second succeeds
-            mock_client.request = AsyncMock(side_effect=[fail_response, ok_response])
-
+        with patch.object(bearer_client, "_get_http_client", new_callable=AsyncMock, return_value=mock_client):
             with patch.object(
                 bearer_client, "initialize_auth", new_callable=AsyncMock
             ) as mock_init_auth:
@@ -193,20 +194,17 @@ class TestRequestWithAuthRetry:
 
         assert response.status_code == 200
         assert mock_client.request.call_count == 2
-        # initialize_auth is called multiple times: from _get_request_headers (initial + retry) and from the retry logic
+        # initialize_auth is called from _get_request_headers (initial + retry) and from the retry logic
         assert mock_init_auth.call_count >= 2
 
     @pytest.mark.asyncio
     async def test_401_with_auth_override_no_retry(self, bearer_client):
         """401 with auth_override should re-raise without retry."""
         fail_response = _make_401_response()
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=fail_response)
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.request = AsyncMock(return_value=fail_response)
-
+        with patch.object(bearer_client, "_get_http_client", new_callable=AsyncMock, return_value=mock_client):
             with pytest.raises(httpx.HTTPStatusError) as exc_info:
                 await bearer_client._request_with_auth_retry(
                     "POST", "https://openpages.example.com/opgrc/api/v2/query",
@@ -220,13 +218,10 @@ class TestRequestWithAuthRetry:
     async def test_non_401_error_not_retried(self, bearer_client):
         """Non-401 HTTP errors should be raised without retry."""
         fail_response = _make_500_response()
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=fail_response)
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.request = AsyncMock(return_value=fail_response)
-
+        with patch.object(bearer_client, "_get_http_client", new_callable=AsyncMock, return_value=mock_client):
             with pytest.raises(httpx.HTTPStatusError) as exc_info:
                 await bearer_client._request_with_auth_retry(
                     "POST", "https://openpages.example.com/opgrc/api/v2/query",
@@ -240,13 +235,10 @@ class TestRequestWithAuthRetry:
     async def test_401_basic_auth_not_retried(self, basic_client):
         """401 with basic auth should not trigger retry (only bearer gets retry)."""
         fail_response = _make_401_response()
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=fail_response)
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.request = AsyncMock(return_value=fail_response)
-
+        with patch.object(basic_client, "_get_http_client", new_callable=AsyncMock, return_value=mock_client):
             with pytest.raises(httpx.HTTPStatusError) as exc_info:
                 await basic_client._request_with_auth_retry(
                     "GET", "https://openpages.example.com/opgrc/api/v2/contents/123",
@@ -265,13 +257,10 @@ class TestRequestWithAuthRetry:
             request=httpx.Request("POST", "https://openpages.example.com/opgrc/api/v2/query"),
             text="Forbidden",
         )
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(side_effect=[fail_401, fail_403])
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.request = AsyncMock(side_effect=[fail_401, fail_403])
-
+        with patch.object(bearer_client, "_get_http_client", new_callable=AsyncMock, return_value=mock_client):
             with patch.object(
                 bearer_client, "initialize_auth", new_callable=AsyncMock
             ) as mock_init_auth:
@@ -287,3 +276,90 @@ class TestRequestWithAuthRetry:
 
         assert exc_info.value.response.status_code == 403
         assert mock_client.request.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# AuthService.resolve_for_request — has_context_token_key behavior
+# ---------------------------------------------------------------------------
+
+def _make_jwt(payload: dict) -> str:
+    """Build a minimal unsigned JWT."""
+    header = {"alg": "none", "typ": "JWT"}
+    h = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+    p = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+    return f"{h}.{p}.fakesig"
+
+
+def _make_valid_bearer_token() -> str:
+    return "Bearer " + _make_jwt({"sub": "u", "exp": time.time() + 3600})
+
+
+def _make_expired_bearer_token() -> str:
+    return "Bearer " + _make_jwt({"sub": "u", "exp": time.time() - 3600})
+
+
+@pytest.fixture
+def mock_settings():
+    return MagicMock()
+
+
+class TestAuthServiceResolve:
+    """Tests for AuthService.resolve_for_request with has_context_token_key."""
+
+    @pytest.mark.asyncio
+    async def test_key_present_valid_token_passthrough(self, mock_settings):
+        """has_context_token_key=True + valid token → passthrough auth."""
+        svc = AuthService(mock_settings)
+        token = _make_valid_bearer_token()
+        result = await svc.resolve_for_request(
+            context_token=token, has_context_token_key=True
+        )
+        assert result.auth_override == token
+
+    @pytest.mark.asyncio
+    async def test_key_present_empty_token_raises(self, mock_settings):
+        """has_context_token_key=True + empty token → PassthroughAuthError."""
+        svc = AuthService(mock_settings)
+        with pytest.raises(PassthroughAuthError, match="empty"):
+            await svc.resolve_for_request(
+                context_token="", has_context_token_key=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_key_present_none_token_raises(self, mock_settings):
+        """has_context_token_key=True + None token → PassthroughAuthError."""
+        svc = AuthService(mock_settings)
+        with pytest.raises(PassthroughAuthError, match="empty"):
+            await svc.resolve_for_request(
+                context_token=None, has_context_token_key=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_key_present_expired_token_raises(self, mock_settings):
+        """has_context_token_key=True + expired token → TokenValidationError."""
+        svc = AuthService(mock_settings)
+        token = _make_expired_bearer_token()
+        with pytest.raises(TokenValidationError, match="expired"):
+            await svc.resolve_for_request(
+                context_token=token, has_context_token_key=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_key_absent_no_token_server_creds(self, mock_settings):
+        """has_context_token_key=False + no token → server credentials (unchanged)."""
+        svc = AuthService(mock_settings)
+        result = await svc.resolve_for_request(
+            context_token=None, has_context_token_key=False
+        )
+        # ServerCredentialProvider returns empty string → auth_override is None
+        assert result.auth_override is None
+
+    @pytest.mark.asyncio
+    async def test_key_absent_with_token_legacy_passthrough(self, mock_settings):
+        """has_context_token_key=False + token present → legacy passthrough (no validation)."""
+        svc = AuthService(mock_settings)
+        token = _make_valid_bearer_token()
+        result = await svc.resolve_for_request(
+            context_token=token, has_context_token_key=False
+        )
+        assert result.auth_override == token
