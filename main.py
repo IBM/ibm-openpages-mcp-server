@@ -18,7 +18,7 @@ if os.path.exists('/app'):
     sys.path.append('/app')
 
 from src.app.mcp.remote.http_router import router as mcp_router
-from src.app.mcp.remote.server_instance import initialize_server
+from src.app.mcp.remote.server_instance import initialize_server, get_server
 from src.app.mcp.local.runner import run_local_server
 from src.app.api.health import health_router
 from src.app.api.metrics import metrics_router
@@ -103,7 +103,12 @@ async def lifespan(app: FastAPI):
     logger.info("MCP Server initialized")
 
     yield
-    
+
+    # Close the shared httpx client to release connections
+    server = get_server()
+    if server and hasattr(server, 'client') and server.client:
+        await server.client.close()
+
     logger.info("Shutting down GRC MCP Server")
 
 # Create FastAPI application

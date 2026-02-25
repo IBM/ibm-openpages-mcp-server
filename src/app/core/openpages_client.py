@@ -3,6 +3,7 @@ OpenPages API Client
 Provides functionality to interact with IBM OpenPages REST API
 """
 
+import asyncio
 import logging
 import base64
 from typing import Any, Dict, List, Optional
@@ -97,6 +98,13 @@ class OpenPagesClient:
                 self.instance_name = self._extract_instance_name(base_url)
             logger.info(f"Detected CP4D deployment with instance name: {self.instance_name}")
         
+        # Async lock for bearer token initialization (prevents concurrent token fetches)
+        self._auth_lock = asyncio.Lock()
+
+        # Shared httpx client for connection pooling (lazily initialized)
+        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client_lock = asyncio.Lock()
+
         # For basic auth, we can set the auth header immediately
         if self.auth_type == "basic":
             self.auth_header = self._create_basic_auth_header(username, password)
@@ -262,12 +270,18 @@ class OpenPagesClient:
         """
         Initialize authentication asynchronously.
         This must be called before making any API requests when using bearer authentication.
+        Uses double-checked locking to prevent concurrent token fetches.
         """
         if self.auth_type == "bearer" and 'Authorization' not in self.headers:
-            logger.info("Initializing bearer authentication")
-            self.auth_header = await self._create_bearer_auth_header(self.api_key, self.authentication_url)
-            self.headers['Authorization'] = self.auth_header
-            logger.info("Bearer authentication initialized successfully")
+            async with self._auth_lock:
+                # Re-check after acquiring lock — another coroutine may have already initialized
+                if 'Authorization' not in self.headers:
+                    logger.info("Initializing bearer authentication")
+                    self.auth_header = await self._create_bearer_auth_header(self.api_key, self.authentication_url)
+                    self.headers['Authorization'] = self.auth_header
+                    logger.info("Bearer authentication initialized successfully")
+                else:
+                    logger.debug("Auth was initialized by another coroutine while waiting for lock")
         else:
             logger.debug(f"Auth already initialized or using basic auth (type: {self.auth_type})")
 
@@ -299,6 +313,28 @@ class OpenPagesClient:
             del self.headers['Authorization']
             logger.info("Cleared cached bearer token for re-authentication")
 
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        """
+        Get or lazily create a shared httpx.AsyncClient for connection pooling.
+        Uses double-checked locking to avoid creating multiple clients.
+        """
+        if self._http_client is None:
+            async with self._http_client_lock:
+                if self._http_client is None:
+                    self._http_client = httpx.AsyncClient(verify=self.settings.SSL_VERIFY)
+                    logger.debug("Created shared httpx.AsyncClient for connection pooling")
+        return self._http_client
+
+    async def close(self):
+        """
+        Close the shared httpx client and release resources.
+        Should be called during application shutdown.
+        """
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
+            logger.info("Closed shared httpx.AsyncClient")
+
     async def _request_with_auth_retry(self, method: str, url: str, auth_override: Optional[str] = None, **kwargs) -> httpx.Response:
         """
         Make an HTTP request with automatic 401 retry for server credentials.
@@ -317,22 +353,24 @@ class OpenPagesClient:
             httpx.Response object
         """
         request_headers = await self._get_request_headers(auth_override)
+        client = await self._get_http_client()
 
-        async with httpx.AsyncClient(verify=self.settings.SSL_VERIFY) as client:
-            try:
-                response = await client.request(method, url, headers=request_headers, **kwargs)
-                response.raise_for_status()
-                return response
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 401 and auth_override is None and self.auth_type == "bearer":
-                    logger.warning(f"Received 401 for {method} {url}, attempting token refresh and retry")
+        try:
+            response = await client.request(method, url, headers=request_headers, **kwargs)
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401 and auth_override is None and self.auth_type == "bearer":
+                logger.warning(f"Received 401 for {method} {url}, attempting token refresh and retry")
+                async with self._auth_lock:
+                    # Only refresh if the token hasn't already been refreshed by another coroutine
                     self._clear_bearer_token()
                     await self.initialize_auth()
-                    retry_headers = await self._get_request_headers(auth_override)
-                    response = await client.request(method, url, headers=retry_headers, **kwargs)
-                    response.raise_for_status()
-                    return response
-                raise
+                retry_headers = await self._get_request_headers(auth_override)
+                response = await client.request(method, url, headers=retry_headers, **kwargs)
+                response.raise_for_status()
+                return response
+            raise
 
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def query(self, statement: str, offset: int = 0, limit: int = 100, auth_override: Optional[str] = None) -> Dict[str, Any]:

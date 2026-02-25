@@ -219,7 +219,10 @@ class RequestProcessor:
             elif method in ["call_tool", "tools/call", "tools/invoke"]:
                 logger.debug("Calling tool API")
                 response = await self.tool_handlers.handle_call_tool(params)
-                
+
+                # Extract _isError flag if present, default to False
+                is_error = response.pop("_isError", False)
+
                 # Format the response in the exact format requested
                 formatted_response = {
                     "content": [
@@ -228,7 +231,7 @@ class RequestProcessor:
                             "text": json.dumps(response)
                         }
                     ],
-                    "isError": False
+                    "isError": is_error
                 }
                 result = formatted_response
                 logger.debug("Tool API call completed")
