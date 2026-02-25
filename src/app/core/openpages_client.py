@@ -98,7 +98,7 @@ class OpenPagesClient:
                 self.instance_name = self._extract_instance_name(base_url)
             logger.info(f"Detected CP4D deployment with instance name: {self.instance_name}")
         
-        # Async lock for bearer token initialization (prevents concurrent token fetches)
+        # Async lock for bearer token operations (prevents concurrent token fetches/refreshes)
         self._auth_lock = asyncio.Lock()
 
         # Shared httpx client for connection pooling (lazily initialized)
@@ -302,7 +302,7 @@ class OpenPagesClient:
             return headers
         else:
             await self.initialize_auth()
-            return self.headers
+            return self.headers.copy()
 
     def _clear_bearer_token(self):
         """
@@ -321,8 +321,16 @@ class OpenPagesClient:
         if self._http_client is None:
             async with self._http_client_lock:
                 if self._http_client is None:
-                    self._http_client = httpx.AsyncClient(verify=self.settings.SSL_VERIFY)
-                    logger.debug("Created shared httpx.AsyncClient for connection pooling")
+                    max_connections = getattr(self.settings, 'HTTP_MAX_CONNECTIONS', 20)
+                    pool_limits = httpx.Limits(
+                        max_connections=max_connections,
+                        max_keepalive_connections=max_connections,
+                    )
+                    self._http_client = httpx.AsyncClient(
+                        verify=self.settings.SSL_VERIFY,
+                        limits=pool_limits,
+                    )
+                    logger.debug(f"Created shared httpx.AsyncClient (max_connections={max_connections})")
         return self._http_client
 
     async def close(self):
@@ -341,6 +349,7 @@ class OpenPagesClient:
 
         On a 401 HTTPStatusError when using server credentials (auth_override is None),
         clears the cached bearer token, re-authenticates, and retries once.
+        Uses double-checked locking so concurrent 401s collapse into a single token refresh.
         Passthrough tokens (auth_override set) are NOT retried — the caller owns that token.
 
         Args:
@@ -355,6 +364,10 @@ class OpenPagesClient:
         request_headers = await self._get_request_headers(auth_override)
         client = await self._get_http_client()
 
+        # Capture the token used for this attempt so we can detect if another
+        # coroutine already refreshed it while we wait on the lock.
+        token_before_request = self.headers.get('Authorization')
+
         try:
             response = await client.request(method, url, headers=request_headers, **kwargs)
             response.raise_for_status()
@@ -363,9 +376,19 @@ class OpenPagesClient:
             if e.response.status_code == 401 and auth_override is None and self.auth_type == "bearer":
                 logger.warning(f"Received 401 for {method} {url}, attempting token refresh and retry")
                 async with self._auth_lock:
-                    # Only refresh if the token hasn't already been refreshed by another coroutine
-                    self._clear_bearer_token()
-                    await self.initialize_auth()
+                    # Double-check: only refresh if the token hasn't already been
+                    # refreshed by another coroutine that held the lock before us.
+                    if self.headers.get('Authorization') == token_before_request:
+                        self._clear_bearer_token()
+                        # Inline token fetch instead of calling initialize_auth() to
+                        # avoid reentrant lock (asyncio.Lock is not reentrant).
+                        self.auth_header = await self._create_bearer_auth_header(
+                            self.api_key, self.authentication_url
+                        )
+                        self.headers['Authorization'] = self.auth_header
+                        logger.info("Bearer token refreshed after 401")
+                    else:
+                        logger.debug("Token already refreshed by another coroutine, skipping re-auth")
                 retry_headers = await self._get_request_headers(auth_override)
                 response = await client.request(method, url, headers=retry_headers, **kwargs)
                 response.raise_for_status()

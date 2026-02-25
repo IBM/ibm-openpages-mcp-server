@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     
     # SSL settings
     SSL_VERIFY: bool = True
+
+    # HTTP connection pool settings
+    HTTP_MAX_CONNECTIONS: int = 20
     
     # Logging settings
     LOG_LEVEL: str = "INFO"
