@@ -10,16 +10,20 @@ Validates that:
 - Successful requests pass through without retry
 - Concurrent 401s collapse into a single token refresh
 - _get_request_headers returns a snapshot copy (not a mutable reference)
-- AuthService resolve_for_request precedence
+- AuthService with has_context_token_key strict behavior
 """
 
 import asyncio
+import base64
+import json
+import time
 
 import pytest
 import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
 from src.app.core.openpages_client import OpenPagesClient
-from src.app.auth.service import AuthService
+from src.app.auth.service import AuthService, PassthroughAuthError
+from src.app.auth.token_validator import TokenValidationError
 
 
 @pytest.fixture
@@ -172,6 +176,7 @@ class TestRequestWithAuthRetry:
         fail_response = _make_401_response()
         ok_response = _make_200_response(json_data={"rows": [{"id": 1}]})
         mock_client = AsyncMock()
+        # First call raises 401, second succeeds
         mock_client.request = AsyncMock(side_effect=[fail_response, ok_response])
 
         with patch.object(bearer_client, "_get_http_client", new_callable=AsyncMock, return_value=mock_client):
@@ -369,8 +374,24 @@ class TestGetRequestHeadersSnapshot:
 
 
 # ---------------------------------------------------------------------------
-# AuthService.resolve_for_request — precedence tests
+# AuthService.resolve_for_request — has_context_token_key behavior
 # ---------------------------------------------------------------------------
+
+def _make_jwt(payload: dict) -> str:
+    """Build a minimal unsigned JWT."""
+    header = {"alg": "none", "typ": "JWT"}
+    h = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+    p = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+    return f"{h}.{p}.fakesig"
+
+
+def _make_valid_bearer_token() -> str:
+    return "Bearer " + _make_jwt({"sub": "u", "exp": time.time() + 3600})
+
+
+def _make_expired_bearer_token() -> str:
+    return "Bearer " + _make_jwt({"sub": "u", "exp": time.time() - 3600})
+
 
 @pytest.fixture
 def mock_settings():
@@ -378,25 +399,62 @@ def mock_settings():
 
 
 class TestAuthServiceResolve:
-    """Tests for AuthService.resolve_for_request."""
+    """Tests for AuthService.resolve_for_request with has_context_token_key."""
 
     @pytest.mark.asyncio
-    async def test_context_token_passthrough(self, mock_settings):
-        """Context token present → passthrough auth."""
+    async def test_key_present_valid_token_passthrough(self, mock_settings):
+        """has_context_token_key=True + valid token → passthrough auth."""
         svc = AuthService(mock_settings)
-        result = await svc.resolve_for_request(context_token="Bearer some-token")
-        assert result.auth_override == "Bearer some-token"
+        token = _make_valid_bearer_token()
+        result = await svc.resolve_for_request(
+            context_token=token, has_context_token_key=True
+        )
+        assert result.auth_override == token
 
     @pytest.mark.asyncio
-    async def test_no_token_server_creds(self, mock_settings):
-        """No context token → server credentials (auth_override is None)."""
+    async def test_key_present_empty_token_raises(self, mock_settings):
+        """has_context_token_key=True + empty token → PassthroughAuthError."""
         svc = AuthService(mock_settings)
-        result = await svc.resolve_for_request(context_token=None)
+        with pytest.raises(PassthroughAuthError, match="empty"):
+            await svc.resolve_for_request(
+                context_token="", has_context_token_key=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_key_present_none_token_raises(self, mock_settings):
+        """has_context_token_key=True + None token → PassthroughAuthError."""
+        svc = AuthService(mock_settings)
+        with pytest.raises(PassthroughAuthError, match="empty"):
+            await svc.resolve_for_request(
+                context_token=None, has_context_token_key=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_key_present_expired_token_raises(self, mock_settings):
+        """has_context_token_key=True + expired token → TokenValidationError."""
+        svc = AuthService(mock_settings)
+        token = _make_expired_bearer_token()
+        with pytest.raises(TokenValidationError, match="expired"):
+            await svc.resolve_for_request(
+                context_token=token, has_context_token_key=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_key_absent_no_token_server_creds(self, mock_settings):
+        """has_context_token_key=False + no token → server credentials (unchanged)."""
+        svc = AuthService(mock_settings)
+        result = await svc.resolve_for_request(
+            context_token=None, has_context_token_key=False
+        )
+        # ServerCredentialProvider returns empty string → auth_override is None
         assert result.auth_override is None
 
     @pytest.mark.asyncio
-    async def test_empty_token_server_creds(self, mock_settings):
-        """Empty context token → server credentials (auth_override is None)."""
+    async def test_key_absent_with_token_legacy_passthrough(self, mock_settings):
+        """has_context_token_key=False + token present → legacy passthrough (no validation)."""
         svc = AuthService(mock_settings)
-        result = await svc.resolve_for_request(context_token="")
-        assert result.auth_override is None
+        token = _make_valid_bearer_token()
+        result = await svc.resolve_for_request(
+            context_token=token, has_context_token_key=False
+        )
+        assert result.auth_override == token

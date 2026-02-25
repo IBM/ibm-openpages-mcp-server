@@ -13,8 +13,14 @@ from src.app.auth.providers import (
     PassthroughTokenProvider,
     ServerCredentialProvider,
 )
+from src.app.auth.token_validator import PassthroughTokenValidator, TokenValidationError
 
 logger = logging.getLogger(__name__)
+
+
+class PassthroughAuthError(Exception):
+    """Raised when passthrough auth key is present but the token is empty or missing."""
+    pass
 
 
 class AuthResult:
@@ -57,27 +63,50 @@ class AuthService:
 
     def __init__(self, settings):
         self.settings = settings
+        self._token_validator = PassthroughTokenValidator()
 
     async def resolve_for_request(
         self,
         context_token: Optional[str] = None,
+        has_context_token_key: bool = False,
     ) -> AuthResult:
         """
         Resolve auth for a single tool invocation.
 
         Precedence: context_token > server credentials.
 
+        If has_context_token_key is True (the key was present in the request arguments),
+        the passthrough flow is enforced strictly:
+        - Empty/None token → PassthroughAuthError (never fall back to server creds)
+        - Invalid/expired token → TokenValidationError propagated
+
         Args:
             context_token: Token from op_auth_header context variable (WXO flow)
+            has_context_token_key: Whether the op_auth_header key was present in args
 
         Returns:
             AuthResult with resolved token and provider
+
+        Raises:
+            PassthroughAuthError: If key is present but token is empty/None
+            TokenValidationError: If token is present but fails validation
         """
-        if context_token:
+        if has_context_token_key:
+            if not context_token:
+                raise PassthroughAuthError(
+                    "op_auth_header key present but token is empty — "
+                    "cannot fall back to server credentials for passthrough flow"
+                )
+            # Validate token (raises TokenValidationError on failure)
+            self._token_validator.validate(context_token)
+            logger.info("Auth resolved via validated context variable (Passthrough flow)")
+            provider = PassthroughTokenProvider(context_token)
+        elif context_token:
+            # Legacy path: token present without explicit key tracking
             logger.info("Auth resolved via context variable (Passthrough flow)")
             provider = PassthroughTokenProvider(context_token)
         else:
-            logger.debug("Auth resolved via server credentials (Fallback flow)")
+            logger.info("Auth resolved via server credentials (Fallback flow)")
             provider = ServerCredentialProvider()
 
         token = await provider.resolve()

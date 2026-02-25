@@ -191,6 +191,11 @@ class ContextVariables:
         """Get authentication header"""
         return self._data.get("op_auth_header")
 
+    @property
+    def has_op_auth_header(self) -> bool:
+        """Check if op_auth_header key was present in the original arguments."""
+        return "op_auth_header" in self._data
+
 
 def extract_context_from_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str, Any], ContextVariables]:
     """
