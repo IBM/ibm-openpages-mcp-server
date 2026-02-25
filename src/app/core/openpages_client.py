@@ -321,8 +321,16 @@ class OpenPagesClient:
         if self._http_client is None:
             async with self._http_client_lock:
                 if self._http_client is None:
-                    self._http_client = httpx.AsyncClient(verify=self.settings.SSL_VERIFY)
-                    logger.debug("Created shared httpx.AsyncClient for connection pooling")
+                    max_connections = getattr(self.settings, 'HTTP_MAX_CONNECTIONS', 20)
+                    pool_limits = httpx.Limits(
+                        max_connections=max_connections,
+                        max_keepalive_connections=max_connections,
+                    )
+                    self._http_client = httpx.AsyncClient(
+                        verify=self.settings.SSL_VERIFY,
+                        limits=pool_limits,
+                    )
+                    logger.debug(f"Created shared httpx.AsyncClient (max_connections={max_connections})")
         return self._http_client
 
     async def close(self):
