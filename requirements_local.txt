@@ -1,2 +1,15 @@
-fastapi==0.128.0
-mcp==1.9.4
+# Minimal Dependencies for LOCAL MCP Server (stdio mode)
+
+# MCP Protocol
+mcp>=1.9.4
+
+# HTTP Client (for OpenPages API calls)
+httpx>=0.24.0
+
+# Configuration & Validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# Date/Time Utilities
+python-dateutil>=2.8.2

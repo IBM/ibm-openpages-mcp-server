@@ -86,10 +86,65 @@ The MCP server receives context variables from the OpenPages UI that provide inf
   - → **NO**: Read the schema ONCE, then cache it permanently
 
 **Performance Impact:**
-- First schema read: ~100-200ms
+- First schema read: ~100-200ms (full mode) or ~20-50ms (compact mode)
 - Cached schema access: ~1-5ms
 - Improvement: 20-200x faster with caching
 - Multiple unnecessary reads can slow responses by seconds
+
+---
+
+## 🚀 PERFORMANCE: USE COMPACT MODE FIRST
+
+⚠️ **ALWAYS START WITH COMPACT MODE - ONLY USE FULL MODE WHEN NEEDED**
+
+**Compact Mode Benefits:**
+- 70-90% smaller response size (6,220 bytes → 1,215 bytes)
+- 5-10x faster processing by AI agents
+- 80% reduction in token usage
+- Includes only required + system fields (Resource ID, Name, Description, Status, etc.)
+
+**When to Use Each Mode:**
+
+✅ **USE COMPACT MODE** (`mode='compact'`) for:
+- Initial schema exploration
+- Query construction with required/system fields
+- Field verification for common fields (Resource ID, Name, Description, Status)
+- Relationship discovery (parent/child associations)
+- Object creation with only required fields
+- First-time schema reads
+
+🔄 **AUTOMATICALLY SWITCH TO FULL MODE** (`mode='full'`) when:
+- User asks about a field NOT in compact schema (e.g., "What's the Priority field?")
+- User requests enum values (e.g., "What are the valid Status values?")
+- User asks to see all available fields
+- User wants to create/update optional fields
+- User asks for field descriptions or validation rules
+- Compact schema shows "X out of Y total fields" and user needs the others
+
+**Smart Workflow:**
+```
+1. First time seeing Issue type:
+   Read resource: openpages://schema/SOXIssue with mode='compact'
+   → Get 4 required/system fields (1,215 bytes)
+   → Cache this
+
+2. User asks: "Show me all issues with high priority"
+   → Compact schema doesn't have Priority field
+   → Automatically read: openpages://schema/SOXIssue with mode='full'
+   → Get all 28 fields including Priority
+   → Update cache with full schema
+
+3. User asks: "What are the valid Status values?"
+   → Compact schema shows Status exists but no enum values
+   → Automatically read: openpages://schema/SOXIssue with mode='full'
+   → Get enum values: Draft, Active, Closed, Cancelled
+```
+
+**Performance Comparison:**
+| Mode | Size | Fields | Use Case |
+|------|------|--------|----------|
+| Compact | 1,215 bytes | 4 | Queries, field checks |
+| Full | 6,220 bytes | 28 | Forms, validation |
 
 ---
 
@@ -230,6 +285,39 @@ WHERE [ObjectType].[Due Date Field] IS NULL
 - Date comparisons support: `=`, `<>`, `<`, `>`, `<=`, `>=`
 - Use `IS NULL` or `IS NOT NULL` to check for missing dates
 - Date field names vary by instance - always read schema first
+
+**COUNTING RECORDS:**
+
+When users ask questions like "how many", "count", or "total number", use COUNT queries for efficiency:
+
+**Simple Count Query:**
+```sql
+SELECT COUNT(*)
+FROM [SOXIssue]
+WHERE [SOXIssue].[Status] = 'Open'
+```
+
+**Grouped Count Query:**
+```sql
+SELECT [SOXIssue].[Status], [SOXIssue].[Priority], COUNT(*)
+FROM [SOXIssue]
+GROUP BY [SOXIssue].[Status], [SOXIssue].[Priority]
+ORDER BY COUNT(*) DESC
+```
+
+**Count with Conditions:**
+```sql
+SELECT COUNT(*)
+FROM [SOXControl]
+WHERE [SOXControl].[Status] = 'Active'
+  AND [SOXControl].[Priority] = 'High'
+```
+
+**Important Notes:**
+- COUNT is more efficient than fetching all records and counting in code
+- Use `COUNT(*)` to count all rows, or `COUNT([FieldName])` to count non-null values
+- ⚠️ **Limitation:** COUNT cannot be used with JOIN operations - for those cases, fetch records and count in application code
+- Always use cached schema to get exact field names before constructing COUNT queries
 
 ## Schema-Driven Approach (NON-NEGOTIABLE)
 

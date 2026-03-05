@@ -42,6 +42,8 @@ def mock_settings():
             }
         }
     ]
+    settings.SCHEMA_CACHE_MAX_SIZE = 10
+    settings.SCHEMA_CACHE_TTL = 300
     return settings
 
 
@@ -167,15 +169,19 @@ async def test_list_resources(resource_handlers):
     assert "openpages://schema/SOXIssue" in resources_by_uri
     issue_resource = resources_by_uri["openpages://schema/SOXIssue"]
     assert issue_resource["name"] == "Issue Schema"
-    assert "Issue objects" in issue_resource["description"]
+    assert "Issue" in issue_resource["description"]
     assert issue_resource["mimeType"] == "application/json"
     
     # Check Control resource
     assert "openpages://schema/SOXControl" in resources_by_uri
     control_resource = resources_by_uri["openpages://schema/SOXControl"]
     assert control_resource["name"] == "Control Schema"
-    assert "Control objects" in control_resource["description"]
+    assert "Control" in control_resource["description"]
     assert control_resource["mimeType"] == "application/json"
+    
+    # Verify docs resources are NOT in the list (they caused display issues in MCP clients)
+    assert "openpages://docs/schema_usage" not in resources_by_uri
+    assert "openpages://docs/query_syntax" not in resources_by_uri
 
 
 @pytest.mark.asyncio
@@ -252,10 +258,43 @@ async def test_read_resource_schema_fetch_failure(resource_handlers, mock_schema
 
 @pytest.mark.asyncio
 async def test_schema_content_structure(resource_handlers):
-    """Test the structure of schema content in JSON format"""
+    """Test the structure of schema content in JSON format (compact mode default)"""
     import json
     
     params = {"uri": "openpages://schema/SOXIssue"}
+    result = await resource_handlers.handle_read_resource(params)
+    
+    # Get the text content and parse as JSON
+    text_content = result["contents"][0]["text"]
+    schema = json.loads(text_content)
+    
+    # Verify core metadata fields
+    assert schema["type_id"] == "SOXIssue"
+    assert schema["display_name"] == "Issue"
+    assert schema["mode"] == "compact"
+    
+    # Verify compact mode field counts
+    assert "total_field_count" in schema
+    assert "included_field_count" in schema
+    
+    # Verify fields array exists (compact mode: only required/system fields)
+    assert "fields" in schema
+    # Name is required=True so it should be in compact mode
+    field_names = [f["name"] for f in schema["fields"]]
+    assert "Name" in field_names
+    
+    # Verify usage docs reference (replaces usage_instructions)
+    assert "usage_docs" in schema
+    assert schema["usage_docs"] == "openpages://docs/schema_usage"
+    assert "quick_rules" in schema
+
+
+@pytest.mark.asyncio
+async def test_schema_content_structure_full_mode(resource_handlers):
+    """Test the structure of schema content in full mode"""
+    import json
+    
+    params = {"uri": "openpages://schema/SOXIssue", "mode": "full"}
     result = await resource_handlers.handle_read_resource(params)
     
     # Get the text content and parse as JSON
@@ -288,23 +327,24 @@ async def test_schema_content_structure(resource_handlers):
             assert "enum_values" in field
             assert len(field["enum_values"]) > 0
     
-    # Verify configuration section
+    # Verify configuration section (only in full mode)
     assert "configuration" in schema
     assert "create_fields" in schema["configuration"]
     assert "query_filters" in schema["configuration"]
     
-    # Verify usage instructions
-    assert "usage_instructions" in schema
-    assert "field_names" in schema["usage_instructions"]
-    assert "field_types" in schema["usage_instructions"]
+    # Verify usage docs reference (replaces usage_instructions)
+    assert "usage_docs" in schema
+    assert schema["usage_docs"] == "openpages://docs/schema_usage"
+    assert "quick_rules" in schema
 
 
 @pytest.mark.asyncio
 async def test_configuration_in_schema(resource_handlers):
-    """Test that configuration is included in schema JSON"""
+    """Test that configuration is included in full mode schema JSON"""
     import json
     
-    params = {"uri": "openpages://schema/SOXIssue"}
+    # Configuration is only included in full mode
+    params = {"uri": "openpages://schema/SOXIssue", "mode": "full"}
     result = await resource_handlers.handle_read_resource(params)
     
     # Get the text content and parse as JSON

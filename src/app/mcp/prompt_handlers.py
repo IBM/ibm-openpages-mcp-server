@@ -87,14 +87,32 @@ The agent can receive context variables from the OpenPages UI (op_username, op_o
   → YES: Use the cached field names from memory
   → NO: Read the schema ONCE, then cache it permanently
 
+## 🚀 PERFORMANCE: USE COMPACT MODE FIRST
+
+⚠️ START WITH COMPACT MODE - AUTOMATICALLY SWITCH TO FULL WHEN NEEDED
+
+**Compact Mode Benefits:**
+- 70-90% smaller response size
+- 5-10x faster processing
+- Includes only required + system fields
+
+**Smart Mode Selection:**
+✅ START with COMPACT MODE (mode='compact') for initial exploration
+🔄 AUTOMATICALLY SWITCH to FULL MODE (mode='full') when:
+  - User asks about fields NOT in compact schema
+  - User needs enum values (e.g., "What are valid Status values?")
+  - User wants to see all available fields
+  - User needs optional field details
+
 ## Critical Rules
 
 1. **Read schemas ONCE and cache them** - Schemas are static during server lifetime
-2. **Use exact field names** - Field names include bundle prefixes (e.g., Prefix-Group:FieldName)
-3. **Check relationships** - Only configured object types are available
-4. **Never assume field names** - Always verify against cached schema
-5. **Never re-read unnecessarily** - Only re-read on explicit schema errors
-6. **Use context variables** - Leverage UI context to provide relevant, targeted assistance
+2. **Use compact mode first** - Only use full mode when you need enum values
+3. **Use exact field names** - Field names include bundle prefixes (e.g., Prefix-Group:FieldName)
+4. **Check relationships** - Only configured object types are available
+5. **Never assume field names** - Always verify against cached schema
+6. **Never re-read unnecessarily** - Only re-read on explicit schema errors
+7. **Use context variables** - Leverage UI context to provide relevant, targeted assistance
 
 ## 🔴 Mandatory Workflow - Follow Strictly
 

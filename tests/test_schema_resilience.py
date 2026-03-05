@@ -11,10 +11,10 @@ from src.app.config.settings import Settings
 
 
 @pytest.mark.asyncio
-async def test_tool_call_triggers_schema_load_after_restart():
+async def test_server_initializes_with_schemas_not_loaded():
     """
-    Test that tool calls trigger schema loading if schemas are not loaded
-    This simulates the server restart scenario
+    Test that server initializes with dynamic_schemas_loaded = False
+    and that tool calls work even before schemas are loaded
     """
     # Create a mock settings object
     mock_settings = Mock(spec=Settings)
@@ -34,6 +34,8 @@ async def test_tool_call_triggers_schema_load_after_restart():
         }
     ]
     mock_settings.NAMESPACE = ""
+    mock_settings.SCHEMA_CACHE_MAX_SIZE = 10
+    mock_settings.SCHEMA_CACHE_TTL = 300
     
     # Mock the OpenPages client initialization
     with patch('src.app.mcp.mcp_server.OpenPagesClient') as mock_client_class:
@@ -47,31 +49,16 @@ async def test_tool_call_triggers_schema_load_after_restart():
         # Create server instance
         server = MCPServer(custom_settings=mock_settings)
         
-        # Verify initial state
+        # Verify initial state - schemas not loaded yet
         assert server.dynamic_schemas_loaded == False, "Schemas should not be loaded initially"
         
-        # Simulate tool call with schemas not loaded
+        # Tool calls should still work (echo is a built-in tool)
         params = {
             "name": "echo",
             "arguments": {"text": "test"}
         }
-        
-        # Mock the load_dynamic_schemas method to track if it's called
-        load_called = False
-        
-        async def mock_load_dynamic_schemas(force_reload=False):
-            nonlocal load_called
-            load_called = True
-            server.dynamic_schemas_loaded = True
-        
-        server.load_dynamic_schemas = mock_load_dynamic_schemas
-        
-        # Execute tool call
         result = await server.tool_handlers.handle_call_tool(params)
-        
-        # Verify schema loading was triggered
-        assert load_called, "Schema loading should be triggered on tool call when schemas not loaded"
-        assert "Echo: test" in str(result), "Tool should execute successfully after schema load"
+        assert "Echo: test" in str(result), "Echo tool should work before schema load"
 
 
 @pytest.mark.asyncio
@@ -97,6 +84,8 @@ async def test_tool_call_skips_schema_load_when_already_loaded():
         }
     ]
     mock_settings.NAMESPACE = ""
+    mock_settings.SCHEMA_CACHE_MAX_SIZE = 10
+    mock_settings.SCHEMA_CACHE_TTL = 300
     
     # Mock the OpenPages client initialization
     with patch('src.app.mcp.mcp_server.OpenPagesClient') as mock_client_class:
@@ -132,9 +121,9 @@ async def test_tool_call_skips_schema_load_when_already_loaded():
 
 
 @pytest.mark.asyncio
-async def test_schema_load_failure_returns_error():
+async def test_schema_load_can_be_triggered_explicitly():
     """
-    Test that schema loading failures are handled gracefully
+    Test that load_dynamic_schemas can be called explicitly and updates state
     """
     # Create a mock settings object
     mock_settings = Mock(spec=Settings)
@@ -154,29 +143,27 @@ async def test_schema_load_failure_returns_error():
         }
     ]
     mock_settings.NAMESPACE = ""
+    mock_settings.SCHEMA_CACHE_MAX_SIZE = 10
+    mock_settings.SCHEMA_CACHE_TTL = 300
     
     # Mock the OpenPages client initialization
     with patch('src.app.mcp.mcp_server.OpenPagesClient') as mock_client_class:
         mock_client = Mock()
         mock_client.initialize_auth = AsyncMock()
+        mock_client.get_type_definition = AsyncMock(return_value={
+            "localizedLabel": "Issue",
+            "field_definitions": [],
+            "associations": []
+        })
+        mock_client.get_type_associations = AsyncMock(return_value=[])
         mock_client_class.return_value = mock_client
         
         # Create server instance
         server = MCPServer(custom_settings=mock_settings)
+        assert server.dynamic_schemas_loaded == False
         
-        # Mock load_dynamic_schemas to raise an exception
-        async def mock_load_dynamic_schemas_error(force_reload=False):
-            raise Exception("Failed to connect to OpenPages")
+        # Explicitly trigger schema load
+        await server.load_dynamic_schemas()
         
-        server.load_dynamic_schemas = mock_load_dynamic_schemas_error
-        
-        # Execute tool call
-        params = {
-            "name": "echo",
-            "arguments": {"text": "test"}
-        }
-        result = await server.tool_handlers.handle_call_tool(params)
-        
-        # Verify error is returned gracefully
-        assert "Error" in str(result), "Should return error message"
-        assert "Failed to initialize tool schemas" in str(result), "Should indicate schema initialization failure"
+        # Verify schemas are now marked as loaded
+        assert server.dynamic_schemas_loaded == True, "Schemas should be marked as loaded after explicit load"

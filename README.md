@@ -7,6 +7,7 @@ A Model Context Protocol (MCP) server for IBM OpenPages GRC platform. Enables AI
 - **Dual Mode Operation**: Remote (HTTP) and Local (stdio) transport
 - **OpenPages Integration**: Full REST API connectivity with configurable credentials
 - **Generic Object Tools**: Dynamic data operations for any OpenPages object type (configurable via `object_types.json`)
+- **High Performance**: Compact schema mode reduces response size by 70-90% for faster AI agent interactions
 - **Docker Support**: Containerized deployment with optional NGINX proxy
 - **Cross-Platform**: Windows, Linux, macOS
 - **MCP Compliant**: Full lifecycle support (initialize, tools, resources, notifications, shutdown)

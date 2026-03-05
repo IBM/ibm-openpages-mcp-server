@@ -17,7 +17,9 @@ The SchemaBuilder class provides:
 
 import asyncio
 import logging
+import time
 from typing import Dict, Any, List, Optional
+from collections import OrderedDict
 from src.app.mcp.context import build_context_schema
 
 logger = logging.getLogger(__name__)
@@ -31,16 +33,26 @@ class SchemaBuilder:
     type definitions, enabling dynamic tool creation with proper field validation.
     """
     
-    def __init__(self, client):
+    def __init__(self, client, max_cache_size: int = 20, cache_ttl: int = 3600):
         """
-        Initialize the schema builder
+        Initialize the schema builder with LRU cache
         
         Args:
             client: OpenPages API client
+            max_cache_size: Maximum number of schemas to cache (default: 20)
+            cache_ttl: Cache time-to-live in seconds (default: 3600 = 1 hour)
         """
         self.client = client
-        self.type_definitions: Dict[str, Any] = {}
+        self.type_definitions: OrderedDict[str, Any] = OrderedDict()
+        self._cache_timestamps: Dict[str, float] = {}
         self._cache_lock = asyncio.Lock()
+        self._max_cache_size = max_cache_size
+        self._cache_ttl = cache_ttl
+        # Cache statistics
+        self._cache_hits = 0
+        self._cache_misses = 0
+        self._cache_evictions = 0
+        logger.info(f"Schema builder initialized with LRU cache (max_size={max_cache_size}, ttl={cache_ttl}s)")
     
     async def get_type_definition(self, type_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -56,43 +68,104 @@ class SchemaBuilder:
             logger.error("Invalid type_name: empty string")
             return None
             
-        # Check cache first (fast path — no lock needed)
-        if type_name in self.type_definitions:
-            logger.debug(f"Using cached type definition for {type_name}")
-            return self.type_definitions[type_name]
-
-        # Cache miss — acquire lock to prevent redundant concurrent API calls
+        # Check cache first with lock for thread safety
         async with self._cache_lock:
-            # Re-check after acquiring lock — another coroutine may have populated the cache
             if type_name in self.type_definitions:
-                logger.debug(f"Using cached type definition for {type_name} (populated while waiting for lock)")
+                # Check if cache entry is still valid
+                cache_age = time.time() - self._cache_timestamps.get(type_name, 0)
+                if cache_age < self._cache_ttl:
+                    # Move to end (mark as recently used in LRU)
+                    self.type_definitions.move_to_end(type_name)
+                    self._cache_hits += 1
+                    logger.debug(f"Using cached type definition for {type_name} (age: {cache_age:.1f}s)")
+                    return self.type_definitions[type_name]
+                else:
+                    logger.info(f"Cache entry for {type_name} expired (age: {cache_age:.1f}s), will refresh")
+                    # Remove expired entry
+                    self.type_definitions.pop(type_name, None)
+                    self._cache_timestamps.pop(type_name, None)
+
+            # Cache miss or expired — fetch from API
+            # Lock is already held from above, preventing redundant concurrent API calls
+            # Re-check cache in case another coroutine populated it while we were checking expiry
+            if type_name in self.type_definitions:
+                self._cache_hits += 1
+                logger.debug(f"Using cached type definition for {type_name} (populated by another coroutine)")
                 return self.type_definitions[type_name]
 
+            # Record cache miss
+            self._cache_misses += 1
+            
             try:
                 logger.info(f"Fetching type definition for {type_name}")
                 type_def = await self.client.get_type_definition(type_name)
 
                 if not type_def:
-                    logger.warning(f"Empty type definition returned for {type_name}")
+                    logger.warning(f"Empty type definition returned for {type_name}. The type may not exist in OpenPages or there may be permission issues.")
                     return None
 
                 # Fetch associations separately
                 logger.info(f"Fetching type associations for {type_name}")
-                associations = await self.client.get_type_associations(type_name)
+                try:
+                    associations = await self.client.get_type_associations(type_name)
+                    # Add associations to type definition
+                    if associations:
+                        type_def["associations"] = associations
+                        logger.debug(f"Added {len(associations)} associations to type definition for {type_name}")
+                except Exception as assoc_error:
+                    logger.warning(f"Failed to fetch associations for {type_name}: {assoc_error}. Continuing without associations.")
+                    # Don't fail the entire operation if associations fail
 
-                # Add associations to type definition
-                if associations:
-                    type_def["associations"] = associations
-                    logger.debug(f"Added associations to type definition for {type_name}")
-
-                # Cache the result
-                self.type_definitions[type_name] = type_def
-                logger.debug(f"Cached type definition for {type_name}")
+                # Cache the result with LRU eviction
+                self._add_to_cache(type_name, type_def)
+                logger.info(f"Successfully cached type definition for {type_name} (cache size: {len(self.type_definitions)}/{self._max_cache_size})")
                 return type_def
 
             except Exception as e:
-                logger.error(f"Error fetching type definition for {type_name}: {e}")
+                logger.error(f"Error fetching type definition for {type_name}: {e}", exc_info=True)
                 return None
+    
+    def _add_to_cache(self, type_name: str, type_def: Dict[str, Any]) -> None:
+        """
+        Add type definition to cache with LRU eviction
+        
+        Args:
+            type_name: Name of the type
+            type_def: Type definition to cache
+        """
+        # If cache is full, remove least recently used item
+        if len(self.type_definitions) >= self._max_cache_size:
+            # Remove oldest item (first item in OrderedDict)
+            oldest_key = next(iter(self.type_definitions))
+            self.type_definitions.pop(oldest_key)
+            self._cache_timestamps.pop(oldest_key, None)
+            self._cache_evictions += 1
+            logger.debug(f"Evicted {oldest_key} from cache (LRU)")
+        
+        # Add new item to cache
+        self.type_definitions[type_name] = type_def
+        self._cache_timestamps[type_name] = time.time()
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics for monitoring (thread-safe)
+        
+        Returns:
+            Dict with cache size, max size, hit rate, and performance metrics
+        """
+        # Calculate hit rate
+        total_requests = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total_requests * 100) if total_requests > 0 else 0
+        
+        return {
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+            "current_size": len(self.type_definitions),
+            "max_size": self._max_cache_size,
+            "evictions": self._cache_evictions,
+            "hit_rate": f"{hit_rate:.1f}%",
+            "cache_ttl": self._cache_ttl
+        }
     
     async def build_dynamic_schema_for_object(
         self, 

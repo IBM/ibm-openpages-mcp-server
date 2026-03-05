@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 # Global MCP server instance
 _mcp_server_instance = None
 
-def initialize_server() -> Optional[MCPServer]:
+async def initialize_server_async() -> Optional[MCPServer]:
     """
-    Initialize the MCP server instance for remote (HTTP) mode
+    Initialize the MCP server instance for remote (HTTP) mode with eager schema loading
     
     Returns:
         The MCP server instance or None if initialization fails
@@ -35,6 +35,42 @@ def initialize_server() -> Optional[MCPServer]:
         _mcp_server_instance = MCPServer(custom_settings=settings)
         logger.info("MCP Server initialized successfully")
         
+        # Initialize client authentication
+        logger.info("Initializing OpenPages client authentication...")
+        await _mcp_server_instance.initialize_client()
+        logger.info("Client authentication initialized")
+        
+        # Eagerly load dynamic schemas at startup
+        logger.info("Loading dynamic schemas at startup...")
+        await _mcp_server_instance.load_dynamic_schemas()
+        logger.info("Dynamic schemas loaded successfully at startup")
+        
+        # Pre-load resource schemas to warm both Layer 1 and Layer 2 caches
+        try:
+            logger.info("Pre-loading resource schemas for get_resource tool...")
+            preload_count = 0
+            for obj_config in _mcp_server_instance.settings.OPENPAGES_OBJECT_TYPES:
+                type_id = obj_config.get("type_id")
+                if type_id:
+                    # Pre-load compact mode (most commonly used)
+                    await _mcp_server_instance.resource_handlers.handle_read_resource({
+                        "uri": f"openpages://schema/{type_id}",
+                        "mode": "compact"
+                    })
+                    preload_count += 1
+                    logger.debug(f"Pre-loaded resource schema for {type_id} (compact mode)")
+            
+            # Get cache statistics
+            layer1_stats = _mcp_server_instance.schema_builder.get_cache_stats()
+            layer2_stats = _mcp_server_instance.resource_handlers.get_schema_cache_stats()
+            
+            logger.info(f"Resource schemas pre-loaded successfully ({preload_count} types)")
+            logger.info(f"Layer 1 cache: {layer1_stats['current_size']}/{layer1_stats['max_size']} entries, hit rate: {layer1_stats['hit_rate']}")
+            logger.info(f"Layer 2 cache: {layer2_stats['current_size']}/{layer2_stats['max_size']} entries, hit rate: {layer2_stats['hit_rate']}")
+        except Exception as preload_error:
+            logger.error(f"Failed to pre-load resource schemas: {preload_error}")
+            logger.warning("Resource schemas will be loaded on first get_resource call instead")
+        
         return _mcp_server_instance
     except Exception as e:
         logger.error(f"Failed to initialize MCP Server: {e}")
@@ -44,16 +80,20 @@ def initialize_server() -> Optional[MCPServer]:
 
 def get_server() -> Optional[MCPServer]:
     """
-    Get the MCP server singleton instance
+    Get the MCP server singleton instance.
+
+    Returns the instance set by initialize_server_async() during the FastAPI
+    lifespan startup.  Returns None if the server has not been initialized yet
+    (e.g. startup failed); callers are responsible for handling None.
+
+    Note: lazy re-initialization is intentionally NOT performed here because
+    this function is called from async FastAPI route handlers.  Calling
+    loop.run_until_complete() from within a running event loop raises
+    RuntimeError: This event loop is already running.
     
     Returns:
         The MCP server instance or None if not initialized
     """
-    global _mcp_server_instance
-    
-    if _mcp_server_instance is None:
-        return initialize_server()
-    
     return _mcp_server_instance
 
 # Made with Bob

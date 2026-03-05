@@ -23,6 +23,8 @@ async def test_label_in_schema():
             "namespace": "openpages"
         }
     ]
+    mock_settings.SCHEMA_CACHE_MAX_SIZE = 10
+    mock_settings.SCHEMA_CACHE_TTL = 300
     
     # Create mock schema builder
     mock_schema_builder = MagicMock()

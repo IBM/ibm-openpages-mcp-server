@@ -3,6 +3,7 @@ Test to verify that title is marked as required when the object type requires it
 """
 import asyncio
 import logging
+import pytest
 from src.app.mcp.schema_builder import SchemaBuilder
 from src.app.core.openpages_client import OpenPagesClient
 from src.app.config.settings import settings
@@ -11,6 +12,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.skip(reason="Integration test requires live OpenPages connection")
+@pytest.mark.asyncio
 async def test_title_required():
     """Test that title is marked as required in schema when object type requires it"""
     

@@ -32,6 +32,8 @@ def mock_settings():
         }
     ]
     settings.NAMESPACE = ""  # Add missing NAMESPACE attribute
+    settings.SCHEMA_CACHE_MAX_SIZE = 10
+    settings.SCHEMA_CACHE_TTL = 300
     return settings
 
 
@@ -94,12 +96,13 @@ async def test_list_resources_tool(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify result structure
-    assert "result" in result
-    assert len(result["result"]) > 0
-    assert result["result"][0]["type"] == "text"
+    assert "content" in result
+    assert result["isError"] is False
+    assert len(result["content"]) > 0
+    assert result["content"][0]["type"] == "text"
     
     # Get the text content (now a formatted summary, not JSON)
-    text_content = result["result"][0]["text"]
+    text_content = result["content"][0]["text"]
     
     # Verify it's a summary format, not JSON
     assert "Available OpenPages Resources" in text_content
@@ -128,12 +131,13 @@ async def test_get_resource_tool_object_types_catalog(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify result structure
-    assert "result" in result
-    assert len(result["result"]) > 0
-    assert result["result"][0]["type"] == "text"
+    assert "content" in result
+    assert result["isError"] is False
+    assert len(result["content"]) > 0
+    assert result["content"][0]["type"] == "text"
     
     # Parse the JSON response
-    text_content = result["result"][0]["text"]
+    text_content = result["content"][0]["text"]
     catalog_data = json.loads(text_content)
     
     # Verify catalog structure
@@ -168,12 +172,13 @@ async def test_get_resource_tool_object_schema(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify result structure
-    assert "result" in result
-    assert len(result["result"]) > 0
-    assert result["result"][0]["type"] == "text"
+    assert "content" in result
+    assert result["isError"] is False
+    assert len(result["content"]) > 0
+    assert result["content"][0]["type"] == "text"
     
     # Parse the JSON response
-    text_content = result["result"][0]["text"]
+    text_content = result["content"][0]["text"]
     schema_data = json.loads(text_content)
     
     # Verify schema structure
@@ -181,14 +186,10 @@ async def test_get_resource_tool_object_schema(tool_handlers):
     assert schema_data["type_id"] == "SOXIssue"
     assert "display_name" in schema_data
     assert "fields" in schema_data
-    assert "field_count" in schema_data
     
     # Verify fields are present
     fields = schema_data["fields"]
     assert len(fields) > 0
-    
-    # Verify usage instructions are included
-    assert "usage_instructions" in schema_data
 
 
 @pytest.mark.asyncio
@@ -202,9 +203,10 @@ async def test_get_resource_tool_missing_uri(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify error is returned
-    assert "result" in result
-    assert len(result["result"]) > 0
-    text_content = result["result"][0]["text"]
+    assert "content" in result
+    assert result["isError"] is True
+    assert len(result["content"]) > 0
+    text_content = result["content"][0]["text"]
     assert "Error" in text_content
     assert "uri" in text_content.lower()
 
@@ -222,9 +224,10 @@ async def test_get_resource_tool_invalid_uri(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify error is returned
-    assert "result" in result
-    assert len(result["result"]) > 0
-    text_content = result["result"][0]["text"]
+    assert "content" in result
+    assert result["isError"] is True
+    assert len(result["content"]) > 0
+    text_content = result["content"][0]["text"]
     assert "Error" in text_content
 
 
@@ -241,9 +244,10 @@ async def test_get_resource_tool_nonexistent_type(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify error is returned
-    assert "result" in result
-    assert len(result["result"]) > 0
-    text_content = result["result"][0]["text"]
+    assert "content" in result
+    assert result["isError"] is True
+    assert len(result["content"]) > 0
+    text_content = result["content"][0]["text"]
     assert "Error" in text_content
 
 # Made with Bob

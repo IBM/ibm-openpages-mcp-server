@@ -78,6 +78,53 @@ class ToolHandlers:
         )
         return auth_result.auth_override, auth_result
 
+    def _resolve_object_type(self, object_type_input: str):
+        """
+        Resolve an object_type string (tool_prefix, type_id, or display_name) to
+        the canonical (tool_prefix, type_id) tuple used internally.
+
+        Args:
+            object_type_input: User-supplied object type identifier (case-insensitive)
+
+        Returns:
+            Tuple (tool_prefix: str, type_id: str | None) on success, or
+            Dict MCP error response if the identifier is unknown or has no tool.
+        """
+        # Build a mapping of all valid identifiers → (tool_prefix, type_id)
+        type_mapping: dict = {}
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            config_type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name")
+
+            if tool_prefix:
+                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
+                if config_type_id:
+                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
+                if display_name:
+                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
+
+        lookup_key = object_type_input.lower()
+        if lookup_key not in type_mapping:
+            logger.warning(f"Invalid object_type: {object_type_input}")
+            available_types = sorted(set(v[0] for v in type_mapping.values()))
+            return {
+                "content": [{"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}],
+                "isError": True
+            }
+
+        tool_prefix, type_id = type_mapping[lookup_key]
+        logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{tool_prefix}' (type_id: {type_id})")
+
+        if tool_prefix not in self.object_tools:
+            logger.warning(f"No tool available for object type: {tool_prefix}")
+            return {
+                "content": [{"type": "text", "text": f"Error: No tool available for object type: {tool_prefix}"}],
+                "isError": True
+            }
+
+        return tool_prefix, type_id
+
     async def _execute_tool(self, tool_method, **kwargs):
         """
         Execute a tool method.
@@ -100,7 +147,7 @@ class ToolHandlers:
             arguments: Tool arguments containing 'text' field and optional context variables
             
         Returns:
-            Dict containing the echo result
+            MCP-compliant tool result: {"content": [...], "isError": bool}
         """
         # Extract context variables from arguments
         cleaned_args, context = extract_context_from_arguments(arguments)
@@ -114,9 +161,10 @@ class ToolHandlers:
             response_text += f"\n\nContext: {context.to_dict()}"
         
         return {
-            "result": [
+            "content": [
                 {"type": "text", "text": response_text}
-            ]
+            ],
+            "isError": False
         }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
@@ -146,66 +194,23 @@ class ToolHandlers:
         if not object_type_input:
             logger.error("object_type not provided in delete_object request")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: object_type is required"}
-                ]
+                "content": [{"type": "text", "text": "Error: object_type is required"}],
+                "isError": True
             }
         
         # Validate that at least one identifier is provided
         if not resource_id and not path and not name:
             return {
-                "result": [
-                    {"type": "text", "text": "Error: At least one of resource_id, path, or name is required"}
-                ]
+                "content": [{"type": "text", "text": "Error: At least one of resource_id, path, or name is required"}],
+                "isError": True
             }
         
-        # Normalize object_type: accept tool_prefix, type_id, or display_name
-        # Map to the tool_prefix that we use internally
-        object_type = None
-        type_id = None
-        
-        # Build a mapping of all valid identifiers to tool_prefix
-        type_mapping = {}
-        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
-            tool_prefix = obj_config.get("tool_prefix")
-            config_type_id = obj_config.get("type_id")
-            display_name = obj_config.get("display_name")
-            
-            if tool_prefix:
-                # Map tool_prefix to itself (case-insensitive)
-                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
-                
-                # Map type_id to tool_prefix (case-insensitive)
-                if config_type_id:
-                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
-                
-                # Map display_name to tool_prefix (case-insensitive)
-                if display_name:
-                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
-        
-        # Look up the normalized object_type
-        lookup_key = object_type_input.lower()
-        if lookup_key in type_mapping:
-            object_type, type_id = type_mapping[lookup_key]
-            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
-        else:
-            logger.warning(f"Invalid object_type: {object_type_input}")
-            available_types = list(set([v[0] for v in type_mapping.values()]))
-            return {
-                "result": [
-                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
-                ]
-            }
-        
-        # Check if we have a tool for this object type
-        if object_type not in self.object_tools:
-            logger.warning(f"No tool available for object type: {object_type}")
-            return {
-                "result": [
-                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
-                ]
-            }
-        
+        # Resolve object_type to (tool_prefix, type_id)
+        resolved = self._resolve_object_type(object_type_input)
+        if isinstance(resolved, dict):
+            return resolved  # error response
+        object_type, type_id = resolved
+
         # Get the appropriate tool
         tool = self.object_tools[object_type]
         logger.info(f"Executing generic delete operation for {object_type}")
@@ -227,9 +232,8 @@ class ToolHandlers:
                 
                 if not type_id:
                     return {
-                        "result": [
-                            {"type": "text", "text": f"Error: Could not find type_id for object type: {object_type}"}
-                        ]
+                        "content": [{"type": "text", "text": f"Error: Could not find type_id for object type: {object_type}"}],
+                        "isError": True
                     }
                 
                 # Query for the object
@@ -240,16 +244,14 @@ class ToolHandlers:
                 
                 if len(existing_objects) == 0:
                     return {
-                        "result": [
-                            {"type": "text", "text": f"Error: No {object_type} found with name '{name}'"}
-                        ]
+                        "content": [{"type": "text", "text": f"Error: No {object_type} found with name '{name}'"}],
+                        "isError": True
                     }
                 elif len(existing_objects) > 1:
                     obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}" for obj in existing_objects])
                     return {
-                        "result": [
-                            {"type": "text", "text": f"Error: Multiple {object_type}s found with name '{name}'. Please specify 'resource_id' or 'path' instead:\n{obj_list}"}
-                        ]
+                        "content": [{"type": "text", "text": f"Error: Multiple {object_type}s found with name '{name}'. Please specify 'resource_id' or 'path' instead:\n{obj_list}"}],
+                        "isError": True
                     }
                 else:
                     # Found exactly one object, use its resource_id
@@ -267,7 +269,8 @@ class ToolHandlers:
             # Format the response
             logger.debug(f"Generic delete operation completed successfully for {object_type}")
             return {
-                "result": [{"type": "text", "text": item.text} for item in result]
+                "content": [{"type": "text", "text": item.text} for item in result],
+                "isError": False
             }
             
         except Exception as e:
@@ -276,9 +279,8 @@ class ToolHandlers:
                 "error_type": type(e).__name__
             })
             return {
-                "result": [
-                    {"type": "text", "text": f"Error deleting {object_type}: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error deleting {object_type}: {str(e)}"}],
+                "isError": True
             }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
@@ -305,66 +307,23 @@ class ToolHandlers:
         if not object_type_input:
             logger.error("object_type not provided in upsert_object request")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: object_type is required"}
-                ]
+                "content": [{"type": "text", "text": "Error: object_type is required"}],
+                "isError": True
             }
         
         if not name:
             logger.error("name not provided in upsert_object request")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: name is required"}
-                ]
+                "content": [{"type": "text", "text": "Error: name is required"}],
+                "isError": True
             }
         
-        # Normalize object_type: accept tool_prefix, type_id, or display_name
-        # Map to the tool_prefix that we use internally
-        object_type = None
-        type_id = None
-        
-        # Build a mapping of all valid identifiers to tool_prefix
-        type_mapping = {}
-        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
-            tool_prefix = obj_config.get("tool_prefix")
-            config_type_id = obj_config.get("type_id")
-            display_name = obj_config.get("display_name")
-            
-            if tool_prefix:
-                # Map tool_prefix to itself (case-insensitive)
-                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
-                
-                # Map type_id to tool_prefix (case-insensitive)
-                if config_type_id:
-                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
-                
-                # Map display_name to tool_prefix (case-insensitive)
-                if display_name:
-                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
-        
-        # Look up the normalized object_type
-        lookup_key = object_type_input.lower()
-        if lookup_key in type_mapping:
-            object_type, type_id = type_mapping[lookup_key]
-            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
-        else:
-            logger.warning(f"Invalid object_type: {object_type_input}")
-            available_types = list(set([v[0] for v in type_mapping.values()]))
-            return {
-                "result": [
-                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
-                ]
-            }
-        
-        # Check if we have a tool for this object type
-        if object_type not in self.object_tools:
-            logger.warning(f"No tool available for object type: {object_type}")
-            return {
-                "result": [
-                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
-                ]
-            }
-        
+        # Resolve object_type to (tool_prefix, type_id)
+        resolved = self._resolve_object_type(object_type_input)
+        if isinstance(resolved, dict):
+            return resolved  # error response
+        object_type, type_id = resolved
+
         # Get the appropriate tool
         tool = self.object_tools[object_type]
         logger.info(f"Executing generic upsert operation for {object_type}")
@@ -455,17 +414,15 @@ class ToolHandlers:
                         if len(source_rows) == 0:
                             logger.warning(f"Source object not found for copy_from: {copy_from}")
                             return {
-                                "result": [
-                                    {"type": "text", "text": f"Error: Source object '{copy_from}' not found. Tried Resource ID, path, and name lookup."}
-                                ]
+                                "content": [{"type": "text", "text": f"Error: Source object '{copy_from}' not found. Tried Resource ID, path, and name lookup."}],
+                                "isError": True
                             }
                         elif len(source_rows) > 1:
                             obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}"
                                                  for obj in source_rows])
                             return {
-                                "result": [
-                                    {"type": "text", "text": f"Error: Multiple objects found with name '{copy_from}'. Please use Resource ID or full path instead:\n{obj_list}"}
-                                ]
+                                "content": [{"type": "text", "text": f"Error: Multiple objects found with name '{copy_from}'. Please use Resource ID or full path instead:\n{obj_list}"}],
+                                "isError": True
                             }
                         else:
                             source_object_data = source_rows[0]
@@ -474,9 +431,8 @@ class ToolHandlers:
                     # If still not found, return error
                     if not source_object_data:
                         return {
-                            "result": [
-                                {"type": "text", "text": f"Error: Source object '{copy_from}' not found for copying"}
-                            ]
+                            "content": [{"type": "text", "text": f"Error: Source object '{copy_from}' not found for copying"}],
+                            "isError": True
                         }
                     
                     # Extract all field values from source object
@@ -559,9 +515,8 @@ class ToolHandlers:
                 except Exception as e:
                     logger.error(f"Error copying from source object: {e}", exc_info=True)
                     return {
-                        "result": [
-                            {"type": "text", "text": f"Error copying from source object '{copy_from}': {str(e)}"}
-                        ]
+                        "content": [{"type": "text", "text": f"Error copying from source object '{copy_from}': {str(e)}"}],
+                        "isError": True
                     }
             
             # Now perform the upsert operation with merged arguments
@@ -570,7 +525,8 @@ class ToolHandlers:
             # Format the response
             logger.debug(f"Generic upsert operation completed successfully for {object_type}")
             return {
-                "result": [{"type": "text", "text": item.text} for item in result]
+                "content": [{"type": "text", "text": item.text} for item in result],
+                "isError": False
             }
             
         except Exception as e:
@@ -579,9 +535,8 @@ class ToolHandlers:
                 "error_type": type(e).__name__
             })
             return {
-                "result": [
-                    {"type": "text", "text": f"Error upserting {object_type}: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error upserting {object_type}: {str(e)}"}],
+                "isError": True
             }
 
     @log_method_call(log_args=True, level=logging.DEBUG)
@@ -605,51 +560,16 @@ class ToolHandlers:
         if not object_type_input:
             logger.error("object_type not provided in associate_objects request")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: object_type is required"}
-                ]
+                "content": [{"type": "text", "text": "Error: object_type is required"}],
+                "isError": True
             }
         
-        # Normalize object_type: accept tool_prefix, type_id, or display_name
-        object_type = None
-        
-        # Build a mapping of all valid identifiers to tool_prefix
-        type_mapping = {}
-        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
-            tool_prefix = obj_config.get("tool_prefix")
-            config_type_id = obj_config.get("type_id")
-            display_name = obj_config.get("display_name")
-            
-            if tool_prefix:
-                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
-                if config_type_id:
-                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
-                if display_name:
-                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
-        
-        # Look up the normalized object_type
-        lookup_key = object_type_input.lower()
-        if lookup_key in type_mapping:
-            object_type, type_id = type_mapping[lookup_key]
-            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
-        else:
-            logger.warning(f"Invalid object_type: {object_type_input}")
-            available_types = list(set([v[0] for v in type_mapping.values()]))
-            return {
-                "result": [
-                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
-                ]
-            }
-        
-        # Check if we have a tool for this object type
-        if object_type not in self.object_tools:
-            logger.warning(f"No tool available for object type: {object_type}")
-            return {
-                "result": [
-                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
-                ]
-            }
-        
+        # Resolve object_type to (tool_prefix, type_id)
+        resolved = self._resolve_object_type(object_type_input)
+        if isinstance(resolved, dict):
+            return resolved  # error response
+        object_type, type_id = resolved
+
         # Get the appropriate tool
         tool = self.object_tools[object_type]
         logger.info(f"Executing generic associate operation for {object_type}")
@@ -661,7 +581,8 @@ class ToolHandlers:
             # Format the response
             logger.debug(f"Generic associate operation completed successfully for {object_type}")
             return {
-                "result": [{"type": "text", "text": item.text} for item in result]
+                "content": [{"type": "text", "text": item.text} for item in result],
+                "isError": False
             }
             
         except Exception as e:
@@ -670,9 +591,8 @@ class ToolHandlers:
                 "error_type": type(e).__name__
             })
             return {
-                "result": [
-                    {"type": "text", "text": f"Error associating {object_type}: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error associating {object_type}: {str(e)}"}],
+                "isError": True
             }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
@@ -696,51 +616,16 @@ class ToolHandlers:
         if not object_type_input:
             logger.error("object_type not provided in dissociate_objects request")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: object_type is required"}
-                ]
+                "content": [{"type": "text", "text": "Error: object_type is required"}],
+                "isError": True
             }
         
-        # Normalize object_type: accept tool_prefix, type_id, or display_name
-        object_type = None
-        
-        # Build a mapping of all valid identifiers to tool_prefix
-        type_mapping = {}
-        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
-            tool_prefix = obj_config.get("tool_prefix")
-            config_type_id = obj_config.get("type_id")
-            display_name = obj_config.get("display_name")
-            
-            if tool_prefix:
-                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
-                if config_type_id:
-                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
-                if display_name:
-                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
-        
-        # Look up the normalized object_type
-        lookup_key = object_type_input.lower()
-        if lookup_key in type_mapping:
-            object_type, type_id = type_mapping[lookup_key]
-            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
-        else:
-            logger.warning(f"Invalid object_type: {object_type_input}")
-            available_types = list(set([v[0] for v in type_mapping.values()]))
-            return {
-                "result": [
-                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
-                ]
-            }
-        
-        # Check if we have a tool for this object type
-        if object_type not in self.object_tools:
-            logger.warning(f"No tool available for object type: {object_type}")
-            return {
-                "result": [
-                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
-                ]
-            }
-        
+        # Resolve object_type to (tool_prefix, type_id)
+        resolved = self._resolve_object_type(object_type_input)
+        if isinstance(resolved, dict):
+            return resolved  # error response
+        object_type, type_id = resolved
+
         # Get the appropriate tool
         tool = self.object_tools[object_type]
         logger.info(f"Executing generic dissociate operation for {object_type}")
@@ -752,7 +637,8 @@ class ToolHandlers:
             # Format the response
             logger.debug(f"Generic dissociate operation completed successfully for {object_type}")
             return {
-                "result": [{"type": "text", "text": item.text} for item in result]
+                "content": [{"type": "text", "text": item.text} for item in result],
+                "isError": False
             }
             
         except Exception as e:
@@ -761,9 +647,8 @@ class ToolHandlers:
                 "error_type": type(e).__name__
             })
             return {
-                "result": [
-                    {"type": "text", "text": f"Error dissociating {object_type}: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error dissociating {object_type}: {str(e)}"}],
+                "isError": True
             }
     
     async def handle_openpages_query_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -786,9 +671,8 @@ class ToolHandlers:
         if not self.query_tool:
             logger.error("OpenPages query tool not initialized")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: OpenPages query tool not initialized"}
-                ]
+                "content": [{"type": "text", "text": "Error: OpenPages query tool not initialized"}],
+                "isError": True
             }
         
         logger.info("Executing OpenPages query tool")
@@ -798,14 +682,14 @@ class ToolHandlers:
                 arguments=cleaned_args, auth_override=auth_override
             )
             return {
-                "result": [{"type": "text", "text": item.text} for item in result]
+                "content": [{"type": "text", "text": item.text} for item in result],
+                "isError": False
             }
         except Exception as e:
             logger.error(f"Error executing OpenPages query: {e}", exc_info=True)
             return {
-                "result": [
-                    {"type": "text", "text": f"Error executing OpenPages query: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error executing OpenPages query: {str(e)}"}],
+                "isError": True
             }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
@@ -836,9 +720,8 @@ class ToolHandlers:
         if len(parts) < 2:
             logger.warning(f"Invalid tool name format: {tool_name}")
             return {
-                "result": [
-                    {"type": "text", "text": f"Invalid tool name format: {tool_name}"}
-                ]
+                "content": [{"type": "text", "text": f"Invalid tool name format: {tool_name}"}],
+                "isError": True
             }
         
         # Determine if namespace is present
@@ -854,9 +737,8 @@ class ToolHandlers:
         
         if len(parts) < operation_index + 2:
             return {
-                "result": [
-                    {"type": "text", "text": f"Invalid tool name format: {tool_name}"}
-                ]
+                "content": [{"type": "text", "text": f"Invalid tool name format: {tool_name}"}],
+                "isError": True
             }
             
         operation = parts[operation_index]  # upsert, query, delete
@@ -870,9 +752,8 @@ class ToolHandlers:
         if obj_type not in self.object_tools:
             logger.warning(f"No tool available for object type: {obj_type}")
             return {
-                "result": [
-                    {"type": "text", "text": f"No tool available for object type: {obj_type}"}
-                ]
+                "content": [{"type": "text", "text": f"No tool available for object type: {obj_type}"}],
+                "isError": True
             }
             
         # Get the appropriate tool
@@ -902,15 +783,15 @@ class ToolHandlers:
             else:
                 logger.warning(f"Unknown operation: {operation}")
                 return {
-                    "result": [
-                        {"type": "text", "text": f"Unknown operation: {operation}"}
-                    ]
+                    "content": [{"type": "text", "text": f"Unknown operation: {operation}"}],
+                    "isError": True
                 }
                 
             # Format the response
             logger.debug(f"Tool execution completed successfully for {tool_name}")
             return {
-                "result": [{"type": "text", "text": item.text} for item in result]
+                "content": [{"type": "text", "text": item.text} for item in result],
+                "isError": False
             }
             
         except Exception as e:
@@ -921,9 +802,8 @@ class ToolHandlers:
                 "error_type": type(e).__name__
             })
             return {
-                "result": [
-                    {"type": "text", "text": f"Error handling {tool_name}: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error handling {tool_name}: {str(e)}"}],
+                "isError": True
             }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
@@ -947,9 +827,8 @@ class ToolHandlers:
         if not self.resource_handlers:
             logger.error("Resource handlers not initialized")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: Resource handlers not initialized"}
-                ]
+                "content": [{"type": "text", "text": "Error: Resource handlers not initialized"}],
+                "isError": True
             }
         
         logger.info("Executing list_resources tool")
@@ -983,16 +862,14 @@ class ToolHandlers:
             summary_text = "\n".join(lines)
             
             return {
-                "result": [
-                    {"type": "text", "text": summary_text}
-                ]
+                "content": [{"type": "text", "text": summary_text}],
+                "isError": False
             }
         except Exception as e:
             logger.error(f"Error listing resources: {e}", exc_info=True)
             return {
-                "result": [
-                    {"type": "text", "text": f"Error listing resources: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error listing resources: {str(e)}"}],
+                "isError": True
             }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
@@ -1016,24 +893,22 @@ class ToolHandlers:
         if not self.resource_handlers:
             logger.error("Resource handlers not initialized")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: Resource handlers not initialized"}
-                ]
+                "content": [{"type": "text", "text": "Error: Resource handlers not initialized"}],
+                "isError": True
             }
         
         uri = cleaned_args.get("uri")
         if not uri:
             logger.error("Missing 'uri' parameter in get_resource tool")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: Missing required parameter 'uri'"}
-                ]
+                "content": [{"type": "text", "text": "Error: Missing required parameter 'uri'"}],
+                "isError": True
             }
         
         logger.info(f"Executing get_resource tool for URI: {uri}")
         try:
-            # Call the resource handler's read method
-            result = await self.resource_handlers.handle_read_resource({"uri": uri})
+            # Call the resource handler's read method with all cleaned arguments (including mode)
+            result = await self.resource_handlers.handle_read_resource(cleaned_args)
             
             # Extract the content from the result
             if "contents" in result and len(result["contents"]) > 0:
@@ -1041,30 +916,26 @@ class ToolHandlers:
                 text_content = content.get("text", "")
                 
                 return {
-                    "result": [
-                        {"type": "text", "text": text_content}
-                    ]
+                    "content": [{"type": "text", "text": text_content}],
+                    "isError": False
                 }
             else:
                 logger.warning(f"No content found for URI: {uri}")
                 return {
-                    "result": [
-                        {"type": "text", "text": f"No content found for URI: {uri}"}
-                    ]
+                    "content": [{"type": "text", "text": f"No content found for URI: {uri}"}],
+                    "isError": True
                 }
         except ValueError as e:
             logger.error(f"Invalid URI or resource not found: {e}")
             return {
-                "result": [
-                    {"type": "text", "text": f"Error: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error: {str(e)}"}],
+                "isError": True
             }
         except Exception as e:
             logger.error(f"Error getting resource: {e}", exc_info=True)
             return {
-                "result": [
-                    {"type": "text", "text": f"Error getting resource: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error getting resource: {str(e)}"}],
+                "isError": True
             }
     
     # TODO: Temporarily disabled - schema tools will be re-enabled later
@@ -1199,28 +1070,12 @@ class ToolHandlers:
         if not name:
             logger.error("Tool name not provided in call_tool request")
             return {
-                "result": [
-                    {"type": "text", "text": "Error: Tool name not provided"}
-                ]
+                "content": [{"type": "text", "text": "Error: Tool name not provided"}],
+                "isError": True
             }
         
         logger.info(f"Handling call_tool request for tool: {name}")
         logger.debug(f"Tool arguments: {arguments}")
-        
-        # Ensure dynamic schemas are loaded before executing tool
-        # This handles the scenario where server restarted but client still has cached schema
-        if self.mcp_server and not self.mcp_server.dynamic_schemas_loaded:
-            logger.warning(f"Dynamic schemas not loaded before tool call '{name}', loading now...")
-            try:
-                await self.mcp_server.load_dynamic_schemas()
-                logger.info("Dynamic schemas loaded successfully before tool execution")
-            except Exception as e:
-                logger.error(f"Failed to load dynamic schemas before tool execution: {e}", exc_info=True)
-                return {
-                    "result": [
-                        {"type": "text", "text": f"Error: Failed to initialize tool schemas. Please try again or contact support. Details: {str(e)}"}
-                    ]
-                }
         
         try:
             # Map special tool names to their handler methods
@@ -1250,10 +1105,8 @@ class ToolHandlers:
                 "error_type": type(e).__name__,
             })
             return {
-                "result": [
-                    {"type": "text", "text": f"Authentication failed: {str(e)}"}
-                ],
-                "_isError": True,
+                "content": [{"type": "text", "text": f"Authentication failed: {str(e)}"}],
+                "isError": True,
             }
         except Exception as e:
             logger.error(f"Error calling tool {name}: {e}", exc_info=True, extra_fields={
@@ -1262,9 +1115,8 @@ class ToolHandlers:
                 "has_arguments": bool(arguments)
             })
             return {
-                "result": [
-                    {"type": "text", "text": f"Error calling tool {name}: {str(e)}"}
-                ]
+                "content": [{"type": "text", "text": f"Error calling tool {name}: {str(e)}"}],
+                "isError": True
             }
 
 # Made with Bob

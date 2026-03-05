@@ -131,6 +131,20 @@ class Settings(BaseSettings):
     # Path to object types configuration file
     OBJECT_TYPES_CONFIG_PATH: str = "object_types.json"
     
+    # Token optimization settings (Phase 2)
+    SCHEMA_CACHE_MAX_SIZE: int = 20  # Maximum number of schemas to cache (LRU)
+    SCHEMA_CACHE_TTL: int = 3600  # Schema cache TTL in seconds (1 hour)
+
+    # MCP session enforcement (Streamable HTTP transport, spec 2025-03-26)
+    # When True (default), all non-initialize requests must include a valid Mcp-Session-Id header.
+    # Set to False to allow clients that do not support session headers (e.g. MCP Inspector).
+    MCP_SESSION_ENFORCEMENT: bool = True
+    
+    # MCP session management settings
+    MCP_SESSION_TTL: int = 3600  # Session TTL in seconds (1 hour)
+    MCP_SESSION_MAX_COUNT: int = 1000  # Maximum number of concurrent sessions
+    MCP_SESSION_CLEANUP_INTERVAL: int = 300  # Cleanup task interval in seconds (5 minutes)
+    
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE_PATH),
         env_file_encoding="utf-8",

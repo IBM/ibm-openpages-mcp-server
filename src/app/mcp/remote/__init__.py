@@ -7,6 +7,6 @@ to connect over the network using JSON-RPC over HTTP.
 """
 
 from .http_router import router
-from .server_instance import initialize_server, get_server
+from .server_instance import initialize_server_async, get_server
 
-__all__ = ['router', 'initialize_server', 'get_server']
+__all__ = ['router', 'initialize_server_async', 'get_server']

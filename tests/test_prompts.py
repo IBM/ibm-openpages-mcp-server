@@ -68,8 +68,8 @@ async def test_initialize_advertises_prompts_capability():
     # Verify prompts capability is advertised
     assert "capabilities" in result, "Missing capabilities in initialize response"
     assert "prompts" in result["capabilities"], "Missing prompts in capabilities"
-    assert result["capabilities"]["prompts"]["list"]["enabled"] is True, "prompts/list not enabled"
-    assert result["capabilities"]["prompts"]["get"]["enabled"] is True, "prompts/get not enabled"
+    # MCP spec: prompts capability advertises listChanged support
+    assert "listChanged" in result["capabilities"]["prompts"], "prompts capability missing listChanged"
     
     print("   [PASS] Initialize advertises prompts capability correctly")
     return True

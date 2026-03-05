@@ -73,10 +73,10 @@ def generic_tools(mock_client, mock_schema_builder, object_config):
 
 @pytest.mark.asyncio
 async def test_ambiguous_label_in_insert(generic_tools, mock_client):
-    """Test that ambiguous label raises error during insert"""
+    """Test that ambiguous label is skipped (logged as warning) during insert"""
     
-    # Mock create_content to track if it's called
-    mock_client.create_content = AsyncMock()
+    # Mock create_content to return success
+    mock_client.create_content = AsyncMock(return_value={"id": "12345", "name": "Test Risk"})
     
     # Try to insert with ambiguous field name "Owner"
     arguments = {
@@ -85,28 +85,25 @@ async def test_ambiguous_label_in_insert(generic_tools, mock_client):
         "Status": "Active"
     }
     
-    # Should raise ValueError with helpful message
-    with pytest.raises(ValueError) as exc_info:
-        await generic_tools._perform_insert("Test Risk", arguments)
+    # Should complete without raising - ambiguous field is skipped
+    result = await generic_tools._perform_insert("Test Risk", arguments)
     
-    error_message = str(exc_info.value)
+    # Verify create_content was called (operation proceeds despite ambiguous field)
+    mock_client.create_content.assert_called_once()
     
-    # Verify error message contains helpful information
-    assert "Ambiguous field name 'Owner'" in error_message
-    assert "OPSS-rsk:Owner" in error_message
-    assert "Custom:Owner" in error_message
-    assert "Please specify the exact field name" in error_message
-    
-    # Verify create_content was NOT called
-    mock_client.create_content.assert_not_called()
+    # Verify the ambiguous "Owner" field was NOT included in the call
+    call_args = mock_client.create_content.call_args[0][0]
+    field_names = [f["name"] for f in call_args.get("fields", [])]
+    assert "OPSS-rsk:Owner" not in field_names
+    assert "Custom:Owner" not in field_names
 
 
 @pytest.mark.asyncio
 async def test_ambiguous_simple_name_in_insert(generic_tools, mock_client):
-    """Test that ambiguous simple name (without prefix) raises error during insert"""
+    """Test that ambiguous simple name (without prefix) is skipped during insert"""
     
-    # Mock create_content
-    mock_client.create_content = AsyncMock()
+    # Mock create_content to return success
+    mock_client.create_content = AsyncMock(return_value={"id": "12345", "name": "Test Risk"})
     
     # Try to insert with simple name that's ambiguous
     arguments = {
@@ -115,13 +112,17 @@ async def test_ambiguous_simple_name_in_insert(generic_tools, mock_client):
         "Status": "Active"
     }
     
-    # Should raise ValueError
-    with pytest.raises(ValueError) as exc_info:
-        await generic_tools._perform_insert("Test Risk", arguments)
+    # Should complete without raising - ambiguous field is skipped
+    result = await generic_tools._perform_insert("Test Risk", arguments)
     
-    error_message = str(exc_info.value)
-    assert "Ambiguous field name 'owner'" in error_message
-    assert "OPSS-rsk:Owner" in error_message or "Custom:Owner" in error_message
+    # Verify create_content was called
+    mock_client.create_content.assert_called_once()
+    
+    # Verify the ambiguous "owner" field was NOT included
+    call_args = mock_client.create_content.call_args[0][0]
+    field_names = [f["name"] for f in call_args.get("fields", [])]
+    assert "OPSS-rsk:Owner" not in field_names
+    assert "Custom:Owner" not in field_names
 
 
 @pytest.mark.asyncio
@@ -178,10 +179,10 @@ async def test_non_ambiguous_label_works(generic_tools, mock_client):
 
 @pytest.mark.asyncio
 async def test_ambiguous_label_in_update(generic_tools, mock_client):
-    """Test that ambiguous label raises error during update"""
+    """Test that ambiguous label is skipped (logged as warning) during update"""
     
-    # Mock update_content
-    mock_client.update_content = AsyncMock()
+    # Mock update_content to return success
+    mock_client.update_content = AsyncMock(return_value={"id": "12345", "name": "Test Risk"})
     
     # Try to update with ambiguous field name
     arguments = {
@@ -190,17 +191,19 @@ async def test_ambiguous_label_in_update(generic_tools, mock_client):
         "Status": "Closed"
     }
     
-    # Should raise ValueError
-    with pytest.raises(ValueError) as exc_info:
-        await generic_tools._perform_update("12345", "Test Risk", arguments)
+    # Should complete without raising - ambiguous field is skipped
+    result = await generic_tools._perform_update("12345", "Test Risk", arguments)
     
-    error_message = str(exc_info.value)
-    assert "Ambiguous field name 'Owner'" in error_message
-    assert "OPSS-rsk:Owner" in error_message
-    assert "Custom:Owner" in error_message
+    # Verify update_content was called
+    mock_client.update_content.assert_called_once()
     
-    # Verify update_content was NOT called
-    mock_client.update_content.assert_not_called()
+    # Verify the ambiguous "Owner" field was NOT included
+    # update_content(resource_id, payload) — payload is the second positional arg
+    call_args = mock_client.update_content.call_args[0]
+    payload = call_args[1] if len(call_args) > 1 else mock_client.update_content.call_args[1]
+    field_names = [f["name"] for f in payload.get("fields", [])]
+    assert "OPSS-rsk:Owner" not in field_names
+    assert "Custom:Owner" not in field_names
 
 
 @pytest.mark.asyncio
