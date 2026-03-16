@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"  # Options: "json" or "text"
     LOG_FILE: Optional[str] = None
+    LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB default
+    LOG_BACKUP_COUNT: int = 5  # Keep 5 backup files
     
     # Observability settings
     OBSERVABILITY_ENABLED: bool = True

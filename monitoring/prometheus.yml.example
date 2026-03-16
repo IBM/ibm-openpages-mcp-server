@@ -1,0 +1,114 @@
+# Prometheus Configuration Examples for Different Scenarios
+
+# ============================================================================
+# SCENARIO 1: Development (High Frequency)
+# ============================================================================
+# Use this for local development when you need real-time metrics feedback
+
+global:
+  scrape_interval: 5s       # Scrape every 5 seconds
+  evaluation_interval: 5s   # Evaluate rules every 5 seconds
+
+scrape_configs:
+  - job_name: 'grc-mcp-server'
+    static_configs:
+      - targets: ['host.docker.internal:8025']
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+    scrape_timeout: 4s
+
+# ============================================================================
+# SCENARIO 2: Staging (Balanced)
+# ============================================================================
+# Use this for staging environments - current default
+
+global:
+  scrape_interval: 15s      # Scrape every 15 seconds
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'grc-mcp-server'
+    static_configs:
+      - targets: ['host.docker.internal:8025']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+# ============================================================================
+# SCENARIO 3: Production (Optimized)
+# ============================================================================
+# Use this for production to reduce load while maintaining good visibility
+
+global:
+  scrape_interval: 30s      # Scrape every 30 seconds
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: 'grc-mcp-server'
+    static_configs:
+      - targets: ['grc-mcp-server:8000']  # Use service name in production
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 25s
+
+# ============================================================================
+# SCENARIO 4: Low-Traffic Production (Minimal Load)
+# ============================================================================
+# Use this for low-traffic production environments
+
+global:
+  scrape_interval: 1m       # Scrape every 1 minute
+  evaluation_interval: 1m
+
+scrape_configs:
+  - job_name: 'grc-mcp-server'
+    static_configs:
+      - targets: ['grc-mcp-server:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 1m
+    scrape_timeout: 50s
+
+# ============================================================================
+# SCENARIO 5: Mixed Intervals (Different Jobs, Different Frequencies)
+# ============================================================================
+# Use this when you need different scrape rates for different services
+
+global:
+  scrape_interval: 30s      # Default for most jobs
+  evaluation_interval: 30s
+
+scrape_configs:
+  # Critical service - scrape more frequently
+  - job_name: 'grc-mcp-server'
+    static_configs:
+      - targets: ['grc-mcp-server:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 15s    # Override global: scrape every 15s
+    scrape_timeout: 10s
+
+  # Prometheus self-monitoring - less frequent
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 60s    # Override global: scrape every 60s
+    scrape_timeout: 50s
+
+  # Jaeger metrics - least frequent
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+    metrics_path: '/metrics'
+    scrape_interval: 2m     # Override global: scrape every 2 minutes
+    scrape_timeout: 1m
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# 
+# 1. scrape_timeout must be less than scrape_interval
+# 2. Shorter intervals = more load on target, better real-time visibility
+# 3. Longer intervals = less load, delayed metrics, less storage
+# 4. Typical production values: 15s-60s
+# 5. Development values: 5s-15s
+# 6. After changes, restart Prometheus:
+#    docker-compose -f monitoring/docker-compose.yml restart prometheus

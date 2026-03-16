@@ -16,23 +16,14 @@ The RequestProcessor class provides:
 
 import json
 import logging
-from typing import Dict, Any, Tuple, Callable, Optional, Union
+import time
+from typing import Dict, Any, Tuple, Callable, Optional
 
 from src.app.observability.logger import get_logger, log_method_call
+from src.app.observability.tracing import start_async_span, set_span_ok, set_span_error, is_tracing_enabled
+from src.app.observability import metrics as metrics_module
 
 logger = get_logger(__name__)
-
-
-# Supported protocol versions in preference order (newest first).
-# During initialize negotiation the server picks the highest version it
-# supports that is ≤ the client's offered version.  If the client offers
-# a version the server has never heard of, the server falls back to its
-# own latest supported version and lets the client decide whether to abort.
-_SUPPORTED_PROTOCOL_VERSIONS = [
-    "2025-03-26",
-    "2024-11-05",
-]
-_LATEST_PROTOCOL_VERSION = _SUPPORTED_PROTOCOL_VERSIONS[0]
 
 
 class RequestProcessor:
@@ -95,14 +86,6 @@ class RequestProcessor:
     async def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle initialize request from the client
-
-        Negotiates the protocol version per MCP spec:
-        - If the client offers a version the server supports, echo that version.
-        - If the client offers a newer version, respond with the server's latest
-          supported version (the client may then abort if it requires the newer
-          version).
-        - If params is missing or has no protocolVersion, default to the server's
-          latest supported version.
         
         Args:
             params: Parameters from the initialize request
@@ -112,44 +95,50 @@ class RequestProcessor:
         """
         logger.info("Handling initialize request")
         logger.debug(f"Initialize params: {params}")
-
-        # --- Protocol version negotiation ---
-        client_version = (params or {}).get("protocolVersion", _LATEST_PROTOCOL_VERSION)
-        if client_version in _SUPPORTED_PROTOCOL_VERSIONS:
-            negotiated_version = client_version
-            logger.debug(f"Protocol version negotiated: {negotiated_version} (client offered: {client_version})")
-        else:
-            # Client offered an unknown version — respond with our latest and let
-            # the client decide whether to abort.
-            negotiated_version = _LATEST_PROTOCOL_VERSION
-            logger.warning(
-                f"Client offered unsupported protocol version '{client_version}'; "
-                f"responding with server's latest '{negotiated_version}'"
-            )
-
+        
         result = {
-            "protocolVersion": negotiated_version,
+            "protocolVersion": "2025-03-26",
             "serverInfo": {
-                "name": "openpages-mcp-server",
+                "name": "local-mcp-server",
                 "version": self.server_version,
-                "description": "A remote MCP server for IBM OpenPages integration"
+                "description": "A local MCP server for IBM OpenPages integration"
             },
             "capabilities": {
                 "tools": {
-                    "listChanged": False
+                    "list": {
+                        "enabled": True
+                    },
+                    "call": {
+                        "enabled": True
+                    },
+                    "invoke": {
+                        "enabled": True
+                    }
                 },
                 "resources": {
-                    "subscribe": False,
-                    "listChanged": False
+                    "list": {
+                        "enabled": True
+                    },
+                    "read": {
+                        "enabled": True
+                    },
+                    "subscribe": False,  # Not implemented - resources are static during session
+                    "listChanged": False  # Not implemented - resources are static during session
                 },
                 "prompts": {
-                    "listChanged": False
+                    "listChanged": False,  # Not implemented - prompts are static during session
+                    "get": {
+                        "enabled": True
+                    },
+                    "list": {
+                        "enabled": True
+                    }
                 },
-                "logging": {
-                    "setLevel": True
-                },
-                "ping": {}
-            }
+                "completion": {
+                    "enabled": True
+                }
+            },
+            "tools": self.tools
         }
         
         logger.debug("handle_initialize() completed successfully")
@@ -192,7 +181,7 @@ class RequestProcessor:
         return {}
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def process_request(self, request_data: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], bool]:
+    async def process_request(self, request_data: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
         """
         Process a JSON-RPC request
         
@@ -202,8 +191,7 @@ class RequestProcessor:
             request_data: The JSON-RPC request data
             
         Returns:
-            Tuple containing (response_data, should_exit).
-            response_data is None for notifications (JSON-RPC 2.0: notifications must not receive a response).
+            Tuple containing (response_data, should_exit)
         """
         method = request_data.get("method", "")
         params = request_data.get("params", {})
@@ -223,180 +211,156 @@ class RequestProcessor:
                 "id": request_id
             }, False
         
-        logger.debug(f"Processing JSON-RPC request: {method} (ID: {request_id})")
-        
-        try:
-            # Handle different methods
-            if method == "initialize":
-                result = await self.handle_initialize(params)
-            elif method in ["list_tools", "tools/list"]:
-                result = await self.handle_list_tools(params)
-            elif method in ["call_tool", "tools/call", "tools/invoke"]:
-                logger.debug("Calling tool API")
-                response = await self.tool_handlers.handle_call_tool(params)
+        logger.info(f"Processing JSON-RPC request: {method} (ID: {request_id})")
 
-                # Tool handlers now return MCP-compliant {"content": [...], "isError": bool}
-                # Pass through directly as the result — no re-wrapping needed
-                result = response
-                logger.debug("Tool API call completed")
-            elif method in ["list_resources", "resources/list"]:
-                if not self.resource_handlers:
-                    logger.error("Resources not enabled - resource_handlers not initialized")
-                    return {
-                        "jsonrpc": "2.0",
-                        "error": {
-                            "code": -32601,
-                            "message": "Resources not enabled"
-                        },
-                        "id": request_id
-                    }, False
-                logger.debug("Listing resources")
-                result = await self.resource_handlers.handle_list_resources(params)
-                logger.debug("List resources completed")
-            elif method in ["read_resource", "resources/read"]:
-                if not self.resource_handlers:
-                    logger.error("Resources not enabled - resource_handlers not initialized")
-                    return {
-                        "jsonrpc": "2.0",
-                        "error": {
-                            "code": -32601,
-                            "message": "Resources not enabled"
-                        },
-                        "id": request_id
-                    }, False
-                logger.debug("Reading resource")
-                try:
+        # Record MCP message metric (only when metrics are enabled)
+        if metrics_module.is_metrics_enabled():
+            metrics_module.mcp_messages_total.labels(
+                message_type=method,
+                direction="inbound"
+            ).inc()
+
+        # Build span attributes for this MCP request (only populated when tracing is on)
+        span_attrs: Dict[str, Any] = {}
+        if is_tracing_enabled():
+            span_attrs = {
+                "mcp.method": method,
+                "mcp.request_id": str(request_id) if request_id is not None else "",
+            }
+
+        t_start = time.monotonic()
+        async with start_async_span(f"mcp.request.{method}", attributes=span_attrs) as span:
+            try:
+                # Handle different methods
+                if method == "initialize":
+                    result = await self.handle_initialize(params)
+                elif method in ["list_tools", "tools/list"]:
+                    result = await self.handle_list_tools(params)
+                elif method in ["call_tool", "tools/call", "tools/invoke"]:
+                    logger.debug("Calling tool API")
+                    response = await self.tool_handlers.handle_call_tool(params)
+
+                    # Extract _isError flag if present, default to False
+                    is_error = response.pop("_isError", False)
+
+                    # Format the response in the exact format requested
+                    formatted_response = {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(response)
+                            }
+                        ],
+                        "isError": is_error
+                    }
+                    result = formatted_response
+                    logger.debug("Tool API call completed")
+                elif method in ["list_resources", "resources/list"]:
+                    if not self.resource_handlers:
+                        logger.error("Resources not enabled - resource_handlers not initialized")
+                        return {
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32601,
+                                "message": "Resources not enabled"
+                            },
+                            "id": request_id
+                        }, False
+                    logger.debug("Listing resources")
+                    result = await self.resource_handlers.handle_list_resources(params)
+                    logger.debug("List resources completed")
+                elif method in ["read_resource", "resources/read"]:
+                    if not self.resource_handlers:
+                        logger.error("Resources not enabled - resource_handlers not initialized")
+                        return {
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32601,
+                                "message": "Resources not enabled"
+                            },
+                            "id": request_id
+                        }, False
+                    logger.debug("Reading resource")
                     result = await self.resource_handlers.handle_read_resource(params)
-                except ValueError as e:
-                    # ValueError = invalid/missing params (e.g. bad URI, missing uri param)
-                    logger.warning(f"Invalid params for resources/read: {e}")
-                    return {
-                        "jsonrpc": "2.0",
-                        "error": {
-                            "code": -32602,
-                            "message": f"Invalid params: {e}"
-                        },
-                        "id": request_id
-                    }, False
-                except RuntimeError as e:
-                    # RuntimeError = resource fetch failed (e.g. OpenPages unreachable)
-                    logger.error(f"Resource fetch failed: {e}")
-                    return {
-                        "jsonrpc": "2.0",
-                        "error": {
-                            "code": -32001,
-                            "message": f"Resource error: {e}"
-                        },
-                        "id": request_id
-                    }, False
-                logger.debug("Read resource completed")
-            elif method in ["list_prompts", "prompts/list"]:
-                if not self.prompt_handlers:
-                    logger.error("Prompts not enabled - prompt_handlers not initialized")
-                    return {
-                        "jsonrpc": "2.0",
-                        "error": {
-                            "code": -32601,
-                            "message": "Prompts not enabled"
-                        },
-                        "id": request_id
-                    }, False
-                logger.debug("Listing prompts")
-                result = await self.prompt_handlers.handle_list_prompts(params)
-                logger.debug("List prompts completed")
-            elif method in ["get_prompt", "prompts/get"]:
-                if not self.prompt_handlers:
-                    logger.error("Prompts not enabled - prompt_handlers not initialized")
-                    return {
-                        "jsonrpc": "2.0",
-                        "error": {
-                            "code": -32601,
-                            "message": "Prompts not enabled"
-                        },
-                        "id": request_id
-                    }, False
-                logger.debug("Getting prompt")
-                try:
+                    logger.debug("Read resource completed")
+                elif method in ["list_prompts", "prompts/list"]:
+                    if not self.prompt_handlers:
+                        logger.error("Prompts not enabled - prompt_handlers not initialized")
+                        return {
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32601,
+                                "message": "Prompts not enabled"
+                            },
+                            "id": request_id
+                        }, False
+                    logger.debug("Listing prompts")
+                    result = await self.prompt_handlers.handle_list_prompts(params)
+                    logger.debug("List prompts completed")
+                elif method in ["get_prompt", "prompts/get"]:
+                    if not self.prompt_handlers:
+                        logger.error("Prompts not enabled - prompt_handlers not initialized")
+                        return {
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32601,
+                                "message": "Prompts not enabled"
+                            },
+                            "id": request_id
+                        }, False
+                    logger.debug("Getting prompt")
                     result = await self.prompt_handlers.handle_get_prompt(params)
-                except ValueError as e:
-                    # ValueError = unknown prompt name — invalid params
-                    logger.warning(f"Invalid params for prompts/get: {e}")
+                    logger.debug("Get prompt completed")
+                elif method == "shutdown":
+                    result = await self.handle_shutdown(params)
+                    duration_ms = (time.monotonic() - t_start) * 1000
+                    set_span_ok(span, duration_ms=duration_ms)
+                    response = {
+                        "jsonrpc": "2.0",
+                        "result": result,
+                        "id": request_id
+                    }
+                    return response, True
+                else:
+                    # Check if this is a notification (no id)
+                    if request_id is None:
+                        # Notifications should not receive a response per JSON-RPC 2.0 spec
+                        logger.warning(f"Unsupported method (notification, no response): {method}")
+                        return None, False
+                    
+                    # Method not supported (regular request)
+                    logger.warning(f"Unsupported method: {method}")
                     return {
                         "jsonrpc": "2.0",
                         "error": {
-                            "code": -32602,
-                            "message": f"Invalid params: {e}"
+                            "code": -32601,
+                            "message": f"Method not found: {method}"
                         },
                         "id": request_id
                     }, False
-                logger.debug("Get prompt completed")
-            elif method == "ping":
-                # MCP spec requires ping to return an empty result {}
-                result = {}
-            elif method == "logging/setLevel":
-                # MCP spec: server declares logging capability → must handle logging/setLevel
-                # params: { "level": "debug" | "info" | "warning" | "error" | "critical" }
-                level_str = (params or {}).get("level", "info").upper()
-                # Map MCP log level names to Python logging levels
-                level_map = {
-                    "DEBUG": logging.DEBUG,
-                    "INFO": logging.INFO,
-                    "WARNING": logging.WARNING,
-                    "WARN": logging.WARNING,
-                    "ERROR": logging.ERROR,
-                    "CRITICAL": logging.CRITICAL,
-                    "NOTICE": logging.INFO,   # MCP has NOTICE; map to INFO
-                    "ALERT": logging.CRITICAL,
-                    "EMERGENCY": logging.CRITICAL,
-                }
-                py_level = level_map.get(level_str, logging.INFO)
-                logging.getLogger().setLevel(py_level)
-                logger.info(f"Log level set to {level_str} via logging/setLevel")
-                result = {}
-            elif method == "shutdown":
-                result = await self.handle_shutdown(params)
-                response = {
+                
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_ok(span, duration_ms=duration_ms)
+
+                # Send the response
+                return {
                     "jsonrpc": "2.0",
                     "result": result,
                     "id": request_id
-                }
-                return response, True
-            else:
-                # Check if this is a notification (no id)
-                if request_id is None:
-                    # Notifications MUST NOT receive any response per JSON-RPC 2.0 spec
-                    # Return None (not {}) so the stdio runner suppresses output entirely
-                    logger.debug(f"Received notification (no response sent): {method}")
-                    return None, False
+                }, False
                 
-                # Method not supported (regular request)
-                logger.warning(f"Unsupported method: {method}")
+            except Exception as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_error(span, e, duration_ms=duration_ms)
+                logger.error(f"Error processing request: {e}", exc_info=True)
                 return {
                     "jsonrpc": "2.0",
                     "error": {
-                        "code": -32601,
-                        "message": f"Method not found: {method}"
+                        "code": -32603,
+                        "message": f"Internal error: {str(e)}"
                     },
                     "id": request_id
                 }, False
-            
-            # Send the response
-            return {
-                "jsonrpc": "2.0",
-                "result": result,
-                "id": request_id
-            }, False
-            
-        except Exception as e:
-            logger.error(f"Error processing request: {e}", exc_info=True)
-            return {
-                "jsonrpc": "2.0",
-                "error": {
-                    "code": -32603,
-                    "message": f"Internal error: {str(e)}"
-                },
-                "id": request_id
-            }, False
     
     async def run_streamable_http(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
         """

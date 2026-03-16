@@ -18,6 +18,15 @@ from . import metrics as metrics_module
 
 logger = get_logger(__name__)
 
+# Import token utilities for user ID extraction
+try:
+    from src.app.auth.token_utils import extract_user_id_from_token as _extract_user_id
+    TOKEN_UTILS_AVAILABLE = True
+except ImportError:
+    TOKEN_UTILS_AVAILABLE = False
+    _extract_user_id = None
+    logger.warning("Token utilities not available for user ID extraction")
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
@@ -233,15 +242,27 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         user_id = request.headers.get("X-User-ID")
         session_id = request.headers.get("X-Session-ID")
         
-        # Set request context for logging
+        # NEW: For OpenPages MCP operations, try to extract user from Authorization header
+        if not user_id and request.url.path.startswith("/mcp") and TOKEN_UTILS_AVAILABLE and _extract_user_id:
+            auth_header = request.headers.get("Authorization")
+            if auth_header:
+                extracted_user = _extract_user_id(auth_header)
+                if extracted_user:
+                    user_id = extracted_user
+                    logger.debug(f"Extracted user_id from Authorization header: {user_id}")
+        
+        # Get trace ID first
+        trace_id = get_trace_id()
+        
+        # Set request context for logging (includes trace_id)
         set_request_context(
             request_id=request_id,
             user_id=user_id,
             session_id=session_id,
+            trace_id=trace_id,
         )
         
         # Add trace attributes if tracing is enabled
-        trace_id = get_trace_id()
         if trace_id:
             add_span_attribute("http.request_id", request_id)
             add_span_attribute("http.method", request.method)

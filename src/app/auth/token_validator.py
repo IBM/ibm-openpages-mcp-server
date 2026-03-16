@@ -6,7 +6,9 @@ Decodes the JWT payload to check the `exp` claim without signature verification.
 Includes a single-token cache to avoid repeated decoding of the same token.
 """
 
+import asyncio
 import base64
+import binascii
 import json
 import logging
 import time
@@ -34,8 +36,9 @@ class PassthroughTokenValidator:
     def __init__(self):
         self._cached_token: Optional[str] = None
         self._cached_exp: Optional[float] = None
+        self._cache_lock = asyncio.Lock()
 
-    def validate(self, raw_token: str) -> None:
+    async def validate(self, raw_token: str) -> None:
         """
         Validate a passthrough token.
 
@@ -51,20 +54,21 @@ class PassthroughTokenValidator:
         token = self._strip_bearer_prefix(raw_token)
 
         # Cache hit — same token string, just re-check expiry
-        if token == self._cached_token and self._cached_exp is not None:
-            if time.time() >= self._cached_exp:
-                self._clear_cache()
+        async with self._cache_lock:
+            if token == self._cached_token and self._cached_exp is not None:
+                if time.time() >= self._cached_exp:
+                    self._clear_cache()
+                    raise TokenValidationError("Passthrough token has expired")
+                return
+
+            # Cache miss — full decode
+            exp = self._decode_exp(token)
+            if time.time() >= exp:
                 raise TokenValidationError("Passthrough token has expired")
-            return
 
-        # Cache miss — full decode
-        exp = self._decode_exp(token)
-        if time.time() >= exp:
-            raise TokenValidationError("Passthrough token has expired")
-
-        # Update cache
-        self._cached_token = token
-        self._cached_exp = exp
+            # Update cache
+            self._cached_token = token
+            self._cached_exp = exp
 
     def _strip_bearer_prefix(self, raw_token: str) -> str:
         """Strip 'Bearer ' or 'bearer ' prefix if present."""
@@ -100,7 +104,8 @@ class PassthroughTokenValidator:
 
         try:
             payload_bytes = base64.urlsafe_b64decode(payload_b64)
-        except Exception:
+        except (ValueError, binascii.Error) as e:
+            logger.debug(f"Base64 decode error: {e}")
             raise TokenValidationError("Malformed JWT: invalid base64 in payload")
 
         try:

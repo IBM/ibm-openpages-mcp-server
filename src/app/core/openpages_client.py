@@ -6,11 +6,16 @@ Provides functionality to interact with IBM OpenPages REST API
 import asyncio
 import logging
 import base64
+import time
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 import httpx  # type: ignore
 from src.app.config.settings import Settings, settings
 from src.app.observability.logger import StructuredLogger, get_logger, log_method_call
+from src.app.observability.tracing import (
+    start_async_span, set_span_ok, set_span_error, is_tracing_enabled
+)
+from src.app.observability import metrics as metrics_module
 
 # Type annotation for better error handling
 HTTPXError = httpx.HTTPError
@@ -361,39 +366,153 @@ class OpenPagesClient:
         Returns:
             httpx.Response object
         """
-        request_headers = await self._get_request_headers(auth_override)
-        client = await self._get_http_client()
+        # Extract operation name from URL for span naming
+        # e.g., "/api/v2/query" -> "query", "/api/v2/contents/123" -> "contents"
+        path_parts = url.split('/')
+        operation = "api_call"
+        for i, part in enumerate(path_parts):
+            if part == "v2" and i + 1 < len(path_parts):
+                operation = path_parts[i + 1].split('?')[0]  # Remove query params
+                break
+        
+        # Build span attributes
+        span_attrs: Dict[str, Any] = {}
+        if is_tracing_enabled():
+            span_attrs = {
+                "http.method": method,
+                "http.url": url,
+                "openpages.operation": operation,
+            }
+            # Add request body size if present
+            if "json" in kwargs:
+                import json as json_module
+                body_str = json_module.dumps(kwargs["json"])
+                span_attrs["http.request.body.size"] = len(body_str)
+        
+        t_start = time.monotonic()
+        async with start_async_span(f"openpages.api.{operation}", attributes=span_attrs) as span:
+            try:
+                request_headers = await self._get_request_headers(auth_override)
+                client = await self._get_http_client()
 
-        # Capture the token used for this attempt so we can detect if another
-        # coroutine already refreshed it while we wait on the lock.
-        token_before_request = self.headers.get('Authorization')
+                # Capture the token used for this attempt so we can detect if another
+                # coroutine already refreshed it while we wait on the lock.
+                token_before_request = self.headers.get('Authorization')
 
-        try:
-            response = await client.request(method, url, headers=request_headers, **kwargs)
-            response.raise_for_status()
-            return response
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401 and auth_override is None and self.auth_type == "bearer":
-                logger.warning(f"Received 401 for {method} {url}, attempting token refresh and retry")
-                async with self._auth_lock:
-                    # Double-check: only refresh if the token hasn't already been
-                    # refreshed by another coroutine that held the lock before us.
-                    if self.headers.get('Authorization') == token_before_request:
-                        self._clear_bearer_token()
-                        # Inline token fetch instead of calling initialize_auth() to
-                        # avoid reentrant lock (asyncio.Lock is not reentrant).
-                        self.auth_header = await self._create_bearer_auth_header(
-                            self.api_key, self.authentication_url
-                        )
-                        self.headers['Authorization'] = self.auth_header
-                        logger.info("Bearer token refreshed after 401")
-                    else:
-                        logger.debug("Token already refreshed by another coroutine, skipping re-auth")
-                retry_headers = await self._get_request_headers(auth_override)
-                response = await client.request(method, url, headers=retry_headers, **kwargs)
-                response.raise_for_status()
-                return response
-            raise
+                try:
+                    response = await client.request(method, url, headers=request_headers, **kwargs)
+                    response.raise_for_status()
+                    
+                    # Add response attributes
+                    duration_ms = (time.monotonic() - t_start) * 1000
+                    if span and is_tracing_enabled():
+                        span.set_attribute("http.status_code", response.status_code)
+                        span.set_attribute("http.response.body.size", len(response.content))
+                        # For query operations, try to extract row count
+                        if operation == "query" and response.text:
+                            try:
+                                response_json = response.json()
+                                row_count = len(response_json.get("rows", []))
+                                span.set_attribute("openpages.row_count", row_count)
+                            except Exception:
+                                pass  # Ignore JSON parsing errors
+                    
+                    set_span_ok(span, duration_ms=duration_ms)
+                    
+                    # Record metrics
+                    if metrics_module.is_metrics_enabled():
+                        metrics_module.openpages_api_calls_total.labels(
+                            method=method,
+                            endpoint=operation,
+                            status="success"
+                        ).inc()
+                        metrics_module.openpages_api_duration_seconds.labels(
+                            method=method,
+                            endpoint=operation
+                        ).observe(duration_ms / 1000.0)
+                    
+                    return response
+                    
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 401 and auth_override is None and self.auth_type == "bearer":
+                        logger.warning(f"Received 401 for {method} {url}, attempting token refresh and retry")
+                        
+                        # Add retry event to span
+                        if span and is_tracing_enabled():
+                            span.add_event("auth_retry", {
+                                "reason": "401_unauthorized",
+                                "retry_attempt": 1
+                            })
+                        
+                        async with self._auth_lock:
+                            # Double-check: only refresh if the token hasn't already been
+                            # refreshed by another coroutine that held the lock before us.
+                            if self.headers.get('Authorization') == token_before_request:
+                                self._clear_bearer_token()
+                                # Inline token fetch instead of calling initialize_auth() to
+                                # avoid reentrant lock (asyncio.Lock is not reentrant).
+                                self.auth_header = await self._create_bearer_auth_header(
+                                    self.api_key, self.authentication_url
+                                )
+                                self.headers['Authorization'] = self.auth_header
+                                logger.info("Bearer token refreshed after 401")
+                            else:
+                                logger.debug("Token already refreshed by another coroutine, skipping re-auth")
+                        
+                        retry_headers = await self._get_request_headers(auth_override)
+                        response = await client.request(method, url, headers=retry_headers, **kwargs)
+                        response.raise_for_status()
+                        
+                        # Add response attributes after retry
+                        duration_ms = (time.monotonic() - t_start) * 1000
+                        if span and is_tracing_enabled():
+                            span.set_attribute("http.status_code", response.status_code)
+                            span.set_attribute("http.response.body.size", len(response.content))
+                            span.set_attribute("http.retry_count", 1)
+                        
+                        set_span_ok(span, duration_ms=duration_ms)
+                        
+                        # Record metrics after retry
+                        if metrics_module.is_metrics_enabled():
+                            metrics_module.openpages_api_calls_total.labels(
+                                method=method,
+                                endpoint=operation,
+                                status="success"
+                            ).inc()
+                            metrics_module.openpages_api_duration_seconds.labels(
+                                method=method,
+                                endpoint=operation
+                            ).observe(duration_ms / 1000.0)
+                        
+                        return response
+                    raise
+                    
+            except Exception as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                if span and is_tracing_enabled():
+                    if isinstance(e, httpx.HTTPStatusError):
+                        span.set_attribute("http.status_code", e.response.status_code)
+                set_span_error(span, e, duration_ms=duration_ms)
+                
+                # Record error metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.openpages_api_calls_total.labels(
+                        method=method,
+                        endpoint=operation,
+                        status="error"
+                    ).inc()
+                    metrics_module.openpages_api_duration_seconds.labels(
+                        method=method,
+                        endpoint=operation
+                    ).observe(duration_ms / 1000.0)
+                    error_type = type(e).__name__
+                    metrics_module.openpages_api_errors_total.labels(
+                        method=method,
+                        endpoint=operation,
+                        error_type=error_type
+                    ).inc()
+                
+                raise
 
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def query(self, statement: str, offset: int = 0, limit: int = 100, auth_override: Optional[str] = None) -> Dict[str, Any]:

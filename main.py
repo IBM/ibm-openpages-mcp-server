@@ -24,6 +24,8 @@ setup_logging(
     json_format=(settings.LOG_FORMAT == "json"),
     log_file=settings.LOG_FILE,
     use_stderr=False,  # Remote mode uses stdout
+    log_max_bytes=settings.LOG_MAX_BYTES,
+    log_backup_count=settings.LOG_BACKUP_COUNT,
 )
 
 logger = get_logger(__name__)
@@ -233,6 +235,8 @@ if __name__ == "__main__":
             json_format=(settings.LOG_FORMAT == "json"),
             log_file=None,  # Disable file logging in local mode to avoid path issues
             use_stderr=True,  # Local mode MUST use stderr
+            log_max_bytes=settings.LOG_MAX_BYTES,
+            log_backup_count=settings.LOG_BACKUP_COUNT,
         )
         # Run local MCP server with stdio transport
         run_local_server(debug_mode=args.debug)
@@ -248,6 +252,8 @@ if __name__ == "__main__":
                 json_format=(settings.LOG_FORMAT == "json"),
                 log_file=settings.LOG_FILE,
                 use_stderr=False,  # Remote mode uses stdout
+                log_max_bytes=settings.LOG_MAX_BYTES,
+                log_backup_count=settings.LOG_BACKUP_COUNT,
             )
             logger.info("Debug mode enabled via command line flag")
         

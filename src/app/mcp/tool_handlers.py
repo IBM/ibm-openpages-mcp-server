@@ -15,9 +15,12 @@ The ToolHandlers class supports:
 """
 
 import logging
+import time
 from typing import Dict, Any
 
-from src.app.observability.logger import get_logger, log_method_call
+from src.app.observability.logger import get_logger, log_method_call, set_request_context
+from src.app.observability.tracing import start_async_span, set_span_ok, set_span_error, is_tracing_enabled
+from src.app.observability import metrics as metrics_module
 from src.app.mcp.context import extract_context_from_arguments
 from src.app.utils import build_tool_name
 from src.app.auth.service import PassthroughAuthError
@@ -60,9 +63,12 @@ class ToolHandlers:
         self.generic_dissociate_tool_name = build_tool_name("dissociate_objects", namespace)
         self.generic_upsert_tool_name = f"{namespace}_upsert_object" if namespace else "upsert_object"
     
-    async def _resolve_auth_override(self, context) -> tuple:
+    async def _resolve_auth_and_user(self, context) -> tuple:
         """
-        Resolve auth override from context variable.
+        Resolve auth override for API authentication.
+        
+        NOTE: This method is for API authentication only, NOT for logging.
+        User ID for logging is set in handle_call_tool before this is called.
 
         Raises PassthroughAuthError or TokenValidationError on passthrough failures.
 
@@ -72,58 +78,26 @@ class ToolHandlers:
         if not self.auth_service:
             return None, None
 
+        # Resolve authentication for API calls
         auth_result = await self.auth_service.resolve_for_request(
             context_token=context.op_auth_header,
             has_context_token_key=context.has_op_auth_header,
         )
+        
         return auth_result.auth_override, auth_result
-
-    def _resolve_object_type(self, object_type_input: str):
+    
+    # Keep old method name for backward compatibility
+    async def _resolve_auth_override(self, context) -> tuple:
         """
-        Resolve an object_type string (tool_prefix, type_id, or display_name) to
-        the canonical (tool_prefix, type_id) tuple used internally.
-
-        Args:
-            object_type_input: User-supplied object type identifier (case-insensitive)
+        Resolve auth override from context variable.
+        
+        DEPRECATED: Use _resolve_auth_and_user instead.
+        This method is kept for backward compatibility.
 
         Returns:
-            Tuple (tool_prefix: str, type_id: str | None) on success, or
-            Dict MCP error response if the identifier is unknown or has no tool.
+            Tuple of (auth_override_string_or_None, AuthResult_or_None)
         """
-        # Build a mapping of all valid identifiers → (tool_prefix, type_id)
-        type_mapping: dict = {}
-        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
-            tool_prefix = obj_config.get("tool_prefix")
-            config_type_id = obj_config.get("type_id")
-            display_name = obj_config.get("display_name")
-
-            if tool_prefix:
-                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
-                if config_type_id:
-                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
-                if display_name:
-                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
-
-        lookup_key = object_type_input.lower()
-        if lookup_key not in type_mapping:
-            logger.warning(f"Invalid object_type: {object_type_input}")
-            available_types = sorted(set(v[0] for v in type_mapping.values()))
-            return {
-                "content": [{"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}],
-                "isError": True
-            }
-
-        tool_prefix, type_id = type_mapping[lookup_key]
-        logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{tool_prefix}' (type_id: {type_id})")
-
-        if tool_prefix not in self.object_tools:
-            logger.warning(f"No tool available for object type: {tool_prefix}")
-            return {
-                "content": [{"type": "text", "text": f"Error: No tool available for object type: {tool_prefix}"}],
-                "isError": True
-            }
-
-        return tool_prefix, type_id
+        return await self._resolve_auth_and_user(context)
 
     async def _execute_tool(self, tool_method, **kwargs):
         """
@@ -147,7 +121,7 @@ class ToolHandlers:
             arguments: Tool arguments containing 'text' field and optional context variables
             
         Returns:
-            MCP-compliant tool result: {"content": [...], "isError": bool}
+            Dict containing the echo result
         """
         # Extract context variables from arguments
         cleaned_args, context = extract_context_from_arguments(arguments)
@@ -161,10 +135,9 @@ class ToolHandlers:
             response_text += f"\n\nContext: {context.to_dict()}"
         
         return {
-            "content": [
+            "result": [
                 {"type": "text", "text": response_text}
-            ],
-            "isError": False
+            ]
         }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
@@ -194,94 +167,152 @@ class ToolHandlers:
         if not object_type_input:
             logger.error("object_type not provided in delete_object request")
             return {
-                "content": [{"type": "text", "text": "Error: object_type is required"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: object_type is required"}
+                ]
             }
         
         # Validate that at least one identifier is provided
         if not resource_id and not path and not name:
             return {
-                "content": [{"type": "text", "text": "Error: At least one of resource_id, path, or name is required"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: At least one of resource_id, path, or name is required"}
+                ]
             }
         
-        # Resolve object_type to (tool_prefix, type_id)
-        resolved = self._resolve_object_type(object_type_input)
-        if isinstance(resolved, dict):
-            return resolved  # error response
-        object_type, type_id = resolved
-
+        # Normalize object_type: accept tool_prefix, type_id, or display_name
+        # Map to the tool_prefix that we use internally
+        object_type = None
+        type_id = None
+        
+        # Build a mapping of all valid identifiers to tool_prefix
+        type_mapping = {}
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            config_type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name")
+            
+            if tool_prefix:
+                # Map tool_prefix to itself (case-insensitive)
+                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
+                
+                # Map type_id to tool_prefix (case-insensitive)
+                if config_type_id:
+                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
+                
+                # Map display_name to tool_prefix (case-insensitive)
+                if display_name:
+                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
+        
+        # Look up the normalized object_type
+        lookup_key = object_type_input.lower()
+        if lookup_key in type_mapping:
+            object_type, type_id = type_mapping[lookup_key]
+            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
+        else:
+            logger.warning(f"Invalid object_type: {object_type_input}")
+            available_types = list(set([v[0] for v in type_mapping.values()]))
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
+                ]
+            }
+        
+        # Check if we have a tool for this object type
+        if object_type not in self.object_tools:
+            logger.warning(f"No tool available for object type: {object_type}")
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
+                ]
+            }
+        
         # Get the appropriate tool
         tool = self.object_tools[object_type]
         logger.info(f"Executing generic delete operation for {object_type}")
-        
-        try:
-            # If name is provided but not resource_id or path, we need to look up the object first
-            if name and not resource_id and not path:
-                logger.info(f"Looking up {object_type} by name: {name}")
-                
-                # Query to find the object by name
-                from src.app.core.openpages_client import OpenPagesClient
-                
-                # Get the type_id for the query
-                type_id = None
-                for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
-                    if obj_config.get("tool_prefix") == object_type:
-                        type_id = obj_config.get("type_id")
-                        break
-                
-                if not type_id:
-                    return {
-                        "content": [{"type": "text", "text": f"Error: Could not find type_id for object type: {object_type}"}],
-                        "isError": True
-                    }
-                
-                # Query for the object
-                query = f"SELECT [Resource ID], [Name] FROM [{type_id}] WHERE [Name] = '{name}' LIMIT 2"
-                client = tool.client
-                result_query = await client.query(query, auth_override=auth_override)
-                existing_objects = result_query.get('rows', [])
-                
-                if len(existing_objects) == 0:
-                    return {
-                        "content": [{"type": "text", "text": f"Error: No {object_type} found with name '{name}'"}],
-                        "isError": True
-                    }
-                elif len(existing_objects) > 1:
-                    obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}" for obj in existing_objects])
-                    return {
-                        "content": [{"type": "text", "text": f"Error: Multiple {object_type}s found with name '{name}'. Please specify 'resource_id' or 'path' instead:\n{obj_list}"}],
-                        "isError": True
-                    }
-                else:
-                    # Found exactly one object, use its resource_id
-                    resource_id = existing_objects[0]['fields'][0]['value']
-                    logger.info(f"Found {object_type} with name '{name}', resource_id: {resource_id}")
-                    # Update cleaned_args with the resolved resource_id
-                    cleaned_args["resource_id"] = resource_id
-            
-            # Now perform the delete operation
-            result = await self._execute_tool(
-                tool.delete_object,
-                arguments=cleaned_args, auth_override=auth_override
-            )
-            
-            # Format the response
-            logger.debug(f"Generic delete operation completed successfully for {object_type}")
-            return {
-                "content": [{"type": "text", "text": item.text} for item in result],
-                "isError": False
+
+        span_attrs: Dict[str, Any] = {}
+        if is_tracing_enabled():
+            span_attrs = {
+                "tool.operation": "delete",
+                "tool.object_type": object_type,
             }
-            
-        except Exception as e:
-            logger.error(f"Error handling delete_object for {object_type}: {e}", exc_info=True, extra_fields={
-                "object_type": object_type,
-                "error_type": type(e).__name__
-            })
-            return {
-                "content": [{"type": "text", "text": f"Error deleting {object_type}: {str(e)}"}],
-                "isError": True
-            }
+        t_start = time.monotonic()
+        async with start_async_span("mcp.tool.delete_object", attributes=span_attrs) as span:
+            try:
+                # If name is provided but not resource_id or path, we need to look up the object first
+                if name and not resource_id and not path:
+                    logger.info(f"Looking up {object_type} by name: {name}")
+                    
+                    # Query to find the object by name
+                    from src.app.core.openpages_client import OpenPagesClient
+                    
+                    # Get the type_id for the query
+                    type_id = None
+                    for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+                        if obj_config.get("tool_prefix") == object_type:
+                            type_id = obj_config.get("type_id")
+                            break
+                    
+                    if not type_id:
+                        return {
+                            "result": [
+                                {"type": "text", "text": f"Error: Could not find type_id for object type: {object_type}"}
+                            ]
+                        }
+                    
+                    # Query for the object
+                    query = f"SELECT [Resource ID], [Name] FROM [{type_id}] WHERE [Name] = '{name}' LIMIT 2"
+                    client = tool.client
+                    result_query = await client.query(query, auth_override=auth_override)
+                    existing_objects = result_query.get('rows', [])
+                    
+                    if len(existing_objects) == 0:
+                        return {
+                            "result": [
+                                {"type": "text", "text": f"Error: No {object_type} found with name '{name}'"}
+                            ]
+                        }
+                    elif len(existing_objects) > 1:
+                        obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}" for obj in existing_objects])
+                        return {
+                            "result": [
+                                {"type": "text", "text": f"Error: Multiple {object_type}s found with name '{name}'. Please specify 'resource_id' or 'path' instead:\n{obj_list}"}
+                            ]
+                        }
+                    else:
+                        # Found exactly one object, use its resource_id
+                        resource_id = existing_objects[0]['fields'][0]['value']
+                        logger.info(f"Found {object_type} with name '{name}', resource_id: {resource_id}")
+                        # Update cleaned_args with the resolved resource_id
+                        cleaned_args["resource_id"] = resource_id
+                
+                # Now perform the delete operation
+                result = await self._execute_tool(
+                    tool.delete_object,
+                    arguments=cleaned_args, auth_override=auth_override
+                )
+                
+                # Format the response
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_ok(span, duration_ms=duration_ms)
+                logger.debug(f"Generic delete operation completed successfully for {object_type}")
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+                
+            except Exception as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_error(span, e, duration_ms=duration_ms)
+                logger.error(f"Error handling delete_object for {object_type}: {e}", exc_info=True, extra_fields={
+                    "object_type": object_type,
+                    "error_type": type(e).__name__
+                })
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Error deleting {object_type}: {str(e)}"}
+                    ]
+                }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_generic_upsert_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -307,237 +338,297 @@ class ToolHandlers:
         if not object_type_input:
             logger.error("object_type not provided in upsert_object request")
             return {
-                "content": [{"type": "text", "text": "Error: object_type is required"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: object_type is required"}
+                ]
             }
         
         if not name:
             logger.error("name not provided in upsert_object request")
             return {
-                "content": [{"type": "text", "text": "Error: name is required"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: name is required"}
+                ]
             }
         
-        # Resolve object_type to (tool_prefix, type_id)
-        resolved = self._resolve_object_type(object_type_input)
-        if isinstance(resolved, dict):
-            return resolved  # error response
-        object_type, type_id = resolved
-
+        # Normalize object_type: accept tool_prefix, type_id, or display_name
+        # Map to the tool_prefix that we use internally
+        object_type = None
+        type_id = None
+        
+        # Build a mapping of all valid identifiers to tool_prefix
+        type_mapping = {}
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            config_type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name")
+            
+            if tool_prefix:
+                # Map tool_prefix to itself (case-insensitive)
+                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
+                
+                # Map type_id to tool_prefix (case-insensitive)
+                if config_type_id:
+                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
+                
+                # Map display_name to tool_prefix (case-insensitive)
+                if display_name:
+                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
+        
+        # Look up the normalized object_type
+        lookup_key = object_type_input.lower()
+        if lookup_key in type_mapping:
+            object_type, type_id = type_mapping[lookup_key]
+            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
+        else:
+            logger.warning(f"Invalid object_type: {object_type_input}")
+            available_types = list(set([v[0] for v in type_mapping.values()]))
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
+                ]
+            }
+        
+        # Check if we have a tool for this object type
+        if object_type not in self.object_tools:
+            logger.warning(f"No tool available for object type: {object_type}")
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
+                ]
+            }
+        
         # Get the appropriate tool
         tool = self.object_tools[object_type]
         logger.info(f"Executing generic upsert operation for {object_type}")
-        
-        try:
-            # Merge fields from the 'fields' object into the main arguments
-            # This allows the existing upsert_object method to process them
-            merged_args = cleaned_args.copy()
+
+        span_attrs: Dict[str, Any] = {}
+        if is_tracing_enabled():
+            span_attrs = {
+                "tool.operation": "upsert",
+                "tool.object_type": object_type,
+                "tool.object_name": name or "",
+            }
+        t_start = time.monotonic()
+        async with start_async_span("mcp.tool.upsert_object", attributes=span_attrs) as span:
+            try:
+                # Merge fields from the 'fields' object into the main arguments
+                # This allows the existing upsert_object method to process them
+                merged_args = cleaned_args.copy()
             
-            # Remove the 'fields' key as we're flattening it
-            if 'fields' in merged_args:
-                del merged_args['fields']
-            
-            # Add all fields from the fields object to the main arguments
-            if fields and isinstance(fields, dict):
-                for field_name, field_value in fields.items():
-                    # Only add if not already present (main args take precedence)
-                    if field_name not in merged_args:
-                        merged_args[field_name] = field_value
-                        logger.debug(f"Added field from 'fields' object: {field_name} = {field_value}")
-            
-            # Handle copy_from parameter
-            copy_from = cleaned_args.get('copy_from')
-            if copy_from:
-                logger.info(f"Copying properties from source object: {copy_from}")
+                # Remove the 'fields' key as we're flattening it
+                if 'fields' in merged_args:
+                    del merged_args['fields']
                 
-                try:
-                    # Get the schema to identify read-only fields
-                    type_info = await tool.get_type_definition(type_id)
-                    field_definitions = type_info.get('field_definitions', [])
+                # Add all fields from the fields object to the main arguments
+                if fields and isinstance(fields, dict):
+                    for field_name, field_value in fields.items():
+                        # Only add if not already present (main args take precedence)
+                        if field_name not in merged_args:
+                            merged_args[field_name] = field_value
+                            logger.debug(f"Added field from 'fields' object: {field_name} = {field_value}")
+                
+                # Handle copy_from parameter
+                copy_from = cleaned_args.get('copy_from')
+                if copy_from:
+                    logger.info(f"Copying properties from source object: {copy_from}")
                     
-                    # Build a set of read-only field names for filtering later
-                    read_only_fields = set()
-                    for field_def in field_definitions:
-                        if field_def.get('read_only', False):
-                            read_only_fields.add(field_def.get('name'))
-                    
-                    logger.debug(f"Read-only fields to exclude: {read_only_fields}")
-                    
-                    # Determine how to look up the source object
-                    source_object_data = None
-                    
-                    # METHOD 1: Try as Resource ID (numeric string)
-                    if copy_from.isdigit():
-                        logger.debug(f"Attempting to copy from Resource ID: {copy_from}")
-                        source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Resource ID] = '{copy_from}' LIMIT 1"
-                        source_result = await tool.client.query(source_query)
-                        source_rows = source_result.get('rows', [])
-                        if source_rows:
-                            source_object_data = source_rows[0]
-                            logger.info(f"Found source object by Resource ID: {copy_from}")
-                    
-                    # METHOD 2: Try as full path (contains '/')
-                    elif '/' in copy_from:
-                        logger.debug(f"Attempting to copy from path: {copy_from}")
-                        try:
-                            # Use the path_prefix from object config to build full path
-                            path_prefix = tool.path_prefix  # e.g., "Issue" for SOXIssue
-                            full_path = f"{path_prefix}/{copy_from}" if not copy_from.startswith('/') else copy_from
+                    try:
+                        # Get the schema to identify read-only fields
+                        type_info = await tool.get_type_definition(type_id)
+                        field_definitions = type_info.get('field_definitions', [])
+                        
+                        # Build a set of read-only field names for filtering later
+                        read_only_fields = set()
+                        for field_def in field_definitions:
+                            if field_def.get('read_only', False):
+                                read_only_fields.add(field_def.get('name'))
+                        
+                        logger.debug(f"Read-only fields to exclude: {read_only_fields}")
+                        
+                        # Determine how to look up the source object
+                        source_object_data = None
+                        
+                        # METHOD 1: Try as Resource ID (numeric string)
+                        if copy_from.isdigit():
+                            logger.debug(f"Attempting to copy from Resource ID: {copy_from}")
+                            source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Resource ID] = '{copy_from}' LIMIT 1"
+                            source_result = await tool.client.query(source_query)
+                            source_rows = source_result.get('rows', [])
+                            if source_rows:
+                                source_object_data = source_rows[0]
+                                logger.info(f"Found source object by Resource ID: {copy_from}")
+                        
+                        # METHOD 2: Try as full path (contains '/')
+                        elif '/' in copy_from:
+                            logger.debug(f"Attempting to copy from path: {copy_from}")
+                            try:
+                                # Use the path_prefix from object config to build full path
+                                path_prefix = tool.path_prefix  # e.g., "Issue" for SOXIssue
+                                full_path = f"{path_prefix}/{copy_from}" if not copy_from.startswith('/') else copy_from
+                                
+                                # URL encode the path for API call
+                                import urllib.parse
+                                encoded_path = urllib.parse.quote(full_path, safe='')
+                                
+                                # Get object by path using the client's get_content method
+                                obj_data = await tool.client.get_content(encoded_path)
+                                
+                                if obj_data:
+                                    # Now query to get all fields in the same format as query results
+                                    resource_id = obj_data.get('id')
+                                    if resource_id:
+                                        source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Resource ID] = '{resource_id}' LIMIT 1"
+                                        source_result = await tool.client.query(source_query)
+                                        source_rows = source_result.get('rows', [])
+                                        if source_rows:
+                                            source_object_data = source_rows[0]
+                                            logger.info(f"Found source object by path: {copy_from} (ID: {resource_id})")
+                            except Exception as path_error:
+                                logger.debug(f"Path lookup failed: {path_error}, will try name lookup")
+                        
+                        # METHOD 3: Try as Name (fallback)
+                        if not source_object_data:
+                            logger.debug(f"Attempting to copy from Name: {copy_from}")
+                            source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Name] = '{copy_from}' LIMIT 2"
+                            source_result = await tool.client.query(source_query)
+                            source_rows = source_result.get('rows', [])
                             
-                            # URL encode the path for API call
-                            import urllib.parse
-                            encoded_path = urllib.parse.quote(full_path, safe='')
-                            
-                            # Get object by path using the client's get_content method
-                            obj_data = await tool.client.get_content(encoded_path)
-                            
-                            if obj_data:
-                                # Now query to get all fields in the same format as query results
-                                resource_id = obj_data.get('id')
-                                if resource_id:
-                                    source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Resource ID] = '{resource_id}' LIMIT 1"
-                                    source_result = await tool.client.query(source_query)
-                                    source_rows = source_result.get('rows', [])
-                                    if source_rows:
-                                        source_object_data = source_rows[0]
-                                        logger.info(f"Found source object by path: {copy_from} (ID: {resource_id})")
-                        except Exception as path_error:
-                            logger.debug(f"Path lookup failed: {path_error}, will try name lookup")
-                    
-                    # METHOD 3: Try as Name (fallback)
-                    if not source_object_data:
-                        logger.debug(f"Attempting to copy from Name: {copy_from}")
-                        source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Name] = '{copy_from}' LIMIT 2"
-                        source_result = await tool.client.query(source_query)
-                        source_rows = source_result.get('rows', [])
-                        
-                        if len(source_rows) == 0:
-                            logger.warning(f"Source object not found for copy_from: {copy_from}")
-                            return {
-                                "content": [{"type": "text", "text": f"Error: Source object '{copy_from}' not found. Tried Resource ID, path, and name lookup."}],
-                                "isError": True
-                            }
-                        elif len(source_rows) > 1:
-                            obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}"
-                                                 for obj in source_rows])
-                            return {
-                                "content": [{"type": "text", "text": f"Error: Multiple objects found with name '{copy_from}'. Please use Resource ID or full path instead:\n{obj_list}"}],
-                                "isError": True
-                            }
-                        else:
-                            source_object_data = source_rows[0]
-                            logger.info(f"Found source object by Name: {copy_from}")
-                    
-                    # If still not found, return error
-                    if not source_object_data:
-                        return {
-                            "content": [{"type": "text", "text": f"Error: Source object '{copy_from}' not found for copying"}],
-                            "isError": True
-                        }
-                    
-                    # Extract all field values from source object
-                    source_fields = {}
-                    location_value = None
-                    
-                    # System fields that should never be copied (always skip these)
-                    system_fields = {'Resource ID', 'Name', 'Created By', 'Creation Date',
-                                    'Last Modified By', 'Last Modification Date', 'Orphan', 'Location'}
-                    
-                    for field in source_object_data['fields']:
-                        field_name = field['name']
-                        field_value = field.get('value')
-                        
-                        # Save location for parent extraction
-                        if field_name == 'Location':
-                            location_value = field_value
-                            continue
-                        
-                        # Skip system fields
-                        if field_name in system_fields:
-                            continue
-                        
-                        # Skip read-only fields from schema
-                        if field_name in read_only_fields:
-                            logger.debug(f"Skipping read-only field: {field_name}")
-                            continue
-                        
-                        # Skip null values
-                        if field_value is None:
-                            continue
-                        
-                        # Handle Description and Title as top-level parameters
-                        if field_name == 'Description':
-                            source_fields['description'] = field_value  # lowercase for top-level
-                            logger.debug(f"Will copy Description to top-level: {field_value}")
-                        elif field_name == 'Title':
-                            source_fields['title'] = field_value  # lowercase for top-level
-                            logger.debug(f"Will copy Title to top-level: {field_value}")
-                        else:
-                            # All other editable fields
-                            source_fields[field_name] = field_value
-                            logger.debug(f"Will copy field: {field_name} = {field_value}")
-                    
-                    # Extract parent from Location field and resolve to Resource ID
-                    # Note: Parent resolution may fail for folder paths, in which case we create at root
-                    if location_value and '/' in location_value:
-                        # Parent is everything except the last segment
-                        parts = location_value.split('/')
-                        if len(parts) > 1:
-                            parent_path = '/'.join(parts[:-1])
-                            # If parent_path is empty, object is at root - don't set primaryParentId
-                            if parent_path and parent_path != '/':
-                                # Resolve parent path to Resource ID
-                                try:
-                                    parent_id = await tool.resolve_path_to_id(parent_path)
-                                    # Only set if we got a valid numeric ID back (not the path itself)
-                                    if parent_id and parent_id.isdigit() and parent_id != parent_path:
-                                        source_fields['primaryParentId'] = parent_id
-                                        logger.info(f"Resolved parent path '{parent_path}' to Resource ID: {parent_id}")
-                                    else:
-                                        logger.warning(f"Could not resolve parent path '{parent_path}' to numeric Resource ID (got: {parent_id}), will create at root level")
-                                except Exception as e:
-                                    logger.warning(f"Error resolving parent path '{parent_path}': {e}. Will create at root level")
+                            if len(source_rows) == 0:
+                                logger.warning(f"Source object not found for copy_from: {copy_from}")
+                                return {
+                                    "result": [
+                                        {"type": "text", "text": f"Error: Source object '{copy_from}' not found. Tried Resource ID, path, and name lookup."}
+                                    ]
+                                }
+                            elif len(source_rows) > 1:
+                                obj_list = "\n".join([f"- ID: {obj['fields'][0]['value']}, Name: {obj['fields'][1]['value']}"
+                                                     for obj in source_rows])
+                                return {
+                                    "result": [
+                                        {"type": "text", "text": f"Error: Multiple objects found with name '{copy_from}'. Please use Resource ID or full path instead:\n{obj_list}"}
+                                    ]
+                                }
                             else:
-                                logger.info(f"Source object is at root level, primaryParentId not set")
-                    
-                    # CRITICAL: Merge source fields with user-provided fields
-                    # User-provided fields take precedence (override source values)
-                    for key, value in source_fields.items():
-                        # Only add if NOT already provided by user
-                        if key not in merged_args and key not in fields:
-                            merged_args[key] = value
-                            logger.debug(f"Copied field from source: {key} = {value}")
-                        else:
-                            logger.debug(f"User override for field: {key} (source value ignored)")
-                    
-                    logger.info(f"Successfully copied {len(source_fields)} fields from source object")
-                    
-                except Exception as e:
-                    logger.error(f"Error copying from source object: {e}", exc_info=True)
-                    return {
-                        "content": [{"type": "text", "text": f"Error copying from source object '{copy_from}': {str(e)}"}],
-                        "isError": True
-                    }
-            
-            # Now perform the upsert operation with merged arguments
-            result = await tool.upsert_object(merged_args)
-            
-            # Format the response
-            logger.debug(f"Generic upsert operation completed successfully for {object_type}")
-            return {
-                "content": [{"type": "text", "text": item.text} for item in result],
-                "isError": False
-            }
-            
-        except Exception as e:
-            logger.error(f"Error handling upsert_object for {object_type}: {e}", exc_info=True, extra_fields={
-                "object_type": object_type,
-                "error_type": type(e).__name__
-            })
-            return {
-                "content": [{"type": "text", "text": f"Error upserting {object_type}: {str(e)}"}],
-                "isError": True
-            }
+                                source_object_data = source_rows[0]
+                                logger.info(f"Found source object by Name: {copy_from}")
+                        
+                        # If still not found, return error
+                        if not source_object_data:
+                            return {
+                                "result": [
+                                    {"type": "text", "text": f"Error: Source object '{copy_from}' not found for copying"}
+                                ]
+                            }
+                        
+                        # Extract all field values from source object
+                        source_fields = {}
+                        location_value = None
+                        
+                        # System fields that should never be copied (always skip these)
+                        system_fields = {'Resource ID', 'Name', 'Created By', 'Creation Date',
+                                        'Last Modified By', 'Last Modification Date', 'Orphan', 'Location'}
+                        
+                        for field in source_object_data['fields']:
+                            field_name = field['name']
+                            field_value = field.get('value')
+                            
+                            # Save location for parent extraction
+                            if field_name == 'Location':
+                                location_value = field_value
+                                continue
+                            
+                            # Skip system fields
+                            if field_name in system_fields:
+                                continue
+                            
+                            # Skip read-only fields from schema
+                            if field_name in read_only_fields:
+                                logger.debug(f"Skipping read-only field: {field_name}")
+                                continue
+                            
+                            # Skip null values
+                            if field_value is None:
+                                continue
+                            
+                            # Handle Description and Title as top-level parameters
+                            if field_name == 'Description':
+                                source_fields['description'] = field_value  # lowercase for top-level
+                                logger.debug(f"Will copy Description to top-level: {field_value}")
+                            elif field_name == 'Title':
+                                source_fields['title'] = field_value  # lowercase for top-level
+                                logger.debug(f"Will copy Title to top-level: {field_value}")
+                            else:
+                                # All other editable fields
+                                source_fields[field_name] = field_value
+                                logger.debug(f"Will copy field: {field_name} = {field_value}")
+                        
+                        # Extract parent from Location field and resolve to Resource ID
+                        # Note: Parent resolution may fail for folder paths, in which case we create at root
+                        if location_value and '/' in location_value:
+                            # Parent is everything except the last segment
+                            parts = location_value.split('/')
+                            if len(parts) > 1:
+                                parent_path = '/'.join(parts[:-1])
+                                # If parent_path is empty, object is at root - don't set primaryParentId
+                                if parent_path and parent_path != '/':
+                                    # Resolve parent path to Resource ID
+                                    try:
+                                        parent_id = await tool.resolve_path_to_id(parent_path)
+                                        # Only set if we got a valid numeric ID back (not the path itself)
+                                        if parent_id and parent_id.isdigit() and parent_id != parent_path:
+                                            source_fields['primaryParentId'] = parent_id
+                                            logger.info(f"Resolved parent path '{parent_path}' to Resource ID: {parent_id}")
+                                        else:
+                                            logger.warning(f"Could not resolve parent path '{parent_path}' to numeric Resource ID (got: {parent_id}), will create at root level")
+                                    except Exception as e:
+                                        logger.warning(f"Error resolving parent path '{parent_path}': {e}. Will create at root level")
+                                else:
+                                    logger.info(f"Source object is at root level, primaryParentId not set")
+                        
+                        # CRITICAL: Merge source fields with user-provided fields
+                        # User-provided fields take precedence (override source values)
+                        for key, value in source_fields.items():
+                            # Only add if NOT already provided by user
+                            if key not in merged_args and key not in fields:
+                                merged_args[key] = value
+                                logger.debug(f"Copied field from source: {key} = {value}")
+                            else:
+                                logger.debug(f"User override for field: {key} (source value ignored)")
+                        
+                        logger.info(f"Successfully copied {len(source_fields)} fields from source object")
+                        
+                    except Exception as e:
+                        logger.error(f"Error copying from source object: {e}", exc_info=True)
+                        return {
+                            "result": [
+                                {"type": "text", "text": f"Error copying from source object '{copy_from}': {str(e)}"}
+                            ]
+                        }
+                
+                # Now perform the upsert operation with merged arguments
+                result = await tool.upsert_object(merged_args)
+                
+                # Format the response
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_ok(span, duration_ms=duration_ms)
+                logger.debug(f"Generic upsert operation completed successfully for {object_type}")
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+                
+            except Exception as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_error(span, e, duration_ms=duration_ms)
+                logger.error(f"Error handling upsert_object for {object_type}: {e}", exc_info=True, extra_fields={
+                    "object_type": object_type,
+                    "error_type": type(e).__name__
+                })
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Error upserting {object_type}: {str(e)}"}
+                    ]
+                }
 
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_generic_associate_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -560,40 +651,87 @@ class ToolHandlers:
         if not object_type_input:
             logger.error("object_type not provided in associate_objects request")
             return {
-                "content": [{"type": "text", "text": "Error: object_type is required"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: object_type is required"}
+                ]
             }
         
-        # Resolve object_type to (tool_prefix, type_id)
-        resolved = self._resolve_object_type(object_type_input)
-        if isinstance(resolved, dict):
-            return resolved  # error response
-        object_type, type_id = resolved
-
+        # Normalize object_type: accept tool_prefix, type_id, or display_name
+        object_type = None
+        
+        # Build a mapping of all valid identifiers to tool_prefix
+        type_mapping = {}
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            config_type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name")
+            
+            if tool_prefix:
+                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
+                if config_type_id:
+                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
+                if display_name:
+                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
+        
+        # Look up the normalized object_type
+        lookup_key = object_type_input.lower()
+        if lookup_key in type_mapping:
+            object_type, type_id = type_mapping[lookup_key]
+            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
+        else:
+            logger.warning(f"Invalid object_type: {object_type_input}")
+            available_types = list(set([v[0] for v in type_mapping.values()]))
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
+                ]
+            }
+        
+        # Check if we have a tool for this object type
+        if object_type not in self.object_tools:
+            logger.warning(f"No tool available for object type: {object_type}")
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
+                ]
+            }
+        
         # Get the appropriate tool
         tool = self.object_tools[object_type]
         logger.info(f"Executing generic associate operation for {object_type}")
-        
-        try:
-            # Perform the associate operation
-            result = await tool.associate_objects(cleaned_args)
-            
-            # Format the response
-            logger.debug(f"Generic associate operation completed successfully for {object_type}")
-            return {
-                "content": [{"type": "text", "text": item.text} for item in result],
-                "isError": False
+
+        span_attrs: Dict[str, Any] = {}
+        if is_tracing_enabled():
+            span_attrs = {
+                "tool.operation": "associate",
+                "tool.object_type": object_type,
             }
-            
-        except Exception as e:
-            logger.error(f"Error handling associate_objects for {object_type}: {e}", exc_info=True, extra_fields={
-                "object_type": object_type,
-                "error_type": type(e).__name__
-            })
-            return {
-                "content": [{"type": "text", "text": f"Error associating {object_type}: {str(e)}"}],
-                "isError": True
-            }
+        t_start = time.monotonic()
+        async with start_async_span("mcp.tool.associate_objects", attributes=span_attrs) as span:
+            try:
+                # Perform the associate operation
+                result = await tool.associate_objects(cleaned_args)
+                
+                # Format the response
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_ok(span, duration_ms=duration_ms)
+                logger.debug(f"Generic associate operation completed successfully for {object_type}")
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+                
+            except Exception as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_error(span, e, duration_ms=duration_ms)
+                logger.error(f"Error handling associate_objects for {object_type}: {e}", exc_info=True, extra_fields={
+                    "object_type": object_type,
+                    "error_type": type(e).__name__
+                })
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Error associating {object_type}: {str(e)}"}
+                    ]
+                }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_generic_dissociate_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -616,40 +754,87 @@ class ToolHandlers:
         if not object_type_input:
             logger.error("object_type not provided in dissociate_objects request")
             return {
-                "content": [{"type": "text", "text": "Error: object_type is required"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: object_type is required"}
+                ]
             }
         
-        # Resolve object_type to (tool_prefix, type_id)
-        resolved = self._resolve_object_type(object_type_input)
-        if isinstance(resolved, dict):
-            return resolved  # error response
-        object_type, type_id = resolved
-
+        # Normalize object_type: accept tool_prefix, type_id, or display_name
+        object_type = None
+        
+        # Build a mapping of all valid identifiers to tool_prefix
+        type_mapping = {}
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            tool_prefix = obj_config.get("tool_prefix")
+            config_type_id = obj_config.get("type_id")
+            display_name = obj_config.get("display_name")
+            
+            if tool_prefix:
+                type_mapping[tool_prefix.lower()] = (tool_prefix, config_type_id)
+                if config_type_id:
+                    type_mapping[config_type_id.lower()] = (tool_prefix, config_type_id)
+                if display_name:
+                    type_mapping[display_name.lower()] = (tool_prefix, config_type_id)
+        
+        # Look up the normalized object_type
+        lookup_key = object_type_input.lower()
+        if lookup_key in type_mapping:
+            object_type, type_id = type_mapping[lookup_key]
+            logger.debug(f"Mapped '{object_type_input}' to tool_prefix '{object_type}' (type_id: {type_id})")
+        else:
+            logger.warning(f"Invalid object_type: {object_type_input}")
+            available_types = list(set([v[0] for v in type_mapping.values()]))
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: Invalid object_type '{object_type_input}'. Available types: {', '.join(available_types)}"}
+                ]
+            }
+        
+        # Check if we have a tool for this object type
+        if object_type not in self.object_tools:
+            logger.warning(f"No tool available for object type: {object_type}")
+            return {
+                "result": [
+                    {"type": "text", "text": f"Error: No tool available for object type: {object_type}"}
+                ]
+            }
+        
         # Get the appropriate tool
         tool = self.object_tools[object_type]
         logger.info(f"Executing generic dissociate operation for {object_type}")
-        
-        try:
-            # Perform the dissociate operation
-            result = await tool.dissociate_objects(cleaned_args)
-            
-            # Format the response
-            logger.debug(f"Generic dissociate operation completed successfully for {object_type}")
-            return {
-                "content": [{"type": "text", "text": item.text} for item in result],
-                "isError": False
+
+        span_attrs: Dict[str, Any] = {}
+        if is_tracing_enabled():
+            span_attrs = {
+                "tool.operation": "dissociate",
+                "tool.object_type": object_type,
             }
-            
-        except Exception as e:
-            logger.error(f"Error handling dissociate_objects for {object_type}: {e}", exc_info=True, extra_fields={
-                "object_type": object_type,
-                "error_type": type(e).__name__
-            })
-            return {
-                "content": [{"type": "text", "text": f"Error dissociating {object_type}: {str(e)}"}],
-                "isError": True
-            }
+        t_start = time.monotonic()
+        async with start_async_span("mcp.tool.dissociate_objects", attributes=span_attrs) as span:
+            try:
+                # Perform the dissociate operation
+                result = await tool.dissociate_objects(cleaned_args)
+                
+                # Format the response
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_ok(span, duration_ms=duration_ms)
+                logger.debug(f"Generic dissociate operation completed successfully for {object_type}")
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+                
+            except Exception as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_error(span, e, duration_ms=duration_ms)
+                logger.error(f"Error handling dissociate_objects for {object_type}: {e}", exc_info=True, extra_fields={
+                    "object_type": object_type,
+                    "error_type": type(e).__name__
+                })
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Error dissociating {object_type}: {str(e)}"}
+                    ]
+                }
     
     async def handle_openpages_query_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -671,26 +856,36 @@ class ToolHandlers:
         if not self.query_tool:
             logger.error("OpenPages query tool not initialized")
             return {
-                "content": [{"type": "text", "text": "Error: OpenPages query tool not initialized"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: OpenPages query tool not initialized"}
+                ]
             }
         
         logger.info("Executing OpenPages query tool")
-        try:
-            result = await self._execute_tool(
-                self.query_tool.execute_query,
-                arguments=cleaned_args, auth_override=auth_override
-            )
-            return {
-                "content": [{"type": "text", "text": item.text} for item in result],
-                "isError": False
-            }
-        except Exception as e:
-            logger.error(f"Error executing OpenPages query: {e}", exc_info=True)
-            return {
-                "content": [{"type": "text", "text": f"Error executing OpenPages query: {str(e)}"}],
-                "isError": True
-            }
+        span_attrs: Dict[str, Any] = {}
+        if is_tracing_enabled():
+            span_attrs = {"tool.operation": "query", "tool.name": "execute_openpages_query"}
+        t_start = time.monotonic()
+        async with start_async_span("mcp.tool.execute_openpages_query", attributes=span_attrs) as span:
+            try:
+                result = await self._execute_tool(
+                    self.query_tool.execute_query,
+                    arguments=cleaned_args, auth_override=auth_override
+                )
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_ok(span, duration_ms=duration_ms)
+                return {
+                    "result": [{"type": "text", "text": item.text} for item in result]
+                }
+            except Exception as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_error(span, e, duration_ms=duration_ms)
+                logger.error(f"Error executing OpenPages query: {e}", exc_info=True)
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Error executing OpenPages query: {str(e)}"}
+                    ]
+                }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_generic_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -720,8 +915,9 @@ class ToolHandlers:
         if len(parts) < 2:
             logger.warning(f"Invalid tool name format: {tool_name}")
             return {
-                "content": [{"type": "text", "text": f"Invalid tool name format: {tool_name}"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": f"Invalid tool name format: {tool_name}"}
+                ]
             }
         
         # Determine if namespace is present
@@ -737,8 +933,9 @@ class ToolHandlers:
         
         if len(parts) < operation_index + 2:
             return {
-                "content": [{"type": "text", "text": f"Invalid tool name format: {tool_name}"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": f"Invalid tool name format: {tool_name}"}
+                ]
             }
             
         operation = parts[operation_index]  # upsert, query, delete
@@ -752,59 +949,100 @@ class ToolHandlers:
         if obj_type not in self.object_tools:
             logger.warning(f"No tool available for object type: {obj_type}")
             return {
-                "content": [{"type": "text", "text": f"No tool available for object type: {obj_type}"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": f"No tool available for object type: {obj_type}"}
+                ]
             }
             
         # Get the appropriate tool
         tool = self.object_tools[obj_type]
         logger.debug(f"Routing to {operation} operation for {obj_type}")
-        
-        try:
-            # Call the appropriate method based on the operation
-            if operation == 'upsert':
-                logger.info(f"Executing upsert operation for {obj_type}")
-                result = await self._execute_tool(
-                    tool.upsert_object,
-                    arguments=cleaned_args, auth_override=auth_override
-                )
-            elif operation == 'query':
-                logger.info(f"Executing query operation for {obj_type}")
-                result = await self._execute_tool(
-                    tool.query_objects,
-                    arguments=cleaned_args, auth_override=auth_override
-                )
-            elif operation == 'delete':
-                logger.info(f"Executing delete operation for {obj_type}")
-                result = await self._execute_tool(
-                    tool.delete_object,
-                    arguments=cleaned_args, auth_override=auth_override
-                )
-            else:
-                logger.warning(f"Unknown operation: {operation}")
+
+        span_attrs: Dict[str, Any] = {}
+        if is_tracing_enabled():
+            span_attrs = {
+                "tool.name": tool_name,
+                "tool.operation": operation,
+                "tool.object_type": obj_type,
+            }
+        t_start = time.monotonic()
+        async with start_async_span(f"mcp.tool.{tool_name}", attributes=span_attrs) as span:
+            try:
+                # Call the appropriate method based on the operation
+                if operation == 'upsert':
+                    logger.info(f"Executing upsert operation for {obj_type}")
+                    result = await self._execute_tool(
+                        tool.upsert_object,
+                        arguments=cleaned_args, auth_override=auth_override
+                    )
+                elif operation == 'query':
+                    logger.info(f"Executing query operation for {obj_type}")
+                    result = await self._execute_tool(
+                        tool.query_objects,
+                        arguments=cleaned_args, auth_override=auth_override
+                    )
+                elif operation == 'delete':
+                    logger.info(f"Executing delete operation for {obj_type}")
+                    result = await self._execute_tool(
+                        tool.delete_object,
+                        arguments=cleaned_args, auth_override=auth_override
+                    )
+                else:
+                    logger.warning(f"Unknown operation: {operation}")
+                    return {
+                        "result": [
+                            {"type": "text", "text": f"Unknown operation: {operation}"}
+                        ]
+                    }
+                    
+                # Format the response
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_ok(span, duration_ms=duration_ms)
+                
+                # Record metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=tool_name,
+                        status="success"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=tool_name
+                    ).observe(duration_ms / 1000.0)
+                
+                logger.debug(f"Tool execution completed successfully for {tool_name}")
                 return {
-                    "content": [{"type": "text", "text": f"Unknown operation: {operation}"}],
-                    "isError": True
+                    "result": [{"type": "text", "text": item.text} for item in result]
                 }
                 
-            # Format the response
-            logger.debug(f"Tool execution completed successfully for {tool_name}")
-            return {
-                "content": [{"type": "text", "text": item.text} for item in result],
-                "isError": False
-            }
-            
-        except Exception as e:
-            logger.error(f"Error handling {tool_name}: {e}", exc_info=True, extra_fields={
-                "tool_name": tool_name,
-                "operation": operation,
-                "object_type": obj_type,
-                "error_type": type(e).__name__
-            })
-            return {
-                "content": [{"type": "text", "text": f"Error handling {tool_name}: {str(e)}"}],
-                "isError": True
-            }
+            except Exception as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_error(span, e, duration_ms=duration_ms)
+                
+                # Record error metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=tool_name,
+                        status="error"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=tool_name
+                    ).observe(duration_ms / 1000.0)
+                    metrics_module.tool_execution_errors_total.labels(
+                        tool_name=tool_name,
+                        error_type=type(e).__name__
+                    ).inc()
+                
+                logger.error(f"Error handling {tool_name}: {e}", exc_info=True, extra_fields={
+                    "tool_name": tool_name,
+                    "operation": operation,
+                    "object_type": obj_type,
+                    "error_type": type(e).__name__
+                })
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Error handling {tool_name}: {str(e)}"}
+                    ]
+                }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_list_resources_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -827,8 +1065,9 @@ class ToolHandlers:
         if not self.resource_handlers:
             logger.error("Resource handlers not initialized")
             return {
-                "content": [{"type": "text", "text": "Error: Resource handlers not initialized"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: Resource handlers not initialized"}
+                ]
             }
         
         logger.info("Executing list_resources tool")
@@ -862,14 +1101,16 @@ class ToolHandlers:
             summary_text = "\n".join(lines)
             
             return {
-                "content": [{"type": "text", "text": summary_text}],
-                "isError": False
+                "result": [
+                    {"type": "text", "text": summary_text}
+                ]
             }
         except Exception as e:
             logger.error(f"Error listing resources: {e}", exc_info=True)
             return {
-                "content": [{"type": "text", "text": f"Error listing resources: {str(e)}"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": f"Error listing resources: {str(e)}"}
+                ]
             }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
@@ -893,22 +1134,24 @@ class ToolHandlers:
         if not self.resource_handlers:
             logger.error("Resource handlers not initialized")
             return {
-                "content": [{"type": "text", "text": "Error: Resource handlers not initialized"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: Resource handlers not initialized"}
+                ]
             }
         
         uri = cleaned_args.get("uri")
         if not uri:
             logger.error("Missing 'uri' parameter in get_resource tool")
             return {
-                "content": [{"type": "text", "text": "Error: Missing required parameter 'uri'"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: Missing required parameter 'uri'"}
+                ]
             }
         
         logger.info(f"Executing get_resource tool for URI: {uri}")
         try:
-            # Call the resource handler's read method with all cleaned arguments (including mode)
-            result = await self.resource_handlers.handle_read_resource(cleaned_args)
+            # Call the resource handler's read method
+            result = await self.resource_handlers.handle_read_resource({"uri": uri})
             
             # Extract the content from the result
             if "contents" in result and len(result["contents"]) > 0:
@@ -916,26 +1159,30 @@ class ToolHandlers:
                 text_content = content.get("text", "")
                 
                 return {
-                    "content": [{"type": "text", "text": text_content}],
-                    "isError": False
+                    "result": [
+                        {"type": "text", "text": text_content}
+                    ]
                 }
             else:
                 logger.warning(f"No content found for URI: {uri}")
                 return {
-                    "content": [{"type": "text", "text": f"No content found for URI: {uri}"}],
-                    "isError": True
+                    "result": [
+                        {"type": "text", "text": f"No content found for URI: {uri}"}
+                    ]
                 }
         except ValueError as e:
             logger.error(f"Invalid URI or resource not found: {e}")
             return {
-                "content": [{"type": "text", "text": f"Error: {str(e)}"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": f"Error: {str(e)}"}
+                ]
             }
         except Exception as e:
             logger.error(f"Error getting resource: {e}", exc_info=True)
             return {
-                "content": [{"type": "text", "text": f"Error getting resource: {str(e)}"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": f"Error getting resource: {str(e)}"}
+                ]
             }
     
     # TODO: Temporarily disabled - schema tools will be re-enabled later
@@ -1070,53 +1317,138 @@ class ToolHandlers:
         if not name:
             logger.error("Tool name not provided in call_tool request")
             return {
-                "content": [{"type": "text", "text": "Error: Tool name not provided"}],
-                "isError": True
+                "result": [
+                    {"type": "text", "text": "Error: Tool name not provided"}
+                ]
             }
         
         logger.info(f"Handling call_tool request for tool: {name}")
         logger.debug(f"Tool arguments: {arguments}")
         
+        # Resolve authentication and extract user identity for logging
+        # Precedence: 1) op_auth_header token, 2) op_username, 3) server bearer token, 4) basic auth
+        user_id = None
         try:
-            # Map special tool names to their handler methods
-            special_tool_handlers = {
-                "echo": self.handle_echo_tool,
-                self.generic_delete_tool_name: self.handle_generic_delete_tool,
-                self.generic_associate_tool_name: self.handle_generic_associate_tool,
-                self.generic_dissociate_tool_name: self.handle_generic_dissociate_tool,
-                self.generic_upsert_tool_name: self.handle_generic_upsert_tool,
-                "execute_openpages_query": self.handle_openpages_query_tool,
-                "list_resources": self.handle_list_resources_tool,
-                "get_resource": self.handle_get_resource_tool,
-            }
-
-            # Check if this is a special tool
-            if name in special_tool_handlers:
-                logger.debug(f"Routing to special tool handler: {name}")
-                return await special_tool_handlers[name](arguments)
-
-            # Handle all other tools using the generic handler
-            logger.debug(f"Routing to generic tool handler: {name}")
-            return await self.handle_generic_tool(name, arguments)
-
-        except (PassthroughAuthError, TokenValidationError) as e:
-            logger.warning(f"Authentication failed for tool {name}: {e}", extra_fields={
-                "tool_name": name,
-                "error_type": type(e).__name__,
-            })
-            return {
-                "content": [{"type": "text", "text": f"Authentication failed: {str(e)}"}],
-                "isError": True,
-            }
+            from src.app.auth.token_utils import extract_user_id_from_token
+            
+            # 1. HIGHEST PRIORITY: Extract from op_auth_header if provided
+            op_auth_header = arguments.get("op_auth_header")
+            if op_auth_header:
+                user_id = extract_user_id_from_token(op_auth_header)
+                if user_id:
+                    logger.debug(f"Extracted user ID from op_auth_header token: {user_id}")
+                else:
+                    logger.debug("Could not extract user ID from op_auth_header token")
+            
+            # 2. HIGH PRIORITY: Check for explicit op_username parameter
+            if not user_id:
+                user_id = arguments.get("op_username")
+                if user_id:
+                    logger.debug(f"Using op_username from arguments")
+            
+            # 3. MEDIUM PRIORITY: Extract from server's bearer token
+            if not user_id and self.mcp_server and hasattr(self.mcp_server, 'client'):
+                client = self.mcp_server.client
+                
+                if client.auth_type == "bearer" and 'Authorization' in client.headers:
+                    token = client.headers['Authorization']
+                    user_id = extract_user_id_from_token(token)
+                    if user_id:
+                        logger.debug(f"Extracted user ID from server bearer token: {user_id}")
+                    else:
+                        logger.debug("Could not extract user ID from server bearer token")
+                
+                # 4. LOWEST PRIORITY: Basic auth username from settings
+                elif client.auth_type == "basic" and client.username:
+                    user_id = client.username
+                    logger.debug(f"Extracted user ID from basic auth: {user_id}")
+            
+            # Set user_id in logging context for all subsequent logs
+            if user_id:
+                set_request_context(user_id=user_id)
+                logger.info(f"Auth resolved for tool '{name}'")
+            else:
+                logger.debug(f"No user ID available for tool '{name}'")
+                
         except Exception as e:
-            logger.error(f"Error calling tool {name}: {e}", exc_info=True, extra_fields={
-                "tool_name": name,
-                "error_type": type(e).__name__,
-                "has_arguments": bool(arguments)
-            })
-            return {
-                "content": [{"type": "text", "text": f"Error calling tool {name}: {str(e)}"}],
-                "isError": True
+            logger.warning(f"Failed to extract user identity for logging: {e}")
+        
+        # Ensure dynamic schemas are loaded before executing tool
+        # This handles the scenario where server restarted but client still has cached schema
+        if self.mcp_server and not self.mcp_server.dynamic_schemas_loaded:
+            logger.warning(f"Dynamic schemas not loaded before tool call '{name}', loading now...")
+            try:
+                await self.mcp_server.load_dynamic_schemas()
+                logger.info("Dynamic schemas loaded successfully before tool execution")
+            except Exception as e:
+                logger.error(f"Failed to load dynamic schemas before tool execution: {e}", exc_info=True)
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Error: Failed to initialize tool schemas. Please try again or contact support. Details: {str(e)}"}
+                    ]
+                }
+
+        # Top-level span for the entire tool call (child spans created inside each handler)
+        span_attrs: Dict[str, Any] = {}
+        if is_tracing_enabled():
+            span_attrs = {
+                "tool.name": name,
+                "tool.has_arguments": bool(arguments),
+                "tool.user_id": user_id or "",
             }
+        t_start = time.monotonic()
+        async with start_async_span(f"mcp.tool_call.{name}", attributes=span_attrs) as span:
+            try:
+                # Map special tool names to their handler methods
+                special_tool_handlers = {
+                    "echo": self.handle_echo_tool,
+                    self.generic_delete_tool_name: self.handle_generic_delete_tool,
+                    self.generic_associate_tool_name: self.handle_generic_associate_tool,
+                    self.generic_dissociate_tool_name: self.handle_generic_dissociate_tool,
+                    self.generic_upsert_tool_name: self.handle_generic_upsert_tool,
+                    "execute_openpages_query": self.handle_openpages_query_tool,
+                    "list_resources": self.handle_list_resources_tool,
+                    "get_resource": self.handle_get_resource_tool,
+                }
+
+                # Check if this is a special tool
+                if name in special_tool_handlers:
+                    logger.debug(f"Routing to special tool handler: {name}")
+                    result = await special_tool_handlers[name](arguments)
+                else:
+                    # Handle all other tools using the generic handler
+                    logger.debug(f"Routing to generic tool handler: {name}")
+                    result = await self.handle_generic_tool(name, arguments)
+
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_ok(span, duration_ms=duration_ms)
+                return result
+
+            except (PassthroughAuthError, TokenValidationError) as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_error(span, e, duration_ms=duration_ms)
+                logger.warning(f"Authentication failed for tool {name}: {e}", extra_fields={
+                    "tool_name": name,
+                    "error_type": type(e).__name__,
+                })
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Authentication failed: {str(e)}"}
+                    ],
+                    "_isError": True,
+                }
+            except Exception as e:
+                duration_ms = (time.monotonic() - t_start) * 1000
+                set_span_error(span, e, duration_ms=duration_ms)
+                logger.error(f"Error calling tool {name}: {e}", exc_info=True, extra_fields={
+                    "tool_name": name,
+                    "error_type": type(e).__name__,
+                    "has_arguments": bool(arguments)
+                })
+                return {
+                    "result": [
+                        {"type": "text", "text": f"Error calling tool {name}: {str(e)}"}
+                    ]
+                }
 
 # Made with Bob

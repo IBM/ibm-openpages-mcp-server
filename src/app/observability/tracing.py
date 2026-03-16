@@ -5,7 +5,8 @@ Provides OpenTelemetry-based tracing for request tracking
 
 import functools
 import time
-from typing import Any, Callable, Optional, Dict
+from contextlib import contextmanager, asynccontextmanager
+from typing import Any, Callable, Optional, Dict, Generator, AsyncGenerator
 from contextvars import ContextVar
 
 try:
@@ -14,7 +15,7 @@ try:
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
     from opentelemetry.sdk.resources import Resource, SERVICE_NAME
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.trace import Status, StatusCode
+    from opentelemetry.trace import Status, StatusCode, SpanKind
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     TRACING_AVAILABLE = True
 except ImportError:
@@ -22,6 +23,7 @@ except ImportError:
     trace = None
     TracerProvider = None
     FastAPIInstrumentor = None
+    SpanKind = None  # type: ignore[assignment]
 
 from .logger import get_logger
 
@@ -249,6 +251,162 @@ def trace_operation(
     return decorator
 
 
+@contextmanager
+def start_span(
+    name: str,
+    attributes: Optional[Dict[str, Any]] = None,
+    kind: Optional[Any] = None,
+) -> Generator[Optional[Any], None, None]:
+    """
+    Context manager that creates a new child span when tracing is enabled.
+    Yields ``None`` when tracing is disabled so callers need no ``if`` guards.
+
+    Args:
+        name: Span name (e.g. ``"mcp.tool.upsert_control"``)
+        attributes: Key/value attributes to set on the span immediately
+        kind: ``SpanKind`` value; defaults to ``SpanKind.INTERNAL``
+
+    Example::
+
+        with start_span("mcp.tool.query", {"tool.name": "query_controls"}) as span:
+            result = do_work()
+            if span:
+                span.set_attribute("result.count", len(result))
+    """
+    if not _tracing_enabled or not _tracer:
+        yield None
+        return
+
+    span_kind = kind if kind is not None else (SpanKind.INTERNAL if SpanKind else None)
+    kwargs: Dict[str, Any] = {}
+    if span_kind is not None:
+        kwargs["kind"] = span_kind
+
+    with _tracer.start_as_current_span(name, **kwargs) as span:
+        token = current_span_var.set(span)
+        try:
+            if attributes:
+                for k, v in attributes.items():
+                    _safe_set_attribute(span, k, v)
+            yield span
+        except Exception as exc:
+            try:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+            except Exception:
+                pass
+            raise
+        finally:
+            current_span_var.reset(token)
+
+
+@asynccontextmanager
+async def start_async_span(
+    name: str,
+    attributes: Optional[Dict[str, Any]] = None,
+    kind: Optional[Any] = None,
+) -> AsyncGenerator[Optional[Any], None]:
+    """
+    Async context manager that creates a new child span when tracing is enabled.
+    Yields ``None`` when tracing is disabled so callers need no ``if`` guards.
+
+    Args:
+        name: Span name (e.g. ``"mcp.request.tools/call"``)
+        attributes: Key/value attributes to set on the span immediately
+        kind: ``SpanKind`` value; defaults to ``SpanKind.INTERNAL``
+
+    Example::
+
+        async with start_async_span("mcp.request", {"mcp.method": method}) as span:
+            result = await handle(request)
+    """
+    if not _tracing_enabled or not _tracer:
+        yield None
+        return
+
+    span_kind = kind if kind is not None else (SpanKind.INTERNAL if SpanKind else None)
+    kwargs: Dict[str, Any] = {}
+    if span_kind is not None:
+        kwargs["kind"] = span_kind
+
+    with _tracer.start_as_current_span(name, **kwargs) as span:
+        token = current_span_var.set(span)
+        try:
+            if attributes:
+                for k, v in attributes.items():
+                    _safe_set_attribute(span, k, v)
+            yield span
+        except Exception as exc:
+            try:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+            except Exception:
+                pass
+            raise
+        finally:
+            current_span_var.reset(token)
+
+
+def set_span_ok(span: Optional[Any], duration_ms: Optional[float] = None) -> None:
+    """
+    Mark *span* as successful (``StatusCode.OK``).
+
+    Args:
+        span: Span returned by :func:`start_span` / :func:`start_async_span`
+              (may be ``None`` when tracing is disabled — safe to call).
+        duration_ms: Optional elapsed time in milliseconds to record.
+    """
+    if not _tracing_enabled or span is None:
+        return
+    try:
+        span.set_status(Status(StatusCode.OK))
+        if duration_ms is not None:
+            span.set_attribute("duration_ms", duration_ms)
+    except Exception:
+        pass
+
+
+def set_span_error(
+    span: Optional[Any],
+    exc: Exception,
+    duration_ms: Optional[float] = None,
+) -> None:
+    """
+    Mark *span* as failed and record the exception.
+
+    Args:
+        span: Span returned by :func:`start_span` / :func:`start_async_span`
+              (may be ``None`` when tracing is disabled — safe to call).
+        exc: Exception that caused the failure.
+        duration_ms: Optional elapsed time in milliseconds to record.
+    """
+    if not _tracing_enabled or span is None:
+        return
+    try:
+        span.record_exception(exc)
+        span.set_status(Status(StatusCode.ERROR, str(exc)))
+        if duration_ms is not None:
+            span.set_attribute("duration_ms", duration_ms)
+    except Exception:
+        pass
+
+
+def _safe_set_attribute(span: Any, key: str, value: Any) -> None:
+    """
+    Set a span attribute, coercing the value to a type accepted by OTel.
+    OTel only accepts ``bool``, ``int``, ``float``, ``str`` (and sequences thereof).
+    """
+    try:
+        if isinstance(value, (bool, int, float, str)):
+            span.set_attribute(key, value)
+        elif value is None:
+            pass  # skip None values
+        else:
+            span.set_attribute(key, str(value))
+    except Exception:
+        pass
+
+
 def add_span_attribute(key: str, value: Any) -> None:
     """
     Add an attribute to the current span
@@ -323,16 +481,27 @@ def get_trace_id() -> Optional[str]:
     Returns:
         Trace ID as a hex string or None if not in a traced context
     """
-    if not _tracing_enabled:
+    if not _tracing_enabled or not TRACING_AVAILABLE:
         return None
     
-    span = current_span_var.get()
-    if span:
-        try:
+    try:
+        # First try to get from our context variable
+        span = current_span_var.get()
+        if span:
             span_context = span.get_span_context()
-            return format(span_context.trace_id, '032x')
-        except Exception:
-            return None
+            if span_context and span_context.trace_id:
+                return format(span_context.trace_id, '032x')
+        
+        # Fall back to getting the current span from OpenTelemetry
+        # This works even if we're not in our custom span context
+        current_span = trace.get_current_span()
+        if current_span:
+            span_context = current_span.get_span_context()
+            if span_context and span_context.trace_id:
+                return format(span_context.trace_id, '032x')
+    except Exception:
+        pass
+    
     return None
 
 

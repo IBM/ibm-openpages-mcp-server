@@ -58,8 +58,17 @@ class ServerCredentialProvider(AuthProvider):
     use its own configured credentials (self.headers).
     """
 
+    def __init__(self):
+        from src.app.config.settings import settings
+        self.settings = settings
+        self.username = None
+
     async def resolve(self) -> str:
         logger.debug("Using server-configured credentials")
+        # Store username for basic auth
+        if self.settings.OPENPAGES_AUTHENTICATION_TYPE == "basic":
+            self.username = self.settings.OPENPAGES_USERNAME
+            logger.debug(f"Extracted user ID from basic auth")
         return ""
 
     def can_retry(self) -> bool:
@@ -67,3 +76,7 @@ class ServerCredentialProvider(AuthProvider):
 
     async def refresh(self) -> Optional[str]:
         return None
+    
+    def get_username(self) -> Optional[str]:
+        """Get the username for logging purposes."""
+        return self.username

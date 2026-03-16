@@ -3,6 +3,7 @@ Auth Service Module
 
 Central coordinator for resolving authentication for each request.
 Implements precedence: context_token (WXO/Passthrough) > server credentials (Fallback).
+Also extracts username from authentication context for logging purposes.
 """
 
 import logging
@@ -14,6 +15,7 @@ from src.app.auth.providers import (
     ServerCredentialProvider,
 )
 from src.app.auth.token_validator import PassthroughTokenValidator, TokenValidationError
+from src.app.auth.token_utils import extract_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +26,12 @@ class PassthroughAuthError(Exception):
 
 
 class AuthResult:
-    """Encapsulates resolved auth + retry capability."""
+    """Encapsulates resolved auth + retry capability + user identity."""
 
-    def __init__(self, token: Optional[str], provider: AuthProvider):
+    def __init__(self, token: Optional[str], provider: AuthProvider, username: Optional[str] = None):
         self._token = token
         self.provider = provider
+        self.username = username
 
     @property
     def auth_override(self) -> Optional[str]:
@@ -64,6 +67,27 @@ class AuthService:
     def __init__(self, settings):
         self.settings = settings
         self._token_validator = PassthroughTokenValidator()
+    
+    def _extract_and_log_username(self, token: Optional[str], source: str) -> Optional[str]:
+        """
+        Extract username from token and log the result.
+        
+        Args:
+            token: The token to extract username from
+            source: Description of the token source for logging (e.g., "JWT token", "bearer token")
+        
+        Returns:
+            Extracted user ID or None
+        """
+        if not token:
+            return None
+        
+        user_id = extract_user_id_from_token(token)
+        if user_id:
+            logger.debug(f"Extracted user ID from {source}: {user_id}")
+        else:
+            logger.debug(f"Could not extract user ID from {source} (may not be JWT)")
+        return user_id
 
     async def resolve_for_request(
         self,
@@ -71,9 +95,13 @@ class AuthService:
         has_context_token_key: bool = False,
     ) -> AuthResult:
         """
-        Resolve auth for a single tool invocation.
+        Resolve auth for a single tool invocation with username extraction.
 
         Precedence: context_token > server credentials.
+        
+        Username extraction precedence:
+        1. JWT token claims (for bearer/passthrough auth)
+        2. Basic auth username (from settings)
 
         If has_context_token_key is True (the key was present in the request arguments),
         the passthrough flow is enforced strictly:
@@ -85,12 +113,15 @@ class AuthService:
             has_context_token_key: Whether the op_auth_header key was present in args
 
         Returns:
-            AuthResult with resolved token and provider
+            AuthResult with resolved token, provider, and username
 
         Raises:
             PassthroughAuthError: If key is present but token is empty/None
             TokenValidationError: If token is present but fails validation
         """
+        username = None
+        token = None
+        
         if has_context_token_key:
             if not context_token:
                 raise PassthroughAuthError(
@@ -98,16 +129,32 @@ class AuthService:
                     "cannot fall back to server credentials for passthrough flow"
                 )
             # Validate token (raises TokenValidationError on failure)
-            self._token_validator.validate(context_token)
+            await self._token_validator.validate(context_token)
             logger.info("Auth resolved via validated context variable (Passthrough flow)")
             provider = PassthroughTokenProvider(context_token)
-        elif context_token:
-            # Legacy path: token present without explicit key tracking
-            logger.info("Auth resolved via context variable (Passthrough flow)")
-            provider = PassthroughTokenProvider(context_token)
+            
+            # Extract username from passthrough token
+            username = self._extract_and_log_username(context_token, "passthrough JWT token")
         else:
             logger.info("Auth resolved via server credentials (Fallback flow)")
             provider = ServerCredentialProvider()
-
+            
+            # For basic auth, get username from provider
+            if hasattr(provider, 'get_username'):
+                username = provider.get_username()
+                if username:
+                    logger.debug(f"Extracted user name from basic auth: {username}")
+        
+        # Resolve token after username extraction
         token = await provider.resolve()
-        return AuthResult(token if token else None, provider)
+        
+        # For bearer token, try to extract username from JWT if not already extracted
+        if not username and token:
+            username = self._extract_and_log_username(token, "server bearer token")
+        
+        if username:
+            logger.debug(f"Resolved user ID for logging")
+        else:
+            logger.debug("Could not resolve user ID from authentication context")
+        
+        return AuthResult(token if token else None, provider, username)

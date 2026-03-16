@@ -14,11 +14,13 @@ from datetime import datetime
 from typing import Any, Dict, Optional, Callable
 from contextvars import ContextVar
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 
 # Context variables for request tracking
 request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
 user_id_var: ContextVar[Optional[str]] = ContextVar("user_id", default=None)
 session_id_var: ContextVar[Optional[str]] = ContextVar("session_id", default=None)
+trace_id_var: ContextVar[Optional[str]] = ContextVar("trace_id", default=None)
 
 
 class StructuredFormatter(logging.Formatter):
@@ -71,6 +73,10 @@ class StructuredFormatter(logging.Formatter):
         session_id = session_id_var.get()
         if session_id:
             log_data["session_id"] = session_id
+        
+        trace_id = trace_id_var.get()
+        if trace_id:
+            log_data["trace_id"] = trace_id
         
         # Add source location
         log_data["source"] = {
@@ -221,6 +227,8 @@ def setup_logging(
     json_format: bool = True,
     log_file: Optional[str] = None,
     use_stderr: bool = False,
+    log_max_bytes: int = 10 * 1024 * 1024,  # 10 MB default
+    log_backup_count: int = 5,  # Keep 5 backup files
 ) -> None:
     """
     Setup structured logging for the application
@@ -231,6 +239,8 @@ def setup_logging(
         json_format: Whether to use JSON format (True) or plain text (False)
         log_file: Optional file path to write logs to (relative paths are resolved from project root)
         use_stderr: If True, log to stderr instead of stdout (required for stdio mode)
+        log_max_bytes: Maximum size of log file before rotation (default: 10MB)
+        log_backup_count: Number of backup files to keep (default: 5)
     """
     
     # Get root logger
@@ -263,7 +273,7 @@ def setup_logging(
     logging.getLogger("httpcore.connection").setLevel(logging.INFO)
     logging.getLogger("httpcore.http11").setLevel(logging.INFO)
     
-    # Add file handler if specified
+    # Add rotating file handler if specified
     if log_file:
         try:
             # Convert relative paths to absolute paths relative to project root
@@ -276,10 +286,23 @@ def setup_logging(
             # Ensure the log directory exists
             log_path.parent.mkdir(parents=True, exist_ok=True)
             
-            file_handler = logging.FileHandler(str(log_path))
+            # Use RotatingFileHandler for automatic log rotation
+            file_handler = RotatingFileHandler(
+                filename=str(log_path),
+                maxBytes=log_max_bytes,
+                backupCount=log_backup_count,
+                encoding='utf-8'
+            )
             file_handler.setLevel(getattr(logging, level.upper()))
             file_handler.setFormatter(formatter)
             root_logger.addHandler(file_handler)
+            
+            # Log rotation configuration
+            root_logger.info(
+                f"File logging configured: path={log_path}, "
+                f"max_size={log_max_bytes / (1024*1024):.1f}MB, "
+                f"backup_count={log_backup_count}"
+            )
         except Exception as e:
             # If file logging fails, just log to console
             root_logger.warning(f"Failed to setup file logging to {log_file}: {e}")
@@ -310,6 +333,7 @@ def set_request_context(
     request_id: Optional[str] = None,
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
 ) -> None:
     """
     Set context variables for request tracking
@@ -318,6 +342,7 @@ def set_request_context(
         request_id: Unique request identifier
         user_id: User identifier
         session_id: Session identifier
+        trace_id: OpenTelemetry trace identifier
     """
     if request_id:
         request_id_var.set(request_id)
@@ -325,6 +350,8 @@ def set_request_context(
         user_id_var.set(user_id)
     if session_id:
         session_id_var.set(session_id)
+    if trace_id:
+        trace_id_var.set(trace_id)
 
 
 def clear_request_context() -> None:
@@ -332,6 +359,7 @@ def clear_request_context() -> None:
     request_id_var.set(None)
     user_id_var.set(None)
     session_id_var.set(None)
+    trace_id_var.set(None)
 
 
 def get_request_id() -> Optional[str]:
@@ -347,6 +375,11 @@ def get_user_id() -> Optional[str]:
 def get_session_id() -> Optional[str]:
     """Get current session ID from context"""
     return session_id_var.get()
+
+
+def get_trace_id() -> Optional[str]:
+    """Get current trace ID from context"""
+    return trace_id_var.get()
 
 
 def log_method_call(

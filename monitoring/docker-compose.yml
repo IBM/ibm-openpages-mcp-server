@@ -27,7 +27,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -52,7 +52,7 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
     networks:
       - monitoring
     depends_on:
@@ -62,23 +62,33 @@ services:
     profiles:
       - full
 
-  # AlertManager - Alert Management (Optional)
-  alertmanager:
-    image: prom/alertmanager:v0.26.0
-    container_name: grc-mcp-alertmanager
+  # Loki - Log Aggregation
+  loki:
+    image: grafana/loki:2.9.3
+    container_name: grc-mcp-loki
     ports:
-      - "9093:9093"
+      - "3100:3100"
     volumes:
-      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      - alertmanager-data:/alertmanager
-    command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
-      - '--storage.path=/alertmanager'
+      - ./loki-config.yml:/etc/loki/local-config.yaml
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
     networks:
       - monitoring
     restart: unless-stopped
-    profiles:
-      - full
+
+  # Promtail - Log Shipper
+  promtail:
+    image: grafana/promtail:2.9.3
+    container_name: grc-mcp-promtail
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml
+      - ../logs:/var/log/grc-mcp:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - monitoring
+    depends_on:
+      - loki
+    restart: unless-stopped
 
 networks:
   monitoring:
@@ -88,3 +98,4 @@ volumes:
   prometheus-data:
   grafana-data:
   alertmanager-data:
+  loki-data:

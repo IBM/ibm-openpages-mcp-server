@@ -1,0 +1,20 @@
+# Loki Datasource Configuration
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        # Link trace IDs to Jaeger
+        - datasourceUid: PC9A941E8F2E49454
+          matcherRegex: "trace_id[\":]\\s*\"([\\w]+)\""
+          name: TraceID
+          url: "$${__value.raw}"
+
+# Made with Bob
