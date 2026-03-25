@@ -266,13 +266,24 @@ NOT Supported:
     def _load_tools_schema(self) -> None:
         """
         Initialize base tools schema and dynamically add tools for configured object types
+        
+        Tool exposure is controlled by TOOL_EXPOSURE_MODE setting:
+        - "all": Expose both ontology_based and type_based tools (default)
+        - "ontology_based": Expose ontology based generic tools (execute_openpages_query, upsert_object, delete_object, associate_objects, dissociate_objects)
+        - "type_based": Expose type-specific tools (upsert_control, query_controls, etc.) plus delete_object
+
+        Note: delete_object is always exposed as it's a generic operation without type-specific equivalent.
+        In type_based mode, associations are handled via the upsert tool.
         """
-        logger.info("Initializing base tools schema")
+        logger.info(f"Initializing base tools schema (exposure mode: {self.settings.TOOL_EXPOSURE_MODE})")
         
         # Get context schema to add to all tools
         context_properties = build_context_schema()
         
-        # Start with base tools
+        # Check tool exposure mode
+        exposure_mode = self.settings.TOOL_EXPOSURE_MODE.lower()
+        
+        # Start with base tools (always available)
         self.tools = [
             {
                 "name": "echo",
@@ -319,8 +330,13 @@ NOT Supported:
                     },
                     "required": ["uri"]
                 }
-            },
-            {
+            }
+        ]
+        
+        # Add execute_openpages_query tool if mode is "all" or "ontology_based"
+        if exposure_mode in ["all", "ontology_based"]:
+            logger.info("Adding generic execute_openpages_query tool")
+            self.tools.append({
                 "name": "execute_openpages_query",
                 "description": self._build_openpages_query_description(),
                 "inputSchema": {
@@ -350,19 +366,29 @@ NOT Supported:
                     },
                     "required": ["query"]
                 }
-            }
-        ]
+            })
+        else:
+            logger.info("Skipping generic execute_openpages_query tool (exposure mode: type_based)")
         
-        # Add generic delete tool that works for all object types
+        # Always add delete tool (no type-specific equivalent)
+        logger.info("Adding generic delete tool (always available)")
         self._add_generic_delete_tool()
         
-        # Add generic associate and dissociate tools
-        self._add_generic_associate_dissociate_tools()
-        # Add generic upsert tool that works for all object types
-        self._add_generic_upsert_tool()
-        
-        # Dynamically add tools for each configured object type
-        self._add_dynamic_tools_to_schema()
+        # Add generic tools if mode is "all" or "ontology_based"
+        if exposure_mode in ["all", "ontology_based"]:
+            logger.info("Adding generic upsert, associate, and dissociate tools")
+            self._add_generic_associate_dissociate_tools()
+            self._add_generic_upsert_tool()
+        else:
+            logger.info("Skipping generic upsert/associate/dissociate tools (exposure mode: type_based)")
+
+        # Add type-specific tools if mode is "all" or "type_based"
+        if exposure_mode in ["all", "type_based"]:
+            logger.info("Adding type-specific upsert and query tools")
+            # Dynamically add tools for each configured object type
+            self._add_dynamic_tools_to_schema()
+        else:
+            logger.info("Skipping type-specific tools (exposure mode: ontology_based)")
     
     def _add_generic_delete_tool(self) -> None:
         """

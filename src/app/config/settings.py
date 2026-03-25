@@ -123,6 +123,9 @@ class Settings(BaseSettings):
     
     # Global namespace for generic tools
     NAMESPACE: str = ""  # Namespace prefix for generic tools (e.g., "openpages")
+    
+    # Tool exposure configuration
+    TOOL_EXPOSURE_MODE: str = "ontology_based"  # Options: "all", "ontology_based", "type_based"
 
     # Authentication framework settings
     AUTH_ENABLED: bool = True
@@ -246,6 +249,10 @@ class Settings(BaseSettings):
                     if 'namespace' in global_settings:
                         self.NAMESPACE = global_settings['namespace']
                         print(f"Loaded global namespace: {self.NAMESPACE}")
+                    
+                    if 'tool_exposure_mode' in global_settings:
+                        self.TOOL_EXPOSURE_MODE = global_settings['tool_exposure_mode']
+                        print(f"Loaded tool exposure mode: {self.TOOL_EXPOSURE_MODE}", file=sys.stderr)
                     
                     print(f"Loaded {len(self.OPENPAGES_OBJECT_TYPES)} object types from {config_path}", file=sys.stderr)
                 except json.JSONDecodeError as e:

@@ -266,20 +266,43 @@ class SchemaBuilder:
         
         # Build a map of valid fields from type definition
         valid_fields_map = {}
+        field_groups_map = {}  # Maps group prefix to list of fields
         for field in type_def.get("field_definitions", []):
             field_name = field.get("name")
             if field_name and field_name not in skip_fields:
                 valid_fields_map[field_name.lower()] = field
+                
+                # Track field groups (fields with format "GroupPrefix:FieldName")
+                if ':' in field_name:
+                    group_prefix = field_name.split(':', 1)[0]
+                    if group_prefix not in field_groups_map:
+                        field_groups_map[group_prefix] = []
+                    field_groups_map[group_prefix].append(field)
         
-        # Validate configured fields if provided
+        # Resolve configured fields, expanding field groups
         validated_fields = []
         if configured_fields:
             for config_field in configured_fields:
-                if config_field.lower() in valid_fields_map:
-                    validated_fields.append(config_field)
-                    logger.debug(f"Validated field: {config_field}")
+                # Check if this is a field group reference (starts with @)
+                if config_field.startswith('@'):
+                    group_name = config_field[1:]  # Remove @ prefix
+                    if group_name in field_groups_map:
+                        # Add all fields from this group
+                        group_fields = field_groups_map[group_name]
+                        for field in group_fields:
+                            field_name = field.get("name")
+                            if field_name:
+                                validated_fields.append(field_name)
+                        logger.info(f"Expanded field group '@{group_name}' to {len(group_fields)} fields for {object_type}")
+                    else:
+                        logger.warning(f"Ignoring invalid field group '{config_field}' for type {object_type}. Available groups: {list(field_groups_map.keys())}")
                 else:
-                    logger.warning(f"Ignoring invalid configured field '{config_field}' for type {object_type}")
+                    # Regular field reference
+                    if config_field.lower() in valid_fields_map:
+                        validated_fields.append(config_field)
+                        logger.debug(f"Validated field: {config_field}")
+                    else:
+                        logger.warning(f"Ignoring invalid configured field '{config_field}' for type {object_type}")
         
         # Determine which fields to include based on configuration
         fields_to_include = []
@@ -559,21 +582,44 @@ class SchemaBuilder:
         
         # Build a map of valid fields from type definition
         valid_filter_fields_map = {}
+        filter_field_groups_map = {}  # Maps group prefix to list of fields
         field_definitions = type_def.get("field_definitions", [])
         for field in field_definitions:
             field_name = field.get("name")
             if field_name:
                 valid_filter_fields_map[field_name.lower()] = field
+                
+                # Track field groups (fields with format "GroupPrefix:FieldName")
+                if ':' in field_name:
+                    group_prefix = field_name.split(':', 1)[0]
+                    if group_prefix not in filter_field_groups_map:
+                        filter_field_groups_map[group_prefix] = []
+                    filter_field_groups_map[group_prefix].append(field)
         
-        # Validate configured filter fields
+        # Resolve configured filter fields, expanding field groups
         validated_filter_fields = []
         if configured_filter_fields:
             for config_field in configured_filter_fields:
-                if config_field.lower() in valid_filter_fields_map:
-                    validated_filter_fields.append(config_field)
-                    logger.debug(f"Validated filter field: {config_field}")
+                # Check if this is a field group reference (starts with @)
+                if config_field.startswith('@'):
+                    group_name = config_field[1:]  # Remove @ prefix
+                    if group_name in filter_field_groups_map:
+                        # Add all fields from this group
+                        group_fields = filter_field_groups_map[group_name]
+                        for field in group_fields:
+                            field_name = field.get("name")
+                            if field_name:
+                                validated_filter_fields.append(field_name)
+                        logger.info(f"Expanded filter field group '@{group_name}' to {len(group_fields)} fields for {object_type}")
+                    else:
+                        logger.warning(f"Ignoring invalid filter field group '{config_field}' for type {object_type}. Available groups: {list(filter_field_groups_map.keys())}")
                 else:
-                    logger.warning(f"Ignoring invalid configured filter field '{config_field}' for type {object_type}")
+                    # Regular field reference
+                    if config_field.lower() in valid_filter_fields_map:
+                        validated_filter_fields.append(config_field)
+                        logger.debug(f"Validated filter field: {config_field}")
+                    else:
+                        logger.warning(f"Ignoring invalid configured filter field '{config_field}' for type {object_type}")
         
         # Determine which filter fields to include
         filter_fields_to_include = []
@@ -603,8 +649,10 @@ class SchemaBuilder:
             label = field.get("localized_label", field_name)
             
             # Create user-friendly property name
+            # Normalize: replace spaces with underscores for better LLM/client compatibility
             simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
-            property_name = f"filter_{simple_name}"
+            simple_name_normalized = simple_name.replace(' ', '_')
+            property_name = f"filter_{simple_name_normalized}"
             
             # Determine JSON schema type
             prop_def: Dict[str, Any] = {
@@ -791,21 +839,21 @@ class SchemaBuilder:
                 associate_field_name = f"{associate_prefix}_{associated_type}"
                 dissociate_field_name = f"{dissociate_prefix}_{associated_type}"
                 
-                # Determine if this is a single or multiple association
-                # Parent associations are typically single, others can be multiple
-                is_multiple = relationship_type not in ["Parent"]
+                # All associations (Parent and Child) support multiple values
+                # OpenPages allows multiple parents for objects
+                is_multiple = True
                 
                 # Create appropriate descriptions based on relationship type
                 if relationship_type == "Parent":
-                    associate_desc = f"ADDITIONAL/SECONDARY parent: Associate with {label} ({associated_type}). Use this for non-primary parents. For PRIMARY parent, use primaryParentId/primaryParentType/primaryParentName instead."
-                    dissociate_desc = f"Remove ADDITIONAL/SECONDARY parent: Dissociate from {label} ({associated_type}). This removes the association but does not delete the object."
+                    associate_desc = f"ADDITIONAL/SECONDARY parents: Associate with one or more {label} ({associated_type}) parents. Use this for non-primary parents. For PRIMARY parent, use primaryParentId/primaryParentType/primaryParentName instead."
+                    dissociate_desc = f"Remove ADDITIONAL/SECONDARY parents: Dissociate from one or more {label} ({associated_type}) parents. This removes the association but does not delete the object."
                 elif relationship_type == "Child":
-                    associate_desc = f"Child association: Link child {label} ({associated_type}) objects to this object."
-                    dissociate_desc = f"Remove child association: Unlink child {label} ({associated_type}) objects from this object."
+                    associate_desc = f"Child association: Link one or more child {label} ({associated_type}) objects to this object."
+                    dissociate_desc = f"Remove child association: Unlink one or more child {label} ({associated_type}) objects from this object."
                 else:
                     # This should not happen since we filter above, but keep as fallback
-                    associate_desc = f"{relationship_type} association to {label} ({associated_type})."
-                    dissociate_desc = f"Remove {relationship_type} association from {label} ({associated_type})."
+                    associate_desc = f"{relationship_type} association to one or more {label} ({associated_type}) objects."
+                    dissociate_desc = f"Remove {relationship_type} association from one or more {label} ({associated_type}) objects."
                 
                 format_desc = f" Supports: Resource ID ('12345'), name ('{label}-001'), path ('/grc/folder/{label}'), or object with type/name/path/id."
                 

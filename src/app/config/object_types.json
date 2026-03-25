@@ -1,9 +1,12 @@
 {
+  "_comment": "Field Group Support: You can now use '@GroupPrefix' to include all fields from a field group. For example, '@OPSS-Ctl' will include all fields with the OPSS-Ctl: prefix. Mix individual fields and groups as needed.",
   "global_settings": {
     "output_format": "json",
     "output_format_description": "Global output format for all tool responses. Options: 'text' (human-readable, default) or 'json' (structured, machine-readable for agents)",
     "namespace": "openpages",
-    "namespace_description": "Global namespace prefix for generic tools (e.g., delete_object becomes openpages_delete_object)"
+    "namespace_description": "Global namespace prefix for generic tools (e.g., delete_object becomes openpages_delete_object)",
+    "tool_exposure_mode": "ontology_based",
+    "tool_exposure_mode_description": "Controls which tools are exposed. Options: 'all' (both ontology_based and type_based), 'ontology_based' (only ontology based generic tools like upsert_object), 'type_based' (only type-specific tools like upsert_control)"
   },
   "object_types": [
     {
@@ -19,14 +22,9 @@
       "create_fields": {
         "include_all_fields": true,
         "fields": [
-          "OPSS-Ctl:Status",
-          "OPSS-Ctl:Type",
-          "OPSS-Ctl:Frequency",
-          "OPSS-Ctl:Owner",
-          "OPSS-Ctl:Domain",
-          "OPSS-Ctl:Control Type",
-          "OPSS-Ctl:Control Owner"
-        ]
+          "@OPSS-Ctl"
+        ],
+        "_comment": "Using '@OPSS-Ctl' includes all fields from the OPSS-Ctl field group. You can also mix groups with individual fields, e.g., ['@OPSS-Ctl', 'SomeOtherField']"
       },
       "query_filters": {
         "fields": [
@@ -34,7 +32,8 @@
           "OPSS-Ctl:Control Type",
           "OPSS-Ctl:Frequency",
           "OPSS-Ctl:Owner"
-        ]
+        ],
+        "_comment": "Individual fields listed here. Could also use '@OPSS-Ctl' to include all OPSS-Ctl fields"
       }
     },
     {
@@ -50,19 +49,15 @@
       "create_fields": {
         "include_all_fields": false,
         "fields": [
-          "OPSS-Iss:Status",
-          "OPSS-Iss:Priority",
-          "OPSS-Iss:Severity",
-          "OPSS-Iss:Owner"
-        ]
+          "@OPSS-Iss"
+        ],
+        "_comment": "Using '@OPSS-Iss' to include all fields from the OPSS-Iss field group"
       },
       "query_filters": {
         "fields": [
-          "OPSS-Iss:Status",
-          "OPSS-Iss:Priority",
-          "OPSS-Iss:Severity",
-          "OPSS-Iss:Owner"
-        ]
+          "@OPSS-Iss"
+        ],
+        "_comment": "Using field group for filters as well"
       }
     },
     {
@@ -81,14 +76,16 @@
           "OPSS-Rsk:Status",
           "OPSS-Rsk:RiskLevel",
           "OPSS-Rsk:Owner"
-        ]
+        ],
+        "_comment": "Individual fields listed. Could use '@OPSS-Rsk' to include all OPSS-Rsk fields, or mix: ['@OPSS-Rsk', 'OtherGroup:Field']"
       },
       "query_filters": {
         "fields": [
           "OPSS-Rsk:Status",
           "OPSS-Rsk:RiskLevel",
           "OPSS-Rsk:Owner"
-        ]
+        ],
+        "_comment": "Individual fields for query filters"
       }
     },
     {

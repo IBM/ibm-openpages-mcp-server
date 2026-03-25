@@ -604,11 +604,51 @@ class GenericObjectTools(BaseTool):
                         valid_values = [ev.get('name') for ev in enum_values if ev.get('name')]
                         
                         if valid_values:
-                            # Check if the provided value is valid
-                            values_to_check = arg_value if isinstance(arg_value, list) else [arg_value]
+                            # Preprocess multi-enum values to handle comma-separated strings
+                            # This adds resilience when AI agents provide ["Technology , ESG"] instead of ["Technology", "ESG"]
+                            if field_type == "MULTI_VALUE_ENUM":
+                                values_to_check = []
+                                input_values = arg_value if isinstance(arg_value, list) else [arg_value]
+                                
+                                for val in input_values:
+                                    # Convert value to string, handling different input types
+                                    if isinstance(val, str):
+                                        val_str = val
+                                    elif isinstance(val, dict):
+                                        val_str = val.get('name', '')
+                                    else:
+                                        val_str = str(val) if val is not None else ''
+                                    
+                                    # Skip empty values
+                                    if not val_str:
+                                        continue
+                                    
+                                    # Check if value contains comma - if so, split it
+                                    if ',' in val_str:
+                                        # Split by comma and trim whitespace from each part
+                                        split_values = [v.strip() for v in val_str.split(',') if v.strip()]
+                                        values_to_check.extend(split_values)
+                                        logger.info(f"Split comma-separated multi-enum value '{val_str}' into: {split_values}")
+                                    else:
+                                        values_to_check.append(val_str)
+                                
+                                # Update arg_value with the properly split values for later processing
+                                arg_value = values_to_check
+                            else:
+                                # For single-value ENUM_TYPE, don't split
+                                values_to_check = arg_value if isinstance(arg_value, list) else [arg_value]
+                            
+                            # Validate each value
                             for val in values_to_check:
-                                val_str = val if isinstance(val, str) else (val.get('name') if isinstance(val, dict) else str(val))
-                                if val_str not in valid_values:
+                                # Convert value to string for validation
+                                if isinstance(val, str):
+                                    val_str = val
+                                elif isinstance(val, dict):
+                                    val_str = val.get('name', '')
+                                else:
+                                    val_str = str(val) if val is not None else ''
+                                
+                                if val_str and val_str not in valid_values:
                                     logger.error(f"Invalid enum value '{val_str}' for field '{technical_field_name}'. Valid values: {valid_values}")
                                     return [TextContent(type="text", text=f"Error: Invalid value '{val_str}' for field '{technical_field_name}'. Valid values are: {', '.join(valid_values)}")]
                     
@@ -807,11 +847,51 @@ class GenericObjectTools(BaseTool):
                         valid_values = [ev.get('name') for ev in enum_values if ev.get('name')]
                         
                         if valid_values:
-                            # Check if the provided value is valid
-                            values_to_check = arg_value if isinstance(arg_value, list) else [arg_value]
+                            # Preprocess multi-enum values to handle comma-separated strings
+                            # This adds resilience when AI agents provide ["Technology , ESG"] instead of ["Technology", "ESG"]
+                            if field_type == "MULTI_VALUE_ENUM":
+                                values_to_check = []
+                                input_values = arg_value if isinstance(arg_value, list) else [arg_value]
+                                
+                                for val in input_values:
+                                    # Convert value to string, handling different input types
+                                    if isinstance(val, str):
+                                        val_str = val
+                                    elif isinstance(val, dict):
+                                        val_str = val.get('name', '')
+                                    else:
+                                        val_str = str(val) if val is not None else ''
+                                    
+                                    # Skip empty values
+                                    if not val_str:
+                                        continue
+                                    
+                                    # Check if value contains comma - if so, split it
+                                    if ',' in val_str:
+                                        # Split by comma and trim whitespace from each part
+                                        split_values = [v.strip() for v in val_str.split(',') if v.strip()]
+                                        values_to_check.extend(split_values)
+                                        logger.info(f"Split comma-separated multi-enum value '{val_str}' into: {split_values}")
+                                    else:
+                                        values_to_check.append(val_str)
+                                
+                                # Update arg_value with the properly split values for later processing
+                                arg_value = values_to_check
+                            else:
+                                # For single-value ENUM_TYPE, don't split
+                                values_to_check = arg_value if isinstance(arg_value, list) else [arg_value]
+                            
+                            # Validate each value
                             for val in values_to_check:
-                                val_str = val if isinstance(val, str) else (val.get('name') if isinstance(val, dict) else str(val))
-                                if val_str not in valid_values:
+                                # Convert value to string for validation
+                                if isinstance(val, str):
+                                    val_str = val
+                                elif isinstance(val, dict):
+                                    val_str = val.get('name', '')
+                                else:
+                                    val_str = str(val) if val is not None else ''
+                                
+                                if val_str and val_str not in valid_values:
                                     logger.error(f"Invalid enum value '{val_str}' for field '{technical_field_name}'. Valid values: {valid_values}")
                                     return [TextContent(type="text", text=f"Error: Invalid value '{val_str}' for field '{technical_field_name}'. Valid values are: {', '.join(valid_values)}")]
                     
@@ -1021,9 +1101,10 @@ class GenericObjectTools(BaseTool):
         selected_fields = required_fields.copy()
         
         # Try to get field definitions to build a more complete mapping
+        property_to_technical = {}  # Initialize to avoid unbound variable
         try:
             # Use cached field mappings for performance
-            field_mapping, _, field_def_map = await self._get_field_mappings(auth_override=auth_override)
+            field_mapping, property_to_technical, field_def_map = await self._get_field_mappings(auth_override=auth_override)
             
             # If fetch_all_properties is True, add all fields from the type definition
             if fetch_all_properties:
@@ -1135,17 +1216,25 @@ class GenericObjectTools(BaseTool):
                 if filter_value is None or filter_value == '':
                     continue
                 
-                # Try to resolve the field name using the field mapping
+                # Try to resolve the field name using property_to_technical mapping
+                # This handles normalized names (with underscores) and friendly labels
                 resolved_field = None
                 filter_field_lower = filter_field.lower()
                 
-                # 1. Try direct match (case-insensitive)
-                for field_name, openpages_field in field_mapping.items():
-                    if field_name.lower() == filter_field_lower:
-                        resolved_field = openpages_field.replace('[', '').replace(']', '')
-                        break
+                # 1. Try property_to_technical mapping (handles normalized names with underscores)
+                if filter_field_lower in property_to_technical:
+                    technical_name = property_to_technical[filter_field_lower]
+                    resolved_field = technical_name
+                    logger.debug(f"Resolved filter field '{filter_field}' to technical name '{technical_name}' via property mapping")
                 
-                # 2. Try matching with simple name (without prefix)
+                # 2. Try direct match in field_mapping (case-insensitive)
+                if not resolved_field:
+                    for field_name, openpages_field in field_mapping.items():
+                        if field_name.lower() == filter_field_lower:
+                            resolved_field = openpages_field.replace('[', '').replace(']', '')
+                            break
+                
+                # 3. Try matching with simple name (without prefix)
                 if not resolved_field:
                     for field_name, openpages_field in field_mapping.items():
                         simple_name = field_name.split(':')[-1] if ':' in field_name else field_name
@@ -1153,7 +1242,7 @@ class GenericObjectTools(BaseTool):
                             resolved_field = openpages_field.replace('[', '').replace(']', '')
                             break
                 
-                # 3. Try matching with field name from "Name [Group]" format
+                # 4. Try matching with field name from "Name [Group]" format
                 if not resolved_field and '[' in filter_field and filter_field.endswith(']'):
                     field_name_part = filter_field.split('[')[0].strip()
                     group_name = filter_field[filter_field.find('[')+1:filter_field.find(']')]
@@ -1162,7 +1251,7 @@ class GenericObjectTools(BaseTool):
                     if full_field_name in field_mapping:
                         resolved_field = field_mapping[full_field_name].replace('[', '').replace(']', '')
                 
-                # 4. If still not resolved, use the field name as-is
+                # 5. If still not resolved, use the field name as-is
                 if not resolved_field:
                     resolved_field = filter_field
                     logger.warning(f"Could not resolve field '{filter_field}' in field mapping, using as-is")
