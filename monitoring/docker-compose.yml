@@ -59,8 +59,6 @@ services:
       - prometheus
       - jaeger
     restart: unless-stopped
-    profiles:
-      - full
 
   # Loki - Log Aggregation
   loki:

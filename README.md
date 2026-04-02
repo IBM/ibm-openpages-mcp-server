@@ -1,639 +1,321 @@
 # GRC MCP Server
 
-A Model Context Protocol (MCP) server for IBM OpenPages GRC platform. Enables AI agents to interact with OpenPages through MCP tools via REST API. Supports both remote (HTTP) and local (stdio) modes.
+A Model Context Protocol (MCP) server that enables AI agents to interact with IBM OpenPages GRC platform through a standardized interface. Supports both remote (HTTP) and local (stdio) modes for flexible deployment.
+
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![MCP](https://img.shields.io/badge/MCP-1.9.4+-green.svg)](https://modelcontextprotocol.io/)
+
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [First-Time Setup](#first-time-setup)
+  - [Installation Options](#installation-options)
+  - [Verify Installation](#verify-installation)
+  - [Next Steps](#next-steps)
+- [Configuration](#configuration)
+  - [Environment Variables](#environment-variables)
+  - [Authentication Methods](#authentication-methods)
+  - [Object Types Configuration](#object-types-configuration)
+- [Available Tools](#available-tools)
+- [MCP Resources](#mcp-resources)
+- [MCP Prompts](#mcp-prompts)
+- [API Endpoints](#api-endpoints)
+- [Using with AI Agents](#using-with-ai-agents)
+- [AI Agent Instructions](#ai-agent-instructions)
+- [Testing the Server](#testing-the-server)
+- [Observability & Monitoring](#observability--monitoring)
+- [Deployment Architectures](#deployment-architectures)
+- [Project Structure](#project-structure)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
+- [Support](#support)
 
 ## Features
 
-- **Dual Mode Operation**: Remote (HTTP) and Local (stdio) transport
-- **OpenPages Integration**: Full REST API connectivity with configurable credentials
-- **Generic Object Tools**: Dynamic data operations for any OpenPages object type (configurable via `object_types.json`)
-- **High Performance**: Compact schema mode reduces response size by 70-90% for faster AI agent interactions
-- **Docker Support**: Containerized deployment with optional NGINX proxy
-- **Cross-Platform**: Windows, Linux, macOS
-- **MCP Compliant**: Full lifecycle support (initialize, tools, resources, notifications, shutdown)
-- **Observability**: Built-in metrics, tracing, and structured logging
+- **🔌 Dual Mode Operation**: Remote (HTTP) and Local (stdio) transport
+- **🔐 Multiple Authentication Methods**: Basic, IBM Cloud IAM, MCSP, and CP4D
+- **🛠️ Flexible Tool Exposure**: Choose between ontology-based (generic) or type-based (specific) tools
+- **🎯 Dynamic Object Management**: Configurable tools for any OpenPages object type
+- **📊 Advanced Query Tool**: SQL-like query execution with full OpenPages syntax support
+- **📚 Ontology Resources**: Dynamic ontology discovery for AI agents
+- **🚀 High Performance**: Compact ontology mode reduces response size by 70-90%
+- **🐳 Docker Support**: Containerized deployment with optional NGINX proxy
+- **📈 Observability**: Built-in metrics, tracing, and structured logging
+- **🔄 MCP Compliant**: Full protocol support (tools, resources, prompts)
 
-## Architecture
+## Quick Start
 
-The GRC MCP Server acts as a bridge between AI agents and the OpenPages GRC platform. It supports two modes of operation:
+### Prerequisites
 
-### Remote Mode (HTTP)
+- **Python 3.12 or higher** ([Download](https://www.python.org/downloads/))
+- **Docker and Docker Compose** (for containerized deployment)
+- **Access to IBM OpenPages GRC instance** with:
+  - Base URL
+  - Valid credentials (username/password or API key)
+  - Network connectivity to OpenPages server
+- **Git** (to clone repository)
 
-```
-┌───────────┐     ┌───────────────┐     ┌───────────────┐
-│ AI Agents │────▶│ GRC MCP Server│────▶│ OpenPages API │
-└───────────┘     └───────────────┘     └───────────────┘
-     MCP               HTTP/REST             REST API
-(streamable HTTP)
-```
+### First-Time Setup (Required for All Options)
 
-### Local Mode (stdio)
+Before using any deployment option, complete these steps:
 
-```
-┌───────────┐     ┌───────────────┐     ┌───────────────┐
-│ AI Agents │────▶│ GRC MCP Server│────▶│ OpenPages API │
-└───────────┘     └───────────────┘     └───────────────┘
-    stdio              HTTP/REST             REST API
-```
-
-## Prerequisites
-
-- Python 3.12 or higher
-- Docker and Docker Compose (for containerized deployment)
-- Access to an IBM OpenPages GRC instance
-
-## Installation
-
-### Local Development
-
-1. Clone the repository:
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/yourusername/grc-mcp-server.git
    cd grc-mcp-server
    ```
 
-2. Create a virtual environment and install dependencies:
+2. **Configure environment variables**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your OpenPages credentials and settings
+   ```
+   
+   **Minimum required settings in `.env`**:
+   
+   For Basic Authentication:
+   ```env
+   OPENPAGES_BASE_URL=https://your-openpages-instance.com
+   OPENPAGES_AUTHENTICATION_TYPE=basic
+   OPENPAGES_USERNAME=your_username
+   OPENPAGES_PASSWORD=your_password
+   ```
+   
+   For Bearer Authentication (IBM Cloud IAM, MCSP, CP4D):
+   ```env
+   OPENPAGES_BASE_URL=https://your-openpages-instance.com
+   OPENPAGES_AUTHENTICATION_TYPE=bearer
+   OPENPAGES_APIKEY=your_api_key
+   OPENPAGES_AUTHENTICATION_URL=https://iam.cloud.ibm.com/identity/token
+   ```
+   
+   See [`.env.example`](.env.example) for all available options and [Authentication Guide](docs/AUTHENTICATION.md) for different auth methods.
+
+Now choose your deployment method:
+
+---
+
+### Installation Options
+
+#### Option 1: Using Convenience Scripts (Recommended)
+
+**Best for**: Quick start, development, testing
+
+The scripts automatically handle dependency installation and virtual environment setup.
+
+**Remote Mode (HTTP Server)** - For production, multiple clients, web access:
+```bash
+# Linux/Mac
+./scripts/run_mcp.sh
+
+# Windows
+scripts\run_mcp.bat
+
+# Server starts on http://localhost:8000 (default, configurable via PORT env var)
+# Accessible via HTTP/REST API for multiple concurrent clients
+```
+
+**Local Mode (stdio transport)** - For MCP clients like Claude Desktop, single-user:
+```bash
+# Linux/Mac
+./scripts/run_mcp.sh local
+
+# Windows
+scripts\run_mcp.bat local
+
+# Runs as stdio process (no HTTP endpoint)
+# Communicates via standard input/output for MCP protocol
+# Used by AI assistants that spawn the server as a subprocess
+```
+
+#### Option 2: Docker/Podman Deployment
+
+**Best for**: Production deployments, containerized environments, scalability
+
+1. **Standalone Deployment** (without monitoring):
+   ```bash
+   # Using Docker
+   docker-compose up -d
+   
+   # Using Podman
+   podman-compose up -d
+   
+   # Server available at http://localhost:8000
+   ```
+
+2. **Deployment with Monitoring Stack** (Grafana, Prometheus, Jaeger, Loki):
+   
+   First, enable monitoring in `.env`:
+   ```env
+   # Enable observability features
+   OBSERVABILITY_ENABLED=true
+   METRICS_ENABLED=true
+   TRACING_ENABLED=true
+   
+   # Configure Jaeger endpoint (use Docker service name)
+   OTLP_ENDPOINT=http://grc-mcp-jaeger:4317
+   ```
+   
+   Then deploy:
+   ```bash
+   # Step 1: Start monitoring stack
+   cd monitoring
+   docker-compose up -d  # or podman-compose up -d
+   cd ..
+   
+   # Step 2: Deploy server with monitoring integration
+   docker-compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+   # or: podman-compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+   
+   # Access points:
+   # - Server: http://localhost:8000
+   # - Grafana: http://localhost:3000 (admin/admin)
+   # - Prometheus: http://localhost:9090
+   # - Jaeger: http://localhost:16686
+   ```
+
+3. **Available Docker Compose Profiles**:
+   
+   **with-proxy**: Adds NGINX reverse proxy for production
+   ```bash
+   docker-compose --profile with-proxy up -d
+   # Server available at http://localhost:80 (via NGINX)
+   # Direct access still available at http://localhost:8000
+   ```
+   
+   The `with-proxy` profile includes:
+   - NGINX reverse proxy on ports 80/443
+   - SSL/TLS termination support
+   - Load balancing capabilities
+   - Configuration via [`nginx/nginx.conf`](nginx/nginx.conf)
+
+**Note**: The server works independently with or without the monitoring stack. Monitoring is optional and can be added/removed at any time.
+#### Option 3: Manual Setup
+
+**Best for**: Full control, custom configurations, understanding internals, development without Docker
+
+1. **Create virtual environment and install dependencies**:
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
-3. Create a `.env` file with your OpenPages configuration:
-   ```
-   OPENPAGES_BASE_URL=https://your-openpages-server.example.com
-   OPENPAGES_USERNAME=your_username
-   OPENPAGES_PASSWORD=your_password
-   DEBUG=False
-   ```
-
-4. **Run the server using convenience scripts:**
-
-   The project provides convenient scripts that handle dependency installation and virtual environment setup automatically:
-
-   **Remote Mode (HTTP Server)** - Default mode for API access:
+2. **Run the server**:
    ```bash
-   # Linux/Mac
-   ./scripts/run_mcp.sh
-   
-   # Windows
-   scripts\run_mcp.bat
-   
-   # Server will start on http://localhost:8000
-   ```
-
-   **Local Mode (stdio)** - For direct MCP client integration:
-   ```bash
-   # Linux/Mac
-   ./scripts/run_mcp.sh local
-   
-   # Windows
-   scripts\run_mcp.bat local
-   ```
-
-   **Manual execution** (if you prefer not to use the scripts):
-   ```bash
-   # Remote mode
+   # Remote mode (HTTP server, default port 8000)
    python main.py --mode remote
    
-   # Local mode
+   # Remote mode with custom port
+   python main.py --mode remote --port 8080
+   
+   # Local mode (stdio transport for MCP clients)
    python main.py --mode local
    ```
    
+   **Mode Selection Guide**:
+   - **Remote mode**: Use when you need HTTP/REST API access, multiple concurrent clients, or web-based access. Port is configurable via `--port` flag or `PORT` environment variable.
+   - **Local mode**: Use when integrating with MCP clients (Claude Desktop, MCP Inspector) that communicate via stdio. No network port required.
 
-### Docker Deployment
+---
 
-**Note:** Docker deployment always runs in **remote mode (HTTP)** for API access.
+### Verify Installation
 
-1. Create a `.env` file based on the provided `.env.example`:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your OpenPages configuration
-   ```
+After starting the server, verify it's working:
 
-2. Build and run using Docker Compose:
-   ```bash
-   docker-compose up -d
-   # Server will be available at http://localhost:8000
-   ```
-
-3. For production deployment with NGINX:
-   ```bash
-   docker-compose --profile with-proxy up -d
-   ```
-
-4. Testing the deployment:
-   ```bash
-   # Check if the server is running
-   curl http://localhost:8000/
-   
-   # Expected response:
-   # {"status":"GRC MCP Server is running"}
-   
-   # List available tools using the JSON-RPC endpoint
-   curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":"tools-list-request"}' http://localhost:8000/mcp
-   
-   # Use the provided test script to test all endpoints
-   python scripts/test/test_mcp_client.py
-
-   # Run specific tests
-   python scripts/test/test_mcp_client.py health initialize tools_list list_tools tools_invoke notifications ping resources_list resources_read call shutdown
-   
-   # The test script includes tests for the complete MCP lifecycle:
-   # - initialize: Tests the MCP server initialization
-   # - list_tools: Tests the MCP tool discovery
-   # - call_tool: Tests the MCP tool execution
-   # - shutdown: Tests the MCP server shutdown
-   ```
-
-> **Note:** Environment variables are configured in the following order of precedence:
-> 1. Values passed directly to the container at runtime
-> 2. Values from the docker-compose.yml file (which can use host environment variables)
-> 3. Values from the .env file
-> 4. Default empty values in the Dockerfile
->
-> **Using Podman:** If you're using Podman instead of Docker, follow these steps:
->
-> 1. Uncomment the volume mount lines in docker-compose.yml if you encounter path errors:
->    ```yaml
->    # Comment out volume mount if using podman and having path issues
->    # volumes:
->    #   - .:/app
->    ```
->
-> 2. Run with podman-compose:
->    ```bash
->    podman-compose -f docker-compose.yml up -d
->    ```
->
-> 3. If you still encounter path errors, try building and running the container directly:
->    ```bash
->    podman build -t grc-mcp-server .
->    podman run -d -p 8000:8000 \
->      -e OPENPAGES_BASE_URL=your_url \
->      -e OPENPAGES_USERNAME=your_username \
->      -e OPENPAGES_PASSWORD=your_password \
->      grc-mcp-server
->    ```
->
-> 4. If you encounter Python module import errors, try using the simplified deployment approach:
->    ```bash
->    # Build with the simplified main.py at the root
->    podman build -t grc-mcp-server .
->
->    # Run the container
->    podman run -d -p 8000:8000 \
->      -e OPENPAGES_BASE_URL=your_url \
->      -e OPENPAGES_USERNAME=your_username \
->      -e OPENPAGES_PASSWORD=your_password \
->      grc-mcp-server
->    ```
->
->    The Dockerfile is configured to use a simplified main.py file that explicitly sets up the Python path.
->
-> Note that some Docker features like HEALTHCHECK are not supported in Podman's OCI image format.
-
-### SQL Query Tool
-
-The server provides a direct SQL query tool for executing SQL-like queries against OpenPages:
-
-#### execute_openpages_query
-- **Description**: Execute OpenPages queries directly against the OpenPages query API
-- **Parameters**:
-  - `query`: OpenPages query statement (required)
-    - Example: `SELECT [Name], [Description] FROM [SOXIssue] WHERE [Status] = "Active" LIMIT 10`
-  - `offset`: Result offset for pagination (optional, default: 0)
-  - `limit`: Maximum number of results (optional, default: 100, max: 500)
-  - `format`: Output format (optional, default: "table")
-    - `table`: Formatted table view
-    - `json`: JSON format
-    - `list`: Detailed list format
-
-**Example Usage:**
-```json
-{
-  "name": "execute_openpages_query",
-  "arguments": {
-    "query": "SELECT [Resource ID], [Name], [Description] FROM [SOXIssue] WHERE [Name] LIKE '%Risk%' LIMIT 5",
-    "format": "table"
-  }
-}
+**1. Check server health:**
+```bash
+curl http://localhost:8000/health
+# Expected: {"status":"healthy",...}
 ```
 
-**Query Syntax:**
-- **All entity names (object types and field names) must be enclosed in square brackets**: `[EntityName]`
-- Standard SQL operators: `=`, `<>`, `<`, `>`, `<=`, `>=`, `LIKE`, `IS NULL`, `IS NOT NULL`
-- Logical operators: `AND`, `OR`, `NOT`
-- Text search: `CONTAINS()`, `NOT CONTAINS()`
-- IN operator: `IN (value1, value2, ...)`, `NOT IN (...)`
-- Sorting: `ORDER BY [Field] ASC/DESC`
-- Pagination: `LIMIT n` and `OFFSET n`
-- Joins: `JOIN`, `OUTER JOIN` with `PARENT()`, `CHILD()`, `ANCESTOR()` predicates
-- Aggregation: `COUNT(*)`, `COUNT([Field])`
-- Grouping: `GROUP BY [Field]`
-## MCP Resources
+**2. List available tools:**
+```bash
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":"1"}'
+# Expected: JSON response with list of available tools
+```
 
-The server provides **MCP resources** that expose OpenPages object type schemas to AI agents. Resources enable agents to discover available object types, their fields, data types, validation rules, and enum values dynamically.
+**3. Test listing resources:**
+```bash
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_resources","arguments":{}},"id":"1"}'
+# Expected: JSON response with available ontology resources
+```
 
-### Available Resources
-
-Resources follow the URI pattern: `openpages://schema/{type_id}`
-
-For each configured object type in `object_types.json`, a schema resource is automatically available:
-
-| Resource URI | Description |
-|--------------|-------------|
-| `openpages://schema/SOXControl` | Schema definition for Control objects |
-| `openpages://schema/SOXIssue` | Schema definition for Issue objects |
-| `openpages://schema/SOXRisk` | Schema definition for Risk objects |
-
-### Resource Content Structure
-
-Each schema resource provides comprehensive information about an object type:
-
-```json
-{
-  "type_id": "SOXIssue",
-  "display_name": "Issue",
-  "namespace": "openpages",
-  "path_prefix": "Issue",
-  "description": "Schema definition for Issue objects in OpenPages",
-  "field_count": 25,
-  "fields": [
-    {
-      "name": "Name",
-      "label": "Name",
-      "data_type": "STRING_TYPE",
-      "description": "Issue name",
-      "required": true,
-      "read_only": false
+**4. Test a query (replace with your object type):**
+```bash
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0",
+    "method":"tools/call",
+    "params":{
+      "name":"execute_openpages_query",
+      "arguments":{
+        "query":"SELECT [Name] FROM [SOXIssue]",
+        "limit":10,
+        "format":"json"
+      }
     },
-    {
-      "name": "OPSS-Iss:Status",
-      "label": "Status",
-      "data_type": "ENUM_TYPE",
-      "description": "Issue status",
-      "required": false,
-      "read_only": false,
-      "enum_values": [
-        {"name": "Open", "label": "Open"},
-        {"name": "Closed", "label": "Closed"}
-      ]
-    }
-  ],
-  "configuration": {
-    "create_fields": {
-      "include_all_fields": false,
-      "fields": ["OPSS-Iss:Status", "OPSS-Iss:Priority"]
-    },
-    "query_filters": {
-      "fields": ["OPSS-Iss:Status", "OPSS-Iss:Priority"]
-    }
-  }
-}
+    "id":"1"
+  }'
+# Expected: JSON response with query results
 ```
 
-### Using Resources
+**Success indicators**:
+- Health endpoint returns `"status":"healthy"`
+- Tools list shows available tools (e.g., `openpages_upsert_object`, `execute_openpages_query`)
+- Resources are listed successfully
+- Query returns data from OpenPages
+- No authentication errors in logs
 
-AI agents can use resources to:
-1. **Discover available object types** via `list_resources`
-2. **Learn field schemas** via `read_resource` with a specific URI
-3. **Construct accurate queries** using correct field names and types
-4. **Validate data** before creating or updating objects
-5. **Understand enum values** for dropdown fields
+**If verification fails**, see [Troubleshooting](#troubleshooting) section below.
 
-**Example MCP Resource Request:**
-```json
-{
-  "method": "resources/read",
+### Next Steps
 
-## Generic Object Management Tool
+1. **Configure object types** (optional): Edit [`src/app/config/object_types.json`](src/app/config/object_types.json) to add or modify object types, then restart the server to load changes
 
-The server provides a **generic object management tool** (`openpages_manage_object`) that leverages MCP resources for schema-aware CRUD operations. This tool can work with any configured object type without requiring explicit tool definitions per type.
+2. **Set up monitoring** (optional): See [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) for enabling metrics, distributed tracing, and log aggregation
 
-### Tool: `openpages_manage_object`
+3. **Deploy to production**: See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for production deployment patterns, security hardening, and scaling strategies
 
-**Description**: Schema-aware generic tool for managing OpenPages objects. Automatically fetches object schemas from MCP resources, validates field names and types, and performs create, read, update, and delete operations.
+4. **Integrate with AI agents**: See [Using with AI Agents](#using-with-ai-agents) section for configuring Claude Desktop, Bob, MCP Inspector, and custom AI integrations
 
-**Key Features**:
-- **Dynamic Schema Validation**: Fetches and validates against object schemas from resources
-- **Field Name Mapping**: Supports both simplified ("Status") and full qualified names ("OPSS-Iss:Status")
-- **Enum Validation**: Validates enum field values against schema definitions
-- **Type Checking**: Ensures field values match expected data types
-- **Helpful Error Messages**: Provides clear feedback for invalid fields or values
+5. **Explore authentication options**: Review [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md) for different authentication methods (Basic, IBM Cloud IAM, MCSP, CP4D) and configuration examples
 
-**Parameters**:
-- `object_type` (required): Type of OpenPages object (e.g., "SOXIssue", "SOXControl", "SOXRisk")
-- `operation` (required): Operation to perform - "create", "read", "update", or "delete"
-- `name` (optional): Object name (required for create, optional for update)
-- `description` (optional): Object description
-- `resource_id` (optional): Resource ID for read/update/delete operations
-- `path` (optional): Full object path (alternative to resource_id)
-- `primary_parent_id` (optional): Parent object ID for create operations
-- `fields` (optional): Dictionary of field values with validation
-
-**Example Usage**:
-
-```json
-{
-  "name": "openpages_manage_object",
-  "arguments": {
-    "object_type": "SOXIssue",
-    "operation": "create",
-    "name": "Security Vulnerability",
-    "description": "Critical security issue found in production",
-    "fields": {
-      "Status": "Open",
-      "Priority": "High",
-      "Severity": "Critical"
-    }
-  }
-}
-```
-
-**Workflow with Resources**:
-1. Agent calls `resources/list` to discover available object types
-2. Agent calls `resources/read` with URI `openpages://schema/SOXIssue` to get field definitions
-3. Agent calls `openpages_manage_object` with validated data
-4. Tool validates fields against schema and performs operation
-
-**Benefits Over Type-Specific Tools**:
-- Single tool for all object types (no need for separate tools per type)
-- Automatic schema validation prevents invalid data
-- Simplified field names for better usability
-- Dynamic discovery of available fields through resources
-- Consistent interface across all object types
-
-  "params": {
-    "uri": "openpages://schema/SOXIssue"
-  }
-}
-```
-
-
-## Available Tools
-
-The server provides generic **Data tools** for any OpenPages object type configured in `src/app/config/object_types.json`. These tools enable data operations (create, read, update, delete) on OpenPages objects.
-
-### Tool Naming Convention
-
-Tools follow the pattern: `<namespace>_<operation>_<objecttype>` (if namespace is configured) or `<operation>_<objecttype>` (if no namespace)
-
-### Generic Object Operations
-
-For each configured object type, three operations are available:
-
-#### 1. Upsert (Create or Update)
-- **Tool Pattern**: `<namespace>_upsert_<objecttype>` or `upsert_<objecttype>`
-- **Description**: Automatically creates a new object or updates an existing one based on provided identifiers
-- **Key Parameters**:
-  - `name`: Object name (required)
-  - `id`: Resource ID for direct lookup (optional)
-  - `path`: Full path for lookup (optional)
-  - `operation`: Mode - "insert", "update", or "auto" (default)
-  - Object-specific fields based on type schema
-  - `additional_fields`: JSON object for custom fields
-
-#### 2. Query (Search)
-- **Tool Pattern**: `<namespace>_query_<objecttype>s` or `query_<objecttype>s`
-- **Description**: Search and retrieve objects with filtering capabilities
-- **Key Parameters**:
-  - `name`: Filter by object name (partial match)
-  - `filters`: Dynamic field filters based on object configuration
-  - `owner_filter`: Filter by current user (boolean)
-  - `limit`: Maximum results (default: 20)
-  - `sort_by`: Field to sort by
-  - `sort_order`: ASC or DESC
-
-#### 3. Delete
-- **Tool Pattern**: `<namespace>_delete_<objecttype>` or `delete_<objecttype>`
-- **Description**: Delete an existing object
-- **Key Parameters**:
-  - `resource_id`: Resource ID, or
-  - `path`: Full path to the object
-
-### Default Configured Object Types
-
-The server comes pre-configured with three OpenPages object types:
-
-| Object Type | Tool Prefix | Namespace | Example Tools |
-|-------------|-------------|-----------|---------------|
-| SOXControl | control | openpages | `openpages_upsert_control`, `openpages_query_controls`, `openpages_delete_control` |
-| SOXIssue | issue | openpages | `openpages_upsert_issue`, `openpages_query_issues`, `openpages_delete_issue` |
-| SOXRisk | risk | openpages | `openpages_upsert_risk`, `openpages_query_risks`, `openpages_delete_risk` |
-
-### Dynamic Tool Configuration with object_types.json
-
-The server's data tools are dynamically generated from the `src/app/config/object_types.json` configuration file. This provides flexibility to add, modify, or remove OpenPages object types without changing the server code.
-
-#### Configuration Structure
-
-The configuration file contains two main sections:
-
-1. **Global Settings**: Controls server-wide behavior
-   ```json
-   {
-     "global_settings": {
-       "output_format": "json",
-       "output_format_description": "Global output format for all tool responses. Options: 'text' (human-readable) or 'json' (structured, machine-readable for agents)"
-     }
-   }
-   ```
-
-2. **Object Types**: Defines each OpenPages object type and its associated tools
-   ```json
-   {
-     "object_types": [
-       {
-         "type_id": "SOXControl",           // OpenPages object type ID
-         "tool_prefix": "control",          // Prefix for tool names
-         "display_name": "Control",         // Human-readable name
-         "path_prefix": "Controls",         // Path prefix in OpenPages
-         "namespace": "openpages",          // Tool namespace (optional)
-         "tool_descriptions": {             // Custom descriptions for each operation
-           "upsert": "Create or update a SOX control...",
-           "query": "Search and retrieve SOX controls...",
-           "delete": "Delete an existing SOX control..."
-         },
-         "create_fields": {                 // Fields available for create/update
-           "include_all_fields": true,      // Include all object fields
-           "fields": [                      // Specific fields to include
-             "OPSS-Ctl:Status",
-             "OPSS-Ctl:Type"
-           ]
-         },
-         "query_filters": {                 // Fields available for filtering
-           "fields": [
-             "OPSS-Ctl:Status",
-             "OPSS-Ctl:Type"
-           ]
-         }
-       }
-     ]
-   }
-   ```
-
-#### Adding Custom Object Types
-
-To add support for additional OpenPages object types:
-
-1. **Edit the configuration file** (`src/app/config/object_types.json`):
-   ```json
-   {
-     "object_types": [
-       {
-         "type_id": "YourObjectType",
-         "tool_prefix": "yourobject",
-         "display_name": "Your Object",
-         "path_prefix": "YourObjects",
-         "namespace": "openpages",
-         "tool_descriptions": {
-           "upsert": "Create or update your object in OpenPages...",
-           "query": "Search and retrieve your objects from OpenPages...",
-           "delete": "Delete your object from OpenPages..."
-         },
-         "create_fields": {
-           "include_all_fields": true,
-           "fields": ["YourField1", "YourField2"]
-         },
-         "query_filters": {
-           "fields": ["YourField1", "YourField2"]
-         }
-       }
-     ]
-   }
-   ```
-
-2. **Restart the server** to load the new configuration:
-   ```bash
-   # Docker
-   docker-compose restart
-   
-   # Local
-   ./scripts/run_mcp.sh
-   ```
-
-3. **Verify the new tools** are available:
-   ```bash
-   curl -X POST -H "Content-Type: application/json" \
-     -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":"1"}' \
-     http://localhost:8000/mcp
-   ```
-
-#### Configuration Options Explained
-
-- **`type_id`**: Must match the exact OpenPages object type identifier
-- **`tool_prefix`**: Used to generate tool names (e.g., `control` → `openpages_upsert_control`)
-- **`display_name`**: Human-readable name shown in tool descriptions
-- **`path_prefix`**: Default path prefix when creating objects in OpenPages
-- **`namespace`**: Optional namespace to group related tools (e.g., `openpages`)
-- **`tool_descriptions`**: Custom descriptions for each operation (upsert, query, delete)
-- **`create_fields.include_all_fields`**:
-  - `true`: Include all available fields from OpenPages schema
-  - `false`: Only include fields listed in the `fields` array
-- **`create_fields.fields`**: Specific fields to include for create/update operations
-- **`query_filters.fields`**: Fields that can be used for filtering in query operations
-
-#### Benefits of Dynamic Configuration
-
-- **No Code Changes**: Add new object types without modifying server code
-- **Flexible Field Control**: Choose which fields to expose for each object type
-- **Custom Descriptions**: Provide context-specific tool descriptions
-- **Easy Maintenance**: Update configurations without redeployment
-- **Multi-Tenant Support**: Different configurations for different environments
-
-## API Endpoints
-
-- `GET /`: Health check endpoint
-- `POST /mcp`: JSON-RPC 2.0 endpoint for all MCP communication
-
-### Supported JSON-RPC Methods
-
-- `initialize`: Initialize the MCP server connection
-- `tools/list`: List available tools
-- `tools/invoke`: Call a specific tool
-- `resources/list`: List available resources
-- `resources/read`: Read a specific resource
-- `ping`: Check connection health
-- `notifications/initialized`: Client notification about initialization completion
-- `shutdown`: Graceful termination of the session
-
-#### Legacy Method Support
-For backward compatibility, the following legacy method names are also supported:
-- `list_tools`: Maps to `tools/list`
-- `call_tool`: Maps to `tools/invoke`
-
-## MCP Protocol Implementation
-
-This server implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/specification/2025-03-26/basic/lifecycle) with streamable HTTP transport. It follows the complete MCP lifecycle:
-
-1. **Initialization**: The server supports the `initialize` method, which returns server capabilities and metadata.
-   - Complies with the MCP specification by including required fields:
-     - `serverInfo`: Server metadata including name, version, and description
-     - `capabilities`: Supported capabilities with proper format
-     - `tools`: List of available tools with descriptions and input schemas
-     - `resources`: List of available resources with URIs and descriptions
-   - Capabilities include:
-     - `tools.list` and `tools.invoke`: For tool discovery and execution
-     - `resources.list` and `resources.read`: For resource management
-     - `prompts.list`: Disabled as not supported
-     - `completion`: For completion support
-
-2. **Tool Discovery**: The server supports the `tools/list` method to discover available tools.
-   - Returns a list of available tools with their descriptions and parameters
-   - Also supports legacy `list_tools` method for backward compatibility
-
-3. **Tool Execution**: The server supports the `tools/invoke` method to execute specific tools.
-   - Accepts tool name and parameters
-   - Returns results in the specified format
-   - Also supports legacy `call_tool` method for backward compatibility
-
-4. **Resource Management**: The server supports resource-related methods:
-   - `resources/list`: Lists available resources
-   - `resources/read`: Reads a specific resource by URI
-
-5. **Notifications**: The server supports the `notifications/initialized` method.
-   - Handles client notifications about initialization completion
-
-6. **Ping**: The server supports the `ping` method for connection health checks.
-   - Returns an empty object response as required by the MCP specification
-
-7. **Shutdown**: The server supports the `shutdown` method for graceful termination.
-   - Allows clients to signal they're done with the session
-
-### Streamable HTTP Transport
-
-The server uses the streamable HTTP transport protocol as defined in the MCP specification. This allows for:
-
-- JSON-RPC 2.0 formatted requests and responses
-- Single endpoint (`/mcp`) for all MCP methods
-- Stateless communication
-- Compatibility with HTTP clients and proxies
-- Support for both synchronous and asynchronous operations
 
 ## Configuration
 
+The server is configured through environment variables and JSON configuration files.
+
 ### Environment Variables
 
-Create a `.env` file in the project root (see `.env.example` for all options):
+The `.env` file in the project root contains server configuration:
 
 ```env
-# Application
-APP_NAME=GRC MCP Server
-DEBUG=False
-SERVER_MODE=remote
-
-# Server
-HOST=0.0.0.0
-PORT=8000
-
-# OpenPages
-OPENPAGES_BASE_URL=https://your-server.example.com
-OPENPAGES_AUTHENTICATION_TYPE=basic
+# OpenPages Connection
+OPENPAGES_BASE_URL=https://your-openpages-server.com
+OPENPAGES_AUTHENTICATION_TYPE=basic  # or bearer
 OPENPAGES_USERNAME=your_username
 OPENPAGES_PASSWORD=your_password
 
-# SSL
+# For Bearer Authentication (IBM Cloud IAM, MCSP, CP4D)
+OPENPAGES_APIKEY=your_api_key
+OPENPAGES_AUTHENTICATION_URL=https://iam.cloud.ibm.com/identity/token
+
+# Server Settings
+SERVER_MODE=remote  # or local
+HOST=0.0.0.0
+PORT=8000
+DEBUG=False
 SSL_VERIFY=True
 
 # Logging
@@ -644,39 +326,463 @@ LOG_FORMAT=json
 OBSERVABILITY_ENABLED=True
 METRICS_ENABLED=True
 TRACING_ENABLED=False
-RATE_LIMIT_ENABLED=True
-RATE_LIMIT_REQUESTS_PER_MINUTE=60
 ```
 
-### Command-Line Arguments
+See [`.env.example`](.env.example) for all available configuration options.
 
-```bash
-python main.py [-h] [--mode {remote,local}] [--host HOST] [--port PORT] [--debug]
+### Authentication Methods
 
-Options:
-  --mode {remote,local}  Server mode (default: remote)
-  --host HOST           Bind host (remote mode only, default: 0.0.0.0)
-  --port PORT           Bind port (remote mode only, default: 8000)
-  --debug               Enable debug mode
+The server supports multiple authentication methods for connecting to OpenPages:
+
+| Method | Type | Required Credentials |
+|--------|------|---------------------|
+| **Basic** | `basic` | Username + Password |
+| **IBM Cloud IAM** | `bearer` | API Key + Auth URL |
+| **MCSP** | `bearer` | API Key + Auth URL |
+| **CP4D** | `bearer` | Username + Password + Auth URL |
+
+For detailed authentication configuration, see [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md).
+
+### Object Types Configuration
+
+The server's tools and resources are dynamically generated based on [`src/app/config/object_types.json`](src/app/config/object_types.json). This file controls which OpenPages object types are exposed and how tools behave.
+
+#### Global Settings
+
+```json
+{
+  "global_settings": {
+    "tool_exposure_mode": "ontology_based",
+    "namespace": "openpages",
+    "output_format": "json"
+  }
+}
 ```
 
-**Examples:**
-```bash
-# Remote mode on custom port
-python main.py --mode remote --host 0.0.0.0 --port 8000
+| Setting | Options | Description |
+|---------|---------|-------------|
+| `tool_exposure_mode` | `ontology_based`, `type_based`, `all` | Controls which tools are exposed:<br>• `ontology_based` - Generic tools (e.g., `openpages_upsert_object`)<br>• `type_based` - Type-specific tools (e.g., `openpages_upsert_issue`)<br>• `all` - Both generic and type-specific tools |
+| `namespace` | string | Global namespace prefix for tools (default: `openpages`) |
+| `output_format` | `json`, `text` | Default output format for tool responses |
 
-# Local mode (stdio)
-python main.py --mode local
+#### Object Type Configuration
 
-# Debug mode
-python main.py --mode remote --debug
+Each object type in the `object_types` array defines:
+
+```json
+{
+  "object_types": [
+    {
+      "type_id": "SOXIssue",
+      "tool_prefix": "issue",
+      "display_name": "Issue",
+      "path_prefix": "Issue",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an issue...",
+        "query": "Search and retrieve issues..."
+      },
+      "create_fields": {
+        "include_all_fields": false,
+        "fields": ["@OPSS-Iss"]
+      },
+      "query_filters": {
+        "fields": ["@OPSS-Iss"]
+      }
+    }
+  ]
+}
 ```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type_id` | Yes | OpenPages object type ID (e.g., `SOXIssue`, `SOXControl`) |
+| `tool_prefix` | Yes | Prefix for type-based tool names (e.g., `issue` → `openpages_upsert_issue`) |
+| `display_name` | Yes | Human-readable name for the object type |
+| `path_prefix` | Yes | Path prefix in OpenPages (e.g., `Issue`, `Controls`) |
+| `namespace` | No | Override global namespace for this type |
+| `tool_descriptions` | No | Custom descriptions for `upsert` and `query` tools |
+| `create_fields` | No | Fields configuration for create/update operations |
+| `query_filters` | No | Fields available for filtering in queries |
+
+#### Field Configuration
+
+**Field Groups**: Use `@GroupPrefix` to include all fields from a field group:
+- `"@OPSS-Iss"` - Includes all fields with `OPSS-Iss:` prefix
+- `"@OPSS-Ctl"` - Includes all fields with `OPSS-Ctl:` prefix
+
+**Individual Fields**: Specify exact field names:
+- `"OPSS-Iss:Status"`
+- `"OPSS-Ctl:Owner"`
+
+**Mixed Approach**: Combine groups and individual fields:
+```json
+"fields": ["@OPSS-Iss", "CustomField:Value"]
+```
+
+**include_all_fields**: When `true`, includes all fields from the object type's schema in addition to specified fields.
+
+#### Example Configurations
+
+**Minimal Configuration** (uses all fields):
+```json
+{
+  "type_id": "Register",
+  "tool_prefix": "usecase",
+  "display_name": "Use Case",
+  "path_prefix": "Registers",
+  "create_fields": {
+    "include_all_fields": true
+  }
+}
+```
+
+**Field Group Configuration**:
+```json
+{
+  "type_id": "SOXIssue",
+  "tool_prefix": "issue",
+  "display_name": "Issue",
+  "path_prefix": "Issue",
+  "create_fields": {
+    "include_all_fields": false,
+    "fields": ["@OPSS-Iss"]
+  },
+  "query_filters": {
+    "fields": ["@OPSS-Iss"]
+  }
+}
+```
+
+**Individual Fields Configuration**:
+```json
+{
+  "type_id": "SOXRisk",
+  "tool_prefix": "risk",
+  "display_name": "Risk",
+  "path_prefix": "Risk",
+  "create_fields": {
+    "include_all_fields": true,
+    "fields": [
+      "OPSS-Rsk:Status",
+      "OPSS-Rsk:RiskLevel",
+      "OPSS-Rsk:Owner"
+    ]
+  },
+  "query_filters": {
+    "fields": [
+      "OPSS-Rsk:Status",
+      "OPSS-Rsk:RiskLevel"
+    ]
+  }
+}
+```
+
+**After modifying this file, restart the server to apply changes.**
+
+## Available Tools
+
+The server provides dynamic tools for any OpenPages object type configured in [`src/app/config/object_types.json`](src/app/config/object_types.json).
+
+### Tool Exposure Modes
+
+The server supports three tool exposure modes, configurable via `tool_exposure_mode` in [`object_types.json`](src/app/config/object_types.json). The **default and recommended mode is `ontology_based`**.
+
+#### 1. Ontology-Based Tools (Generic) - Default & Recommended
+**Mode**: `ontology_based` ✅ **Currently Active**
+
+Generic tools that work with any object type by accepting `object_type` as a parameter:
+
+- **`openpages_upsert_object`**: Create or update any object type
+  - Accepts `object_type` parameter (e.g., "SOXIssue", "SOXControl", "SOXRisk")
+  - Automatically fetches and validates against object ontology
+  - Supports create, update, and upsert operations
+  - Example: `{"object_type": "SOXIssue", "operation": "create", "name": "New Issue", ...}`
+
+- **`openpages_query_objects`**: Query any object type
+  - Accepts `object_type` parameter
+  - Supports filtering, sorting, and pagination
+  - Example: `{"object_type": "SOXControl", "filters": {"Status": "Active"}, ...}`
+
+- **`openpages_delete_object`**: Delete any object
+  - Accepts `object_type` parameter
+  - Requires `resource_id` or `path`
+  - Example: `{"object_type": "SOXRisk", "resource_id": "12345"}`
+
+- **`openpages_associate_objects`**: Create associations between objects
+  - Link objects with parent-child or other relationships
+
+- **`openpages_dissociate_objects`**: Remove associations between objects
+  - Unlink related objects
+
+- **`execute_openpages_query`**: Advanced SQL-like query tool
+  - Execute complex queries across any object type
+  - Full OpenPages query syntax support
+
+**Benefits**:
+- Fewer tools to manage (6 generic tools vs 3 per object type)
+- Automatic ontology validation
+- Easier for AI agents to understand and use
+- Consistent interface across all object types
+- Supports relationship management
+
+#### 2. Type-Based Tools (Specific)
+**Mode**: `type_based`
+
+Dedicated tools for each configured object type with three operations per type:
+
+##### Upsert (Create or Update)
+- **Pattern**: `{namespace}_upsert_{objecttype}`
+- **Example**: `openpages_upsert_issue`, `openpages_upsert_control`
+- **Description**: Automatically creates or updates objects based on provided identifiers
+
+##### Query (Search)
+- **Pattern**: `{namespace}_query_{objecttype}s`
+- **Example**: `openpages_query_issues`, `openpages_query_controls`
+- **Description**: Search and retrieve objects with filtering capabilities
+
+##### Delete
+- **Pattern**: `{namespace}_delete_{objecttype}`
+- **Example**: `openpages_delete_issue`, `openpages_delete_control`
+- **Description**: Delete existing objects
+
+**Benefits**:
+- Explicit tool names for each object type
+- Type-specific parameter validation
+- Familiar pattern for traditional API users
+
+#### 3. All Tools Mode
+**Mode**: `all`
+
+Exposes both ontology-based and type-based tools simultaneously for maximum flexibility.
+
+### Configuring Tool Exposure Mode
+
+The current configuration in [`src/app/config/object_types.json`](src/app/config/object_types.json):
+
+```json
+{
+  "global_settings": {
+    "tool_exposure_mode": "ontology_based",  // ✅ Currently active
+    "namespace": "openpages"
+  }
+}
+```
+
+**Available Options**:
+- `"ontology_based"` ✅ - Generic tools only (default, recommended for AI agents)
+- `"type_based"` - Type-specific tools only (for traditional API patterns)
+- `"all"` - Both generic and type-specific tools
+
+Note : When using ontology_ based tools mode, AI agents can be instructed to use the ontology (published as resources and also accessible through tools) as context to the model when deciding how to construct content for the tools
+
+**To Change Mode**: Edit the `tool_exposure_mode` value in `object_types.json` and restart the server.
+
+### Query Tool Details
+
+```json
+{
+  "name": "execute_openpages_query",
+  "arguments": {
+    "query": "SELECT [Name], [Description] FROM [SOXIssue] WHERE [Status] = 'Active' LIMIT 10",
+    "format": "table"
+  }
+}
+```
+
+**Query Syntax**:
+- Entity names in square brackets: `[EntityName]`
+- Standard SQL operators: `=`, `<>`, `<`, `>`, `<=`, `>=`, `LIKE`, `IN`
+- Logical operators: `AND`, `OR`, `NOT`
+- Text search: `CONTAINS()`, `NOT CONTAINS()`
+- Sorting: `ORDER BY [Field] ASC/DESC`
+- Pagination: `LIMIT n OFFSET n`
+- Joins: `JOIN`, `OUTER JOIN` with `PARENT()`, `CHILD()` predicates
+
+For complete query grammar and examples, see [`docs/QUERY_GRAMMAR_RESOURCE.md`](docs/QUERY_GRAMMAR_RESOURCE.md).
+
+### Resource Tools
+
+For MCP clients that cannot use standard resource endpoints:
+
+- **`list_resources`**: List all available ontology resources
+- **`get_resource`**: Retrieve specific resource by URI
+
+For detailed information on resource tools and usage, see [`docs/RESOURCE_TOOLS.md`](docs/RESOURCE_TOOLS.md).
+
+### Context Variables
+
+All tools support optional context variables for multi-tenant scenarios and per-request authentication. Context variables are passed as additional parameters alongside regular tool arguments.
+
+#### Authentication Context
+
+- **`op_auth_header`**: Per-request authentication header
+  - Enables multi-tenant deployments where each request uses different credentials
+  - Overrides server-configured authentication for that specific request
+  - Format: `"Basic base64(username:password)"` or `"Bearer token"`
+  - Example: `{"object_type": "SOXIssue", "op_auth_header": "Bearer eyJ..."}`
+
+#### User Context
+
+- **`op_username`**: OpenPages username of the current user
+- **`op_user_profile_id`**: User profile ID
+- **`op_user_locale`**: User locale (e.g., "en_US", "fr_FR")
+- **`op_user_profile_name`**: User profile name
+
+#### View Context
+
+- **`op_view_type`**: Current view type (e.g., "task", "list", "report")
+- **`op_view_name`**: Current view name
+- **`op_object_type_name`**: Current object type being viewed
+- **`op_object_id`**: Current object ID
+- **`op_object_name`**: Current object name
+- **`op_workflow_stage`**: Current workflow stage
+
+#### Environment Context
+
+- **`op_base_url`**: OpenPages base URL
+
+**Implementation**: Context variables are extracted and validated by [`context.py`](src/app/mcp/context.py) and used by [`tool_handlers.py`](src/app/mcp/tool_handlers.py) for per-request authentication and logging.
+
+**Example with Context**:
+```json
+{
+  "name": "openpages_upsert_object",
+  "arguments": {
+    "object_type": "SOXIssue",
+    "operation": "create",
+    "name": "Security Issue",
+    "op_auth_header": "Bearer eyJhbGc...",
+    "op_username": "john.doe",
+    "op_user_profile_id": "12345"
+  }
+}
+```
+
+## MCP Resources
+
+The server exposes OpenPages object ontology as MCP resources:
+
+| Resource URI | Description |
+|--------------|-------------|
+| `openpages://catalog/object_types` | Catalog of all available object types |
+| `openpages://schema/{type_id}` | ontology for specific object type |
+| `openpages://query/grammar` | Query syntax grammar reference |
+
+**Example Usage**:
+```json
+{
+  "method": "resources/read",
+  "params": {
+    "uri": "openpages://schema/SOXIssue"
+  }
+}
+```
+
+**Documentation**:
+- Resource schema format: [`docs/RESOURCE_SCHEMA_FORMAT.md`](docs/RESOURCE_SCHEMA_FORMAT.md)
+- Query grammar reference: [`docs/QUERY_GRAMMAR_RESOURCE.md`](docs/QUERY_GRAMMAR_RESOURCE.md)
+- Resource tools: [`docs/RESOURCE_TOOLS.md`](docs/RESOURCE_TOOLS.md)
+
+## MCP Prompts
+
+The server provides AI-optimized prompts to help agents use the server effectively:
+
+- **`openpages-usage-guide`**: Comprehensive guide with best practices, workflows, and task-specific guidance
+
+**Example**:
+```json
+{
+  "method": "prompts/get",
+  "params": {
+    "name": "openpages-usage-guide",
+    "arguments": {
+      "task": "create issue"
+    }
+  }
+}
+```
+
+## API Endpoints
+
+### Remote Mode Endpoints
+
+- `GET /`: Server information and health endpoint discovery
+- `POST /mcp`: JSON-RPC 2.0 endpoint for all MCP communication
+- `GET /health`: Comprehensive health check
+- `GET /health/ready`: Readiness probe
+- `GET /health/live`: Liveness probe
+- `GET /health/startup`: Startup probe
+- `GET /metrics`: Prometheus metrics (if enabled)
+
+### Supported MCP Methods
+
+The server implements the MCP protocol version `2025-03-26` and supports the following methods:
+
+**Core Methods:**
+- `initialize`: Initialize MCP server connection and exchange capabilities
+
+**Tool Methods:**
+- `tools/list` (or `list_tools`): List available tools
+- `tools/call` (or `call_tool`): Execute a specific tool
+- `tools/invoke`: Execute a specific tool (alias for tools/call)
+
+**Resource Methods:**
+- `resources/list` (or `list_resources`): List available resources
+- `resources/read` (or `read_resource`): Read a specific resource
+
+**Prompt Methods:**
+- `prompts/list` (or `list_prompts`): List available prompts
+- `prompts/get` (or `get_prompt`): Get a specific prompt
+
+**Lifecycle Methods:**
+- `shutdown`: Graceful server termination
+
+**Note**: Both slash-notation (`tools/list`) and underscore-notation (`list_tools`) are supported for flexibility with different MCP clients.
 
 ## Using with AI Agents
 
+### Claude Desktop
+
+Add to Claude's MCP settings:
+```json
+{
+  "mcpServers": {
+    "openpages-grc": {
+      "url": "http://localhost:8000/mcp",
+      "protocol": "streamable_http"
+    }
+  }
+}
+```
+
+### Bob
+
+Add to Bob's MCP settings:
+```json
+{
+  "mcpServers":
+    {
+      "openpages-mcp-server":
+        {
+          "url": "http://localhost:8000/mcp",
+          "type": "streamable-http",
+          "headers": {},
+          "alwaysAllow":
+            [
+            ],
+          "disabled": false,
+          "disabledTools":
+            [
+            ]
+        }
+    }
+}
+```
+
 ### MCP Inspector
 
-**Remote mode:**
+**Remote mode**:
 ```json
 {
   "url": "http://localhost:8000/mcp",
@@ -684,38 +790,160 @@ python main.py --mode remote --debug
 }
 ```
 
-**Local mode:**
+**Local mode**:
 ```bash
-python3 /path/to/main.py --mode local
-# Or use convenience scripts
-./scripts/run_mcp.sh local
+python main.py --mode local
 ```
 
-### Claude Desktop
-
-Configure in Claude's MCP settings:
-```json
-{
-  "url": "https://your-mcp-server.example.com/mcp",
-  "protocol": "streamable_http"
-}
-```
-
-### Other AI Agents
+### Custom AI Agents
 
 Use the `/mcp` endpoint with JSON-RPC 2.0 protocol for integration with any MCP-compatible agent.
 
-## Testing
+## AI Agent Instructions
+
+The server provides comprehensive instructions for AI agents to effectively use the MCP server. These instructions are tailored to the two operational modes:
+
+### Available Instruction Sets
+
+| Mode | Document | Description |
+|------|----------|-------------|
+| **Overview** | [`docs/AGENT_INSTRUCTIONS_OVERVIEW.md`](docs/AGENT_INSTRUCTIONS_OVERVIEW.md) | Comparison and guidance for choosing between modes |
+| **Ontology-Based** | [`src/docs/MCP_SERVER_PROMPT.md`](src/docs/MCP_SERVER_PROMPT.md) | Resource-driven mode with dynamic ontology discovery |
+| **Type-Based** | [`docs/TYPE_BASED_MODE_PROMPT.md`](docs/TYPE_BASED_MODE_PROMPT.md) | Tool-driven mode with predefined typed tools |
+
+For a detailed comparison and guidance, see [`docs/AGENT_INSTRUCTIONS_OVERVIEW.md`](docs/AGENT_INSTRUCTIONS_OVERVIEW.md).
+
+
+## Testing the Server
+
+After deployment, verify the server is working correctly:
+
+### Using MCP Inspector
+
+The MCP Inspector provides an interactive UI to test tools and resources:
+
+**For Remote Mode**:
+1. Open MCP Inspector
+2. Configure connection:
+   ```json
+   {
+     "url": "http://localhost:8000/mcp",
+     "protocol": "streamable_http"
+   }
+   ```
+3. Test available tools and resources
+
+**For Local Mode**:
+```bash
+python main.py --mode local
+```
+
+### Using AI Agents
+
+Configure your AI agent (Claude Desktop, Bob, etc.) to connect to the server:
+1. Add server configuration to your AI agent's MCP settings
+2. Test basic operations:
+   - List available tools
+   - Read ontology resources
+   - Execute queries
+   - Create/update objects
+
+See [Using with AI Agents](#using-with-ai-agents) section for detailed configuration examples.
+
+For debugging and advanced testing options, see [`scripts/README.md`](scripts/README.md).
+
+## Observability & Monitoring
+
+### Features
+
+- **Structured Logging**: JSON-formatted logs with correlation IDs
+- **Distributed Tracing**: OpenTelemetry-based request tracing (optional)
+- **Metrics Collection**: Prometheus-compatible metrics endpoint
+- **Health Checks**: Multiple health check endpoints for different use cases
+
+### Quick Setup
+
+1. **Enable observability** in `.env`:
+   ```env
+   OBSERVABILITY_ENABLED=True
+   METRICS_ENABLED=True
+   TRACING_ENABLED=False
+   ```
+
+2. **Access metrics**:
+   ```bash
+   curl http://localhost:8000/metrics
+   ```
+
+3. **Health checks**:
+   ```bash
+   curl http://localhost:8000/health
+   curl http://localhost:8000/health/ready
+   curl http://localhost:8000/health/live
+   ```
+
+### Development Monitoring Stack
+
+For local development with Prometheus, Grafana, and Jaeger:
 
 ```bash
-# Test all endpoints
-python scripts/test/test_mcp_client.py
+cd monitoring
+docker-compose up -d
 
-# Test specific lifecycle stages
-python scripts/test/test_mcp_client.py initialize tools_list tools_invoke ping shutdown
+# Access monitoring tools:
+# Prometheus: http://localhost:9090
+# Grafana: http://localhost:3000
+# Jaeger: http://localhost:16686
+```
 
-# Run unit tests
-pytest tests/
+**Documentation**:
+- Complete observability guide: [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md)
+- Monitoring stack setup: [`monitoring/README.md`](monitoring/README.md)
+- Grafana dashboard import: [`monitoring/grafana/DASHBOARD_IMPORT_GUIDE.md`](monitoring/grafana/DASHBOARD_IMPORT_GUIDE.md)
+- Loki setup guide: [`monitoring/LOKI_SETUP_GUIDE.md`](monitoring/LOKI_SETUP_GUIDE.md)
+
+## Deployment Architectures
+
+### Remote Mode (Production)
+
+```
+AI Agents → NGINX (optional) → GRC MCP Server (Docker) → OpenPages API
+```
+
+**Use cases**: Production, multiple users, horizontal scaling
+
+### Local Mode (Development)
+
+```
+AI Agents → GRC MCP Server (Python process) → OpenPages API
+```
+
+**Use cases**: Development, testing, single-user scenarios
+
+For detailed deployment patterns, see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+## Project Structure
+
+```
+grc-mcp-server/
+├── src/app/
+│   ├── api/              # Health and metrics endpoints
+│   ├── auth/             # Authentication providers
+│   ├── core/             # OpenPages client
+│   ├── mcp/              # MCP server implementation
+│   ├── tools/            # Generic object tools
+│   ├── config/           # Settings and object_types.json
+│   └── observability/    # Logging, metrics, tracing
+├── scripts/
+│   ├── run_mcp.sh/bat    # Main run scripts
+│   ├── debug/            # Debug utilities
+│   └── test/             # Test scripts
+├── docs/                 # Documentation
+├── monitoring/           # Monitoring stack configs
+├── samples/              # Sample implementations
+├── main.py               # Application entry point
+├── docker-compose.yml
+└── requirements.txt
 ```
 
 ## Troubleshooting
@@ -723,20 +951,13 @@ pytest tests/
 ### Common Issues
 
 **"MCP Server not initialized"**
-- Verify OpenPages URL, credentials in `.env`
+- Verify OpenPages URL and credentials in `.env`
 - Check network connectivity to OpenPages
-- Review logs: `docker logs grc-mcp-server` or check console output
+- Review logs: `docker logs grc-mcp-server`
 
 **Wrong Endpoint (405/404 errors)**
 - Use `/mcp` endpoint, not `/` or `/sse`
 - Ensure client uses streamable HTTP protocol
-
-**Externally Managed Environment (Python)**
-```bash
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-```
 
 **OpenPages Connection Issues**
 ```bash
@@ -744,7 +965,7 @@ pip install -r requirements.txt
 env | grep OPENPAGES
 
 # Test connectivity
-curl -k https://your-openpages-server.example.com
+curl -k https://your-openpages-server.com
 ```
 
 **Missing Dependencies**
@@ -765,128 +986,66 @@ DEBUG=True
 LOG_LEVEL=DEBUG
 ```
 
+## Documentation
 
-## Observability & Monitoring
+### Core Documentation
 
-The server includes comprehensive observability features for production monitoring:
+- **[`docs/README.md`](docs/README.md)** - Documentation index and quick reference
+- **[`docs/SETUP.md`](docs/SETUP.md)** - Detailed setup instructions
+- **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)** - Deployment architectures and patterns
+- **[`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md)** - Authentication methods and configuration
 
-### Features
+### Features & Usage
 
-- **Structured Logging**: JSON-formatted logs with correlation IDs and context tracking
-- **Distributed Tracing**: OpenTelemetry-based request tracing (optional)
-- **Metrics Collection**: Prometheus-compatible metrics endpoint
-- **Rate Limiting**: Token bucket-based API protection
-- **Health Checks**: Multiple health check endpoints (readiness, liveness, startup)
+- **[`docs/RESOURCE_TOOLS.md`](docs/RESOURCE_TOOLS.md)** - Using MCP resources and resource tools
+- **[`docs/RESOURCE_SCHEMA_FORMAT.md`](docs/RESOURCE_SCHEMA_FORMAT.md)** - Schema resource format and structure
+- **[`docs/QUERY_GRAMMAR_RESOURCE.md`](docs/QUERY_GRAMMAR_RESOURCE.md)** - OpenPages query syntax and grammar
 
-### Quick Setup
+### Operations & Monitoring
 
-1. **Enable Observability** in `.env`:
-   ```env
-   OBSERVABILITY_ENABLED=True
-   METRICS_ENABLED=True
-   TRACING_ENABLED=False  # Enable if using Jaeger/OTLP
-   ```
+- **[`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md)** - Logging, metrics, and tracing configuration
+- **[`docs/HEALTH_CHECKS.md`](docs/HEALTH_CHECKS.md)** - Health check endpoints reference
+- **[`monitoring/README.md`](monitoring/README.md)** - Development monitoring stack setup
 
-2. **Access Metrics**:
-   ```bash
-   # Prometheus metrics endpoint
-   curl http://localhost:9090/metrics
-   ```
+### AI Agent Instructions
 
-3. **Health Checks**:
-   ```bash
-   curl http://localhost:8000/health        # Comprehensive
-   curl http://localhost:8000/health/ready  # Readiness probe
-   curl http://localhost:8000/health/live   # Liveness probe
-   ```
+- **[`docs/AGENT_INSTRUCTIONS_OVERVIEW.md`](docs/AGENT_INSTRUCTIONS_OVERVIEW.md)** - Comparison and guidance for choosing between modes
+- **[`src/docs/MCP_SERVER_PROMPT.md`](src/docs/MCP_SERVER_PROMPT.md)** - Ontology-based mode instructions
+- **[`docs/TYPE_BASED_MODE_PROMPT.md`](docs/TYPE_BASED_MODE_PROMPT.md)** - Type-based mode instructions
 
-### Development Monitoring Stack
+### Additional Resources
 
-For local development, a complete monitoring stack is available:
-
-```bash
-# Start Jaeger, Prometheus, and Grafana
-cd monitoring
-docker-compose up -d
-
-# Access monitoring tools
-# Jaeger UI: http://localhost:16686 (distributed tracing)
-# Prometheus: http://localhost:9090 (metrics)
-# Grafana: http://localhost:3000 (dashboards)
-```
-
-### Configuration Options
-
-```env
-# Logging
-LOG_LEVEL=INFO
-LOG_FORMAT=json
-LOG_FILE=/var/log/grc-mcp-server.log
-
-# Metrics
-METRICS_ENABLED=True
-METRICS_PORT=9090
-
-# Tracing (optional)
-TRACING_ENABLED=False
-OTLP_ENDPOINT=http://jaeger:4318
-CONSOLE_TRACING=False
-
-# Rate Limiting
-RATE_LIMIT_ENABLED=True
-RATE_LIMIT_REQUESTS_PER_MINUTE=60
-RATE_LIMIT_BURST_SIZE=10
-```
-
-### Available Metrics
-
-- Request count, duration, and status codes
-- Tool execution metrics
-- OpenPages API call metrics
-- Rate limiting metrics
-- System resource usage
-
-For complete observability documentation, see:
-- `docs/OBSERVABILITY.md` - Full observability guide
-- `docs/MONITORING_QUICKSTART.md` - Quick start guide
-- `monitoring/README.md` - Monitoring stack setup
-
-## Project Structure
-
-```
-grc-mcp-server/
-├── src/app/
-│   ├── api/              # Health and metrics endpoints
-│   ├── core/             # OpenPages client
-│   ├── mcp/              # MCP server implementation
-│   │   ├── local/        # Local (stdio) mode
-│   │   └── remote/       # Remote (HTTP) mode
-│   ├── tools/            # Generic object tools
-│   ├── config/           # Settings and object_types.json
-│   └── observability/    # Logging, metrics, tracing
-├── scripts/
-│   ├── run_mcp.sh/bat    # Main run scripts
-│   ├── debug/            # Debug utilities
-│   └── test/             # Test scripts
-├── docs/                 # Additional documentation
-├── monitoring/           # Prometheus/Grafana configs
-├── nginx/                # NGINX configuration
-├── main.py               # Application entry point
-├── docker-compose.yml
-└── requirements.txt
-```
-
-## Additional Documentation
-
-- `docs/SETUP_INSTRUCTIONS.md` - Detailed setup guide
-- `docs/DEPLOYMENT_ARCHITECTURE.md` - Deployment patterns
-- `docs/OBSERVABILITY.md` - Monitoring and observability
-- `docs/API_TESTING_GUIDE.md` - API testing examples
+- **[`scripts/README.md`](scripts/README.md)** - Deployment scripts and debugging tools
+- **[`docs/diagrams/README.md`](docs/diagrams/README.md)** - Architecture diagrams
+- **[`samples/`](samples/)** - Sample implementations and agent configurations
 
 ## Contributing
 
-Contributions are welcome! Please submit a Pull Request.
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
 
 ## License
 
-[Your License]
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## Support
+
+For issues, questions, or contributions:
+- Open an issue on GitHub
+- Review existing documentation in the [`docs/`](docs/) directory
+- Check the troubleshooting section above
+
+## Acknowledgments
+
+Built with:
+- [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [OpenTelemetry](https://opentelemetry.io/)
+- [Prometheus](https://prometheus.io/)
+
+---

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The GRC MCP Server provides comprehensive health check endpoints that work for both **containerized** (Docker/Kubernetes) and **native Python** deployments.
+The GRC MCP Server provides comprehensive health check endpoints that work for both **containerized** (Docker) and **native Python** deployments.
 
 ## Available Endpoints
 
@@ -84,21 +84,8 @@ The GRC MCP Server provides comprehensive health check endpoints that work for b
 ```
 
 **Use Cases**:
-- Kubernetes readiness probes
 - Load balancer health checks
 - Traffic routing decisions
-
-**Kubernetes Configuration**:
-```yaml
-readinessProbe:
-  httpGet:
-    path: /health/ready
-    port: 8000
-  initialDelaySeconds: 10
-  periodSeconds: 5
-  timeoutSeconds: 3
-  failureThreshold: 3
-```
 
 ---
 
@@ -120,21 +107,8 @@ readinessProbe:
 ```
 
 **Use Cases**:
-- Kubernetes liveness probes
 - Process monitoring
 - Automatic restart triggers
-
-**Kubernetes Configuration**:
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health/live
-    port: 8000
-  initialDelaySeconds: 30
-  periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 3
-```
 
 ---
 
@@ -157,21 +131,8 @@ livenessProbe:
 ```
 
 **Use Cases**:
-- Kubernetes startup probes
 - Delayed health checks during initialization
 - Preventing premature traffic routing
-
-**Kubernetes Configuration**:
-```yaml
-startupProbe:
-  httpGet:
-    path: /health/startup
-    port: 8000
-  initialDelaySeconds: 0
-  periodSeconds: 5
-  timeoutSeconds: 3
-  failureThreshold: 30  # Allow up to 150 seconds for startup
-```
 
 ---
 
@@ -288,88 +249,6 @@ services:
       retries: 3
 ```
 
----
-
-### Kubernetes Deployment
-
-Complete Kubernetes deployment with all probes:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: grc-mcp-server
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: grc-mcp-server
-  template:
-    metadata:
-      labels:
-        app: grc-mcp-server
-    spec:
-      containers:
-      - name: grc-mcp-server
-        image: grc-mcp-server:latest
-        ports:
-        - containerPort: 8000
-          name: http
-        env:
-        - name: OPENPAGES_BASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: openpages-config
-              key: base-url
-        - name: OPENPAGES_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: openpages-config
-              key: username
-        - name: OPENPAGES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: openpages-config
-              key: password
-        
-        # Startup probe - allows up to 150 seconds for initialization
-        startupProbe:
-          httpGet:
-            path: /health/startup
-            port: 8000
-          initialDelaySeconds: 0
-          periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 30
-        
-        # Liveness probe - restarts container if unhealthy
-        livenessProbe:
-          httpGet:
-            path: /health/live
-            port: 8000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
-        
-        # Readiness probe - removes from service if not ready
-        readinessProbe:
-          httpGet:
-            path: /health/ready
-            port: 8000
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 3
-        
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
-```
 
 ---
 
@@ -448,7 +327,7 @@ fi
 **Symptom**: `/health/ready` returns 503 for extended period
 
 **Solutions**:
-1. Increase `start_period` in Docker/Kubernetes
+1. Increase `start_period` in Docker healthcheck
 2. Check OpenPages connectivity
 3. Review server logs for initialization errors
 
@@ -480,7 +359,6 @@ fi
 
 1. **Use appropriate probes for your deployment**:
    - Docker: Use readiness probe
-   - Kubernetes: Use all three probes (startup, liveness, readiness)
    - Native: Use comprehensive health check for monitoring
 
 2. **Set appropriate timeouts**:
@@ -505,7 +383,6 @@ fi
 The health check system provides:
 - ✅ **Multiple endpoints** for different use cases
 - ✅ **Works in both containerized and native deployments**
-- ✅ **Kubernetes-compatible** probes
 - ✅ **Detailed component status**
 - ✅ **Minimal performance impact**
 - ✅ **Easy integration** with monitoring tools

@@ -1,0 +1,19 @@
+# Override file to connect GRC MCP Server to monitoring stack
+# Use this when you have the monitoring stack running
+#
+# Usage:
+#   podman-compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+#
+version: '3.8'
+
+services:
+  grc-mcp-server:
+    networks:
+      - monitoring
+
+networks:
+  monitoring:
+    external: true
+    name: monitoring_monitoring
+
+# Made with Bob

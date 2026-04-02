@@ -147,36 +147,66 @@ The GRC MCP Server supports two deployment modes:
 
 ### Remote Mode Deployment Options
 
-#### Option A: Docker Compose (Recommended)
-```yaml
-# docker-compose.yml
-services:
-  grc-mcp-server:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - OPENPAGES_BASE_URL=https://openpages.example.com
-      - OPENPAGES_USERNAME=admin
-      - OPENPAGES_PASSWORD=secret
-      - SERVER_MODE=remote
-    restart: unless-stopped
-```
+#### Option A: Standalone Deployment (Docker or Podman)
 
-**Deployment Steps**:
+**Basic deployment without monitoring:**
+
 ```bash
 # 1. Configure environment
 cp .env.example .env
-# Edit .env with your settings
+# Edit .env with your OpenPages settings
 
-# 2. Build and start
+# 2. Deploy with Docker
 docker-compose up -d
+
+# OR deploy with Podman
+podman-compose up -d
 
 # 3. Verify
 curl http://localhost:8000/health
 ```
 
-#### Option B: Docker Compose with NGINX
+**Access Points**:
+- Server: `http://localhost:8000`
+- Health: `http://localhost:8000/health`
+- Metrics: `http://localhost:8000/metrics`
+
+#### Option B: Deployment with Monitoring Stack
+
+**Full observability with Grafana, Prometheus, Jaeger, and Loki:**
+
+```bash
+# 1. Configure environment
+cp .env.example .env
+# Edit .env with your settings
+
+# 2. Start monitoring stack first
+cd monitoring
+docker-compose up -d  # or podman-compose up -d
+cd ..
+
+# 3. Deploy server with monitoring integration
+docker-compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+# OR with Podman:
+podman-compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+
+# 4. Verify
+curl http://localhost:8000/health
+```
+
+**Access Points**:
+- Server: `http://localhost:8000`
+- Grafana: `http://localhost:3000` (admin/admin)
+- Prometheus: `http://localhost:9090`
+- Jaeger: `http://localhost:16686`
+- Loki: `http://localhost:3100`
+
+**Key Files**:
+- `docker-compose.yml` - Base deployment (standalone)
+- `docker-compose.monitoring.yml` - Monitoring integration overlay
+- `monitoring/docker-compose.yml` - Monitoring stack
+
+#### Option C: Docker Compose with NGINX
 ```bash
 # Start with reverse proxy
 docker-compose --profile with-proxy up -d
@@ -185,37 +215,6 @@ docker-compose --profile with-proxy up -d
 **Access Points**:
 - Direct: `http://localhost:8000`
 - Via NGINX: `http://localhost:80` or `https://localhost:443`
-
-#### Option C: Kubernetes Deployment
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: grc-mcp-server
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: grc-mcp-server
-  template:
-    metadata:
-      labels:
-        app: grc-mcp-server
-    spec:
-      containers:
-      - name: grc-mcp-server
-        image: grc-mcp-server:latest
-        ports:
-        - containerPort: 8000
-        env:
-        - name: OPENPAGES_BASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: openpages-credentials
-              key: base-url
-        - name: SERVER_MODE
-          value: "remote"
-```
 
 ---
 
@@ -325,7 +324,29 @@ spec:
 
 ### Local Mode Deployment Options
 
-#### Option A: Direct Python Execution
+#### Option A: Using Convenience Scripts (Recommended)
+
+**Linux/Mac**:
+```bash
+# Run local MCP server (stdio mode)
+./scripts/run_mcp.sh local
+
+# The script automatically:
+# - Creates virtual environment if needed
+# - Installs dependencies
+# - Loads .env file
+# - Starts server in local mode
+```
+
+**Windows**:
+```cmd
+# Run local MCP server (stdio mode)
+scripts\run_mcp.bat local
+
+# Same automatic setup as Linux/Mac
+```
+
+#### Option B: Direct Python Execution
 ```bash
 # 1. Create virtual environment
 python -m venv venv
@@ -338,30 +359,8 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your settings
 
-# 4. Run in local mode
+# 4. Run in local mode (stdio transport)
 python main.py --mode local
-```
-
-#### Option B: Using Convenience Scripts
-
-**Linux/Mac**:
-```bash
-# Run local MCP server
-./scripts/run_local_mcp.sh
-
-# The script automatically:
-# - Creates virtual environment if needed
-# - Installs dependencies
-# - Loads .env file
-# - Starts server in local mode
-```
-
-**Windows**:
-```cmd
-# Run local MCP server
-scripts\run_local_mcp.bat
-
-# Same automatic setup as Linux/Mac
 ```
 
 #### Option C: MCP Inspector Configuration
@@ -415,7 +414,7 @@ scripts\run_local_mcp.bat
 | **Scalability** | Horizontal scaling | Single process |
 | **Security** | Network security, SSL/TLS | Process isolation |
 | **Monitoring** | Prometheus, Grafana | Application logs |
-| **Load Balancing** | NGINX, K8s | Not applicable |
+| **Load Balancing** | NGINX | Not applicable |
 | **Client Access** | Multiple concurrent | Single client |
 | **Setup Complexity** | Medium (Docker) | Low (Python) |
 | **Resource Usage** | Higher (container) | Lower (process) |
@@ -430,7 +429,7 @@ scripts\run_local_mcp.bat
 - ✅ Require load balancing
 - ✅ Want centralized monitoring
 - ✅ Need SSL/TLS security
-- ✅ Deploying to cloud/Kubernetes
+- ✅ Deploying to cloud environments
 
 #### Use Local Mode When:
 - ✅ Single user/developer

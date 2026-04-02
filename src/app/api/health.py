@@ -239,14 +239,14 @@ async def health_check(response: Response):
 @health_router.get("/health/ready", summary="Readiness probe")
 async def readiness_check(response: Response):
     """
-    Kubernetes-style readiness probe
+    Readiness probe endpoint
     
     Checks if the server is ready to accept requests.
     Returns 200 if ready, 503 if not ready.
     
     Use this for:
-    - Kubernetes readiness probes
     - Load balancer health checks
+    - Container orchestration readiness checks
     - Determining if server can handle traffic
     """
     from src.app.mcp.remote.server_instance import get_server
@@ -263,13 +263,13 @@ async def readiness_check(response: Response):
 @health_router.get("/health/live", summary="Liveness probe")
 async def liveness_check():
     """
-    Kubernetes-style liveness probe
+    Liveness probe endpoint
     
     Simple check to verify the server process is alive.
     Always returns 200 if the server is running.
     
     Use this for:
-    - Kubernetes liveness probes
+    - Container orchestration liveness checks
     - Process monitoring
     - Restart triggers
     """
@@ -279,13 +279,13 @@ async def liveness_check():
 @health_router.get("/health/startup", summary="Startup probe")
 async def startup_check(response: Response):
     """
-    Kubernetes-style startup probe
+    Startup probe endpoint
     
     Checks if the server has completed initialization.
     Returns 200 once startup is complete, 503 during startup.
     
     Use this for:
-    - Kubernetes startup probes
+    - Container orchestration startup checks
     - Delayed health checks during initialization
     """
     from src.app.mcp.remote.server_instance import get_server

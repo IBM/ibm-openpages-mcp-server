@@ -47,20 +47,31 @@ PORT=8000
 
 ### 3. Verify Configuration Files
 
-Ensure these files exist in the project root:
-- `object_types.json` - Object type configuration
-- `.env` - Environment variables
+Ensure these files exist:
+- `src/app/config/object_types.json` - Object type configuration
+- `.env` - Environment variables (in project root)
 
 ### 4. Run the Server
 
 #### Local Mode (stdio transport for MCP clients):
+
+**Using convenience script (recommended):**
 ```bash
-python src/app/local_mcp/run_local_mcp.py
+# Linux/Mac
+./scripts/run_mcp.sh local
+
+# Windows
+scripts\run_mcp.bat local
+```
+
+**Using Python directly:**
+```bash
+python main.py --mode local
 ```
 
 With debug mode:
 ```bash
-python src/app/local_mcp/run_local_mcp.py --debug
+python main.py --mode local --debug
 ```
 
 #### Remote Mode (HTTP API):
@@ -75,25 +86,22 @@ python main.py --mode remote --host 0.0.0.0 --port 8000
 
 ## Troubleshooting
 
-### Issue 1: "Tools schema file not found"
-**Solution:** The `tools_schema.json` file should be in `src/app/local_mcp/`. It has been copied from the beta version.
-
-### Issue 2: "ModuleNotFoundError: No module named 'fastapi'"
+### Issue 1: "ModuleNotFoundError: No module named 'fastapi'"
 **Solution:** Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-### Issue 3: "No module named 'mcp'"
+### Issue 2: "No module named 'mcp'"
 **Solution:** Install the MCP library:
 ```bash
 pip install mcp>=1.9.4
 ```
 
-### Issue 4: Object types not loading
-**Solution:** Ensure `object_types.json` is in the project root directory and is valid JSON.
+### Issue 3: Object types not loading
+**Solution:** Ensure `src/app/config/object_types.json` exists and is valid JSON. Tools are dynamically generated from this configuration file.
 
-### Issue 5: Authentication errors
+### Issue 4: Authentication errors
 **Solution:** 
 - Verify your credentials in `.env`
 - For bearer auth, ensure you have both `OPENPAGES_APIKEY` and `OPENPAGES_AUTHENTICATION_URL`
@@ -103,12 +111,14 @@ pip install mcp>=1.9.4
 
 ### Test Local Mode
 ```bash
-# Start the server
-python src/app/local_mcp/run_local_mcp.py --debug
+# Start the server using convenience script
+./scripts/run_mcp.sh local
 
-# In another terminal, test with MCP inspector
-python run_mcp_inspector.py
+# Or using Python directly
+python main.py --mode local --debug
 ```
+
+**Note:** Local mode uses stdio transport and is designed for MCP clients like Claude Desktop or MCP Inspector. It does not provide an HTTP endpoint.
 
 ### Test Remote Mode
 ```bash
@@ -125,12 +135,10 @@ curl http://localhost:8000/docs
 ## Verification Checklist
 
 - [ ] All dependencies installed (`pip install -r requirements.txt`)
-- [ ] `.env` file created with correct credentials
-- [ ] `object_types.json` exists in project root
-- [ ] `tools_schema.json` exists in `src/app/local_mcp/`
-- [ ] Local mode starts without errors
-- [ ] Remote mode starts without errors
-- [ ] Can list tools in local mode
+- [ ] `.env` file created with correct credentials in project root
+- [ ] `src/app/config/object_types.json` exists and is valid JSON
+- [ ] Local mode starts without errors (`python main.py --mode local`)
+- [ ] Remote mode starts without errors (`python main.py --mode remote`)
 - [ ] Can access API docs in remote mode (http://localhost:8000/docs)
 
 ## Next Steps
@@ -139,7 +147,7 @@ curl http://localhost:8000/docs
 2. Test querying objects
 3. Test updating objects
 4. Test deleting objects
-5. Add custom object types to `object_types.json` if needed
+5. Add custom object types to `src/app/config/object_types.json` if needed
 
 ## Support
 

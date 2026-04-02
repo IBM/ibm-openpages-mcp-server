@@ -231,7 +231,7 @@ Test coverage includes:
 
 - [Resource Handlers](../src/app/mcp/resource_handlers.py) - Core resource handling logic
 - [Schema Format](RESOURCE_SCHEMA_FORMAT.md) - Resource schema documentation
-- [Object Types Catalog](OBJECT_TYPES_CATALOG.md) - Object types catalog documentation
+- [Query Grammar Resource](QUERY_GRAMMAR_RESOURCE.md) - Query syntax and grammar reference
 
 ## Future Enhancements
 

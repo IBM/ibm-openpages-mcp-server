@@ -9,7 +9,6 @@ services:
     container_name: grc-mcp-server
     ports:
       - "${PORT:-8000}:8000"
-      - "${METRICS_PORT:-9090}:9090"  # Prometheus metrics endpoint
     environment:
       # Application Settings
       - APP_NAME=${APP_NAME:-GRC MCP Server}
@@ -41,7 +40,6 @@ services:
       
       # Metrics Configuration
       - METRICS_ENABLED=${METRICS_ENABLED:-True}
-      - METRICS_PORT=${METRICS_PORT:-9090}
       
       # Distributed Tracing Configuration
       # Note: Set OTLP_ENDPOINT to your tracing backend if deployed separately

@@ -12,7 +12,7 @@ global:
 scrape_configs:
   - job_name: 'grc-mcp-server'
     static_configs:
-      - targets: ['host.docker.internal:8025']
+      - targets: ['host.docker.internal:8000']
     metrics_path: '/metrics'
     scrape_interval: 5s
     scrape_timeout: 4s
@@ -29,7 +29,7 @@ global:
 scrape_configs:
   - job_name: 'grc-mcp-server'
     static_configs:
-      - targets: ['host.docker.internal:8025']
+      - targets: ['host.docker.internal:8000']
     metrics_path: '/metrics'
     scrape_interval: 15s
     scrape_timeout: 10s

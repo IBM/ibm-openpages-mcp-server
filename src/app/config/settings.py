@@ -103,7 +103,6 @@ class Settings(BaseSettings):
     
     # Metrics settings
     METRICS_ENABLED: bool = True
-    METRICS_PORT: int = 9090
     
     # Tracing settings
     TRACING_ENABLED: bool = False

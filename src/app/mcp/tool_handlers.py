@@ -296,6 +296,17 @@ class ToolHandlers:
                 # Format the response
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_ok(span, duration_ms=duration_ms)
+                
+                # Record metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=self.generic_delete_tool_name,
+                        status="success"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=self.generic_delete_tool_name
+                    ).observe(duration_ms / 1000.0)
+                
                 logger.debug(f"Generic delete operation completed successfully for {object_type}")
                 return {
                     "result": [{"type": "text", "text": item.text} for item in result]
@@ -304,6 +315,21 @@ class ToolHandlers:
             except Exception as e:
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_error(span, e, duration_ms=duration_ms)
+                
+                # Record error metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=self.generic_delete_tool_name,
+                        status="error"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=self.generic_delete_tool_name
+                    ).observe(duration_ms / 1000.0)
+                    metrics_module.tool_execution_errors_total.labels(
+                        tool_name=self.generic_delete_tool_name,
+                        error_type=type(e).__name__
+                    ).inc()
+                
                 logger.error(f"Error handling delete_object for {object_type}: {e}", exc_info=True, extra_fields={
                     "object_type": object_type,
                     "error_type": type(e).__name__
@@ -612,6 +638,17 @@ class ToolHandlers:
                 # Format the response
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_ok(span, duration_ms=duration_ms)
+                
+                # Record metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=self.generic_upsert_tool_name,
+                        status="success"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=self.generic_upsert_tool_name
+                    ).observe(duration_ms / 1000.0)
+                
                 logger.debug(f"Generic upsert operation completed successfully for {object_type}")
                 return {
                     "result": [{"type": "text", "text": item.text} for item in result]
@@ -620,6 +657,21 @@ class ToolHandlers:
             except Exception as e:
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_error(span, e, duration_ms=duration_ms)
+                
+                # Record error metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=self.generic_upsert_tool_name,
+                        status="error"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=self.generic_upsert_tool_name
+                    ).observe(duration_ms / 1000.0)
+                    metrics_module.tool_execution_errors_total.labels(
+                        tool_name=self.generic_upsert_tool_name,
+                        error_type=type(e).__name__
+                    ).inc()
+                
                 logger.error(f"Error handling upsert_object for {object_type}: {e}", exc_info=True, extra_fields={
                     "object_type": object_type,
                     "error_type": type(e).__name__
@@ -715,6 +767,17 @@ class ToolHandlers:
                 # Format the response
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_ok(span, duration_ms=duration_ms)
+                
+                # Record metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=self.generic_associate_tool_name,
+                        status="success"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=self.generic_associate_tool_name
+                    ).observe(duration_ms / 1000.0)
+                
                 logger.debug(f"Generic associate operation completed successfully for {object_type}")
                 return {
                     "result": [{"type": "text", "text": item.text} for item in result]
@@ -723,6 +786,21 @@ class ToolHandlers:
             except Exception as e:
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_error(span, e, duration_ms=duration_ms)
+                
+                # Record error metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=self.generic_associate_tool_name,
+                        status="error"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=self.generic_associate_tool_name
+                    ).observe(duration_ms / 1000.0)
+                    metrics_module.tool_execution_errors_total.labels(
+                        tool_name=self.generic_associate_tool_name,
+                        error_type=type(e).__name__
+                    ).inc()
+                
                 logger.error(f"Error handling associate_objects for {object_type}: {e}", exc_info=True, extra_fields={
                     "object_type": object_type,
                     "error_type": type(e).__name__
@@ -818,6 +896,17 @@ class ToolHandlers:
                 # Format the response
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_ok(span, duration_ms=duration_ms)
+                
+                # Record metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=self.generic_dissociate_tool_name,
+                        status="success"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=self.generic_dissociate_tool_name
+                    ).observe(duration_ms / 1000.0)
+                
                 logger.debug(f"Generic dissociate operation completed successfully for {object_type}")
                 return {
                     "result": [{"type": "text", "text": item.text} for item in result]
@@ -826,6 +915,21 @@ class ToolHandlers:
             except Exception as e:
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_error(span, e, duration_ms=duration_ms)
+                
+                # Record error metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=self.generic_dissociate_tool_name,
+                        status="error"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=self.generic_dissociate_tool_name
+                    ).observe(duration_ms / 1000.0)
+                    metrics_module.tool_execution_errors_total.labels(
+                        tool_name=self.generic_dissociate_tool_name,
+                        error_type=type(e).__name__
+                    ).inc()
+                
                 logger.error(f"Error handling dissociate_objects for {object_type}: {e}", exc_info=True, extra_fields={
                     "object_type": object_type,
                     "error_type": type(e).__name__

@@ -153,14 +153,9 @@ Seven comprehensive examples covering:
 
 ## Grammar Source
 
-The grammar documentation is based on the ANTLR v3 grammar files located in:
+The grammar documentation is based on the OpenPages query language ANTLR v3 grammar specification. The grammar rules and syntax are embedded in the query grammar resource provided by this MCP server and are dynamically generated from the OpenPages API query capabilities.
 
-```
-grc-core2/java/com.ibm.openpages.api.query-syntax/antlr/
-├── SQLLexer.g       - Lexical tokens and keywords
-├── SQLParser.g      - Parser grammar rules
-└── SQLTreeWalker.g  - AST tree walker for query object construction
-```
+**Note**: The grammar files are part of the OpenPages product source code and are not included in this repository. The documentation here represents the supported query syntax as implemented by the OpenPages REST API.
 
 ## Example Queries from the Resource
 
@@ -279,6 +274,6 @@ Potential improvements:
 
 ## Related Documentation
 
-- [Resource Schema Format](RESOURCE_SCHEMA_FORMAT.md)
-- [Query Tool Documentation](../src/app/tools/query_tool.py)
-- [ANTLR Grammar Files](../../grc-core2/java/com.ibm.openpages.api.query-syntax/antlr/)
+- [Resource Schema Format](RESOURCE_SCHEMA_FORMAT.md) - Schema resource format documentation
+- [Query Tool Documentation](../src/app/tools/query_tool.py) - Query tool implementation
+- [Resource Handlers](../src/app/mcp/resource_handlers.py) - Resource handler implementation including query grammar generation

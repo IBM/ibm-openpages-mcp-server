@@ -211,7 +211,9 @@ http_request_duration_seconds_count{method="POST",endpoint="/mcp"} 1234.0
 ```bash
 # Environment variables
 METRICS_ENABLED=true
-METRICS_PORT=9090  # Separate metrics port (optional)
+
+# Note: Metrics are exposed on the main server port (default 8000) at /metrics endpoint
+# There is no separate metrics port - use the same port as your main server
 ```
 
 ### Prometheus Configuration
@@ -332,7 +334,9 @@ OBSERVABILITY_ENABLED=true
 
 # Metrics
 METRICS_ENABLED=true
-METRICS_PORT=9090
+
+# Note: Metrics are exposed on the main server port (default 8000) at /metrics endpoint
+# There is no separate metrics port - use the same port as your main server
 
 # Tracing
 TRACING_ENABLED=true
