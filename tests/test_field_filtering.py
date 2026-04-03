@@ -4,7 +4,7 @@ Test to verify that fields are filtered based on configuration
 
 
 def test_field_filtering():
-    """Test that fields are filtered based on create_fields configuration"""
+    """Test that fields are filtered based on resource_fields configuration"""
     
     # Simulate field definitions from OpenPages
     field_definitions = [

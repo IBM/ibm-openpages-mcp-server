@@ -20,11 +20,11 @@ def mock_settings():
             "display_name": "Issue",
             "path_prefix": "Issue",
             "namespace": "openpages",
-            "create_fields": {
+            "resource_fields": {
                 "include_all_fields": False,
                 "fields": ["OPSS-Iss:Status", "OPSS-Iss:Priority"]
             },
-            "query_filters": {
+            "type_based_query_filters": {
                 "fields": ["OPSS-Iss:Status", "OPSS-Iss:Priority"]
             }
         },
@@ -33,11 +33,11 @@ def mock_settings():
             "display_name": "Control",
             "path_prefix": "Controls",
             "namespace": "openpages",
-            "create_fields": {
+            "resource_fields": {
                 "include_all_fields": True,
                 "fields": []
             },
-            "query_filters": {
+            "type_based_query_filters": {
                 "fields": ["OPSS-Ctl:Status"]
             }
         }
@@ -153,7 +153,7 @@ async def test_list_resources(resource_handlers):
     result = await resource_handlers.handle_list_resources({})
     
     assert "resources" in result
-    assert len(result["resources"]) == 3  # Catalog + 2 object types
+    assert len(result["resources"]) == 5  # 2 docs + Catalog + 2 object types
     
     # Get resources by URI for order-independent testing
     resources_by_uri = {r["uri"]: r for r in result["resources"]}
@@ -179,9 +179,9 @@ async def test_list_resources(resource_handlers):
     assert "Control" in control_resource["description"]
     assert control_resource["mimeType"] == "application/json"
     
-    # Verify docs resources are NOT in the list (they caused display issues in MCP clients)
-    assert "openpages://docs/schema_usage" not in resources_by_uri
-    assert "openpages://docs/query_syntax" not in resources_by_uri
+    # Verify docs resources ARE in the list (they provide essential usage guidance)
+    assert "openpages://docs/schema_usage" in resources_by_uri
+    assert "openpages://docs/query_syntax" in resources_by_uri
 
 
 @pytest.mark.asyncio
@@ -271,11 +271,13 @@ async def test_schema_content_structure(resource_handlers):
     # Verify core metadata fields
     assert schema["type_id"] == "SOXIssue"
     assert schema["display_name"] == "Issue"
-    assert schema["mode"] == "compact"
+    # Full mode by default (no mode field in full mode)
+    assert "mode" not in schema or schema.get("mode") != "compact"
     
-    # Verify compact mode field counts
-    assert "total_field_count" in schema
-    assert "included_field_count" in schema
+    # Verify full mode structure (only field_count, no included_field_count in full mode)
+    assert "field_count" in schema
+    # included_field_count only exists in compact mode
+    # assert "included_field_count" in schema
     
     # Verify fields array exists (compact mode: only required/system fields)
     assert "fields" in schema
@@ -329,8 +331,8 @@ async def test_schema_content_structure_full_mode(resource_handlers):
     
     # Verify configuration section (only in full mode)
     assert "configuration" in schema
-    assert "create_fields" in schema["configuration"]
-    assert "query_filters" in schema["configuration"]
+    assert "resource_fields" in schema["configuration"]
+    assert "type_based_query_filters" in schema["configuration"]
     
     # Verify usage docs reference (replaces usage_instructions)
     assert "usage_docs" in schema
@@ -355,21 +357,21 @@ async def test_configuration_in_schema(resource_handlers):
     assert "configuration" in schema
     config = schema["configuration"]
     
-    # Verify create_fields configuration
-    assert "create_fields" in config
-    assert "include_all_fields" in config["create_fields"]
-    assert config["create_fields"]["include_all_fields"] == False
-    assert "fields" in config["create_fields"]
+    # Verify resource_fields configuration
+    assert "resource_fields" in config
+    assert "include_all_fields" in config["resource_fields"]
+    assert config["resource_fields"]["include_all_fields"] == False
+    assert "fields" in config["resource_fields"]
     
-    # Check that specific fields are in the create_fields list
-    create_fields = config["create_fields"]["fields"]
-    assert any("Status" in field for field in create_fields)
-    assert any("Priority" in field for field in create_fields)
+    # Check that specific fields are in the resource_fields list
+    resource_fields = config["resource_fields"]["fields"]
+    assert any("Status" in field for field in resource_fields)
+    assert any("Priority" in field for field in resource_fields)
     
-    # Verify query_filters configuration
-    assert "query_filters" in config
-    assert "fields" in config["query_filters"]
-    query_fields = config["query_filters"]["fields"]
+    # Verify type_based_query_filters configuration
+    assert "type_based_query_filters" in config
+    assert "fields" in config["type_based_query_filters"]
+    query_fields = config["type_based_query_filters"]["fields"]
     assert len(query_fields) > 0
 
 # Made with Bob

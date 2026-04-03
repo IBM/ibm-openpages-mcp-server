@@ -116,9 +116,9 @@ class Settings(BaseSettings):
     
     # Object type configuration
     OPENPAGES_OBJECT_TYPES: List[Dict[str, Any]] = []
+    # Global output format setting (loaded from object_types.json)
+    OUTPUT_FORMAT: str = "json"  # Options: "text" or "json"
     
-    # Global output format setting
-    OUTPUT_FORMAT: str = "text"  # Options: "text" or "json"
     
     # Global namespace for generic tools
     NAMESPACE: str = ""  # Namespace prefix for generic tools (e.g., "openpages")
@@ -241,9 +241,10 @@ class Settings(BaseSettings):
                     
                     # Load global settings if present
                     global_settings = config_data.get('global_settings', {})
-                    if 'output_format' in global_settings:
-                        self.OUTPUT_FORMAT = global_settings['output_format']
-                        print(f"Loaded global output format: {self.OUTPUT_FORMAT}", file=sys.stderr)
+                    
+                    # Load output_format from object_types.json (single source of truth)
+                    self.OUTPUT_FORMAT = global_settings.get('output_format', 'json')
+                    print(f"Loaded global output format: {self.OUTPUT_FORMAT}", file=sys.stderr)
                     
                     if 'namespace' in global_settings:
                         self.NAMESPACE = global_settings['namespace']

@@ -310,17 +310,43 @@ class ResourceHandlers:
         # Get set of configured type IDs for filtering relationship fields
         configured_types = self._get_configured_type_ids()
         
-        # Get create_fields configuration to filter which fields to include in schema
-        create_fields_config = obj_config.get("create_fields", {})
-        include_all_fields = create_fields_config.get("include_all_fields", True)
-        configured_field_names = create_fields_config.get("fields", [])
+        # Get resource_fields configuration to filter which fields to include in schema
+        resource_fields_config = obj_config.get("resource_fields", {})
+        include_all_fields = resource_fields_config.get("include_all_fields", True)
+        configured_field_names = resource_fields_config.get("fields", [])
         
         # System fields that are always included
         system_fields = ["Resource ID", "Name", "Description", "Title", "Location",
                         "Created By", "Creation Date", "Last Modified By", "Last Modification Date"]
         
+        # Build field groups map (fields with format "GroupPrefix:FieldName")
+        field_groups_map = {}
+        for field in field_definitions:
+            field_name = field.get("name")
+            if field_name and ':' in field_name:
+                group_prefix = field_name.split(':', 1)[0]
+                if group_prefix not in field_groups_map:
+                    field_groups_map[group_prefix] = []
+                field_groups_map[group_prefix].append(field_name)
+        
+        # Expand field groups (fields starting with @) in configured_field_names
+        expanded_field_names = []
+        for config_field in configured_field_names:
+            if config_field.startswith('@'):
+                # This is a group reference - expand it
+                group_name = config_field[1:]  # Remove @ prefix
+                if group_name in field_groups_map:
+                    group_fields = field_groups_map[group_name]
+                    expanded_field_names.extend(group_fields)
+                    logger.info(f"Expanded field group '@{group_name}' to {len(group_fields)} fields for {type_id} in resource schema")
+                else:
+                    logger.warning(f"Ignoring invalid field group '{config_field}' for type {type_id} in resource schema. Available groups: {list(field_groups_map.keys())}")
+            else:
+                # Regular field reference
+                expanded_field_names.append(config_field)
+        
         # Build a set of configured field names (case-insensitive) for quick lookup
-        configured_field_names_lower = {f.lower() for f in configured_field_names}
+        configured_field_names_lower = {f.lower() for f in expanded_field_names}
         
         # Build field list with detailed information
         fields = []
@@ -433,8 +459,8 @@ class ResourceHandlers:
             "relationship_count": len(relationship_fields),
             "hierarchical_relationships": hierarchical_relationships,
             "configuration": {
-                "create_fields": obj_config.get("create_fields", {}),
-                "query_filters": obj_config.get("query_filters", {})
+                "resource_fields": obj_config.get("resource_fields", {}),
+                "type_based_query_filters": obj_config.get("type_based_query_filters", {})
             }
         }
         

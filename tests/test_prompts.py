@@ -29,7 +29,7 @@ def create_mock_settings():
             "type_id": "SOXIssue",
             "tool_prefix": "issue",
             "display_name": "Issue",
-            "create_fields": {
+            "resource_fields": {
                 "include_all_fields": False,
                 "fields": ["OPSS-Iss:Status", "OPSS-Iss:Priority"]
             }
@@ -38,7 +38,7 @@ def create_mock_settings():
             "type_id": "SOXControl",
             "tool_prefix": "control",
             "display_name": "Control",
-            "create_fields": {
+            "resource_fields": {
                 "include_all_fields": False,
                 "fields": ["OPSS-Ctl:Status"]
             }

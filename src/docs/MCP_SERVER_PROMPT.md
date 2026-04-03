@@ -667,7 +667,7 @@ The server's behavior is controlled by `object_types.json`:
   "object_types": [
     {
       "type_id": "ObjectTypeA",
-      "create_fields": {
+      "resource_fields": {
         "include_all_fields": false,
         "fields": ["Prefix-TypeA:Status", "Prefix-TypeA:Priority"]
       }

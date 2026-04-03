@@ -117,21 +117,21 @@ def test_object_types_json_structure():
     found_field_group = False
     
     for obj_type in config["object_types"]:
-        create_fields = obj_type.get("create_fields", {})
-        query_filters = obj_type.get("query_filters", {})
+        resource_fields = obj_type.get("resource_fields", {})
+        type_based_query_filters = obj_type.get("type_based_query_filters", {})
         
-        # Check create_fields
-        if "fields" in create_fields:
-            for field in create_fields["fields"]:
+        # Check resource_fields
+        if "fields" in resource_fields:
+            for field in resource_fields["fields"]:
                 if isinstance(field, str) and field.startswith('@'):
                     found_field_group = True
                     # Verify format
                     assert len(field) > 1, f"Field group '{field}' should have a name after @"
                     assert ':' not in field, f"Field group '{field}' should not contain ':' (that's for individual fields)"
         
-        # Check query_filters
-        if "fields" in query_filters:
-            for field in query_filters["fields"]:
+        # Check type_based_query_filters
+        if "fields" in type_based_query_filters:
+            for field in type_based_query_filters["fields"]:
                 if isinstance(field, str) and field.startswith('@'):
                     found_field_group = True
                     assert len(field) > 1, f"Field group '{field}' should have a name after @"

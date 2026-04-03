@@ -179,7 +179,7 @@ class SchemaBuilder:
         Args:
             object_type: Type of object (e.g., "ObjectTypeA", "ObjectTypeB")
             object_label: Label to use in descriptions (e.g., "typea", "typeb")
-            obj_config: Optional object configuration with create_fields settings
+            obj_config: Optional object configuration with resource_fields settings
             
         Returns:
             Dict containing the JSON schema
@@ -259,10 +259,10 @@ class SchemaBuilder:
             "Last Modified By", "Location"
         ]
         
-        # Get create_fields configuration
-        create_fields_config = obj_config.get("create_fields", {}) if obj_config else {}
-        include_all_fields = create_fields_config.get("include_all_fields", True)
-        configured_fields = create_fields_config.get("fields", [])
+        # Get resource_fields configuration
+        resource_fields_config = obj_config.get("resource_fields", {}) if obj_config else {}
+        include_all_fields = resource_fields_config.get("include_all_fields", True)
+        configured_fields = resource_fields_config.get("fields", [])
         
         # Build a map of valid fields from type definition
         valid_fields_map = {}
@@ -316,8 +316,9 @@ class SchemaBuilder:
                     fields_to_include.append(field)
             logger.info(f"Config: include_all_fields=False with {len(validated_fields)} specified fields -> Including {len(fields_to_include)} configured fields for {object_type}")
         else:
-            fields_to_include = list(valid_fields_map.values())
-            logger.warning(f"Config: include_all_fields=False but no fields specified -> Defaulting to all {len(fields_to_include)} fields for {object_type}")
+            # When include_all_fields=False and no fields specified, include only base fields (empty list)
+            fields_to_include = []
+            logger.info(f"Config: include_all_fields=False with no fields specified -> Including only base fields (Name, Description, Title) for {object_type}")
         
         # Add fields to schema using friendly names as primary property names
         # Track used property names to detect and resolve conflicts
@@ -461,7 +462,7 @@ class SchemaBuilder:
         
         Args:
             object_type: Type of object (e.g., "ObjectTypeA", "ObjectTypeB", "ObjectTypeC")
-            obj_config: Optional object configuration with query_filters settings
+            obj_config: Optional object configuration with type_based_query_filters settings
             
         Returns:
             Dict containing the JSON schema for query parameters
@@ -576,9 +577,9 @@ class SchemaBuilder:
             logger.error(error_msg)
             raise RuntimeError(error_msg)
         
-        # Get query_filters configuration
-        query_filters_config = obj_config.get("query_filters", {}) if obj_config else {}
-        configured_filter_fields = query_filters_config.get("fields", [])
+        # Get type_based_query_filters configuration
+        type_based_query_filters_config = obj_config.get("type_based_query_filters", {}) if obj_config else {}
+        configured_filter_fields = type_based_query_filters_config.get("fields", [])
         
         # Build a map of valid fields from type definition
         valid_filter_fields_map = {}

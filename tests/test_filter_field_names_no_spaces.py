@@ -51,7 +51,7 @@ async def test_query_filter_field_names_no_spaces():
     
     # Mock object config with filter fields
     obj_config = {
-        "query_filters": {
+        "type_based_query_filters": {
             "fields": [
                 "OPSS-Ctl:Control Type",
                 "OPSS-Ctl:Control Owner",
@@ -117,7 +117,7 @@ async def test_query_filter_with_field_groups_no_spaces():
     
     # Mock object config using field group
     obj_config = {
-        "query_filters": {
+        "type_based_query_filters": {
             "fields": ["@OPSS-Ctl"]
         }
     }

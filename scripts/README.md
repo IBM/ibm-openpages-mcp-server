@@ -142,12 +142,6 @@ docker network ls | grep monitoring
 podman network ls | grep monitoring
 ```
 
-## Debug & Test Scripts
-
-Located in subdirectories:
-- **`debug/`** - Debugging tools (MCP Inspector, VSCode debug)
-- **`test/`** - Test scripts for MCP client functionality
-
 ---
 
-**Last Updated:** 2026-04-01
+**Last Updated:** 2026-04-02

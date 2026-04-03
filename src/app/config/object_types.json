@@ -2,7 +2,7 @@
   "_comment": "Field Group Support: You can now use '@GroupPrefix' to include all fields from a field group. For example, '@OPSS-Ctl' will include all fields with the OPSS-Ctl: prefix. Mix individual fields and groups as needed.",
   "global_settings": {
     "output_format": "json",
-    "output_format_description": "Global output format for all tool responses. Options: 'text' (human-readable, default) or 'json' (structured, machine-readable for agents)",
+    "output_format_description": "Global output format for upsert/delete/query_* tool responses. Options: 'text' (human-readable) or 'json' (structured, machine-readable for agents). Note: execute_openpages_query tool has its own 'format' parameter (table/json/list) for query-specific formatting.",
     "namespace": "openpages",
     "namespace_description": "Global namespace prefix for generic tools (e.g., delete_object becomes openpages_delete_object)",
     "tool_exposure_mode": "ontology_based",
@@ -19,21 +19,21 @@
         "upsert": "Create or update a SOX control in OpenPages. Automatically determines whether to insert a new control or update an existing one based on provided identifiers (id, path, or name).",
         "query": "Search and retrieve SOX controls from OpenPages. Supports filtering by name, owner, and custom field filters. Returns control details including ID, name, description, and selected fields."
       },
-      "create_fields": {
+      "resource_fields": {
         "include_all_fields": true,
         "fields": [
           "@OPSS-Ctl"
         ],
-        "_comment": "Using '@OPSS-Ctl' includes all fields from the OPSS-Ctl field group. You can also mix groups with individual fields, e.g., ['@OPSS-Ctl', 'SomeOtherField']"
+        "_comment": "USED BY: Published resources (all modes) + Type-based upsert_control tool. Using '@OPSS-Ctl' includes all fields from the OPSS-Ctl field group. You can also mix groups with individual fields, e.g., ['@OPSS-Ctl', 'SomeOtherField']"
       },
-      "query_filters": {
+      "type_based_query_filters": {
         "fields": [
           "OPSS-Ctl:Status",
           "OPSS-Ctl:Control Type",
           "OPSS-Ctl:Frequency",
           "OPSS-Ctl:Owner"
         ],
-        "_comment": "Individual fields listed here. Could also use '@OPSS-Ctl' to include all OPSS-Ctl fields"
+        "_comment": "USED BY: Type-based query_controls tool ONLY. Individual fields listed here. Could also use '@OPSS-Ctl' to include all OPSS-Ctl fields"
       }
     },
     {
@@ -46,18 +46,18 @@
         "upsert": "Create or update an issue in OpenPages. Automatically determines whether to insert a new issue or update an existing one based on provided identifiers (id, path, or name).",
         "query": "Search and retrieve issues from OpenPages. Supports filtering by name, owner, and custom field filters. Returns issue details including ID, name, description, and selected fields."
       },
-      "create_fields": {
+      "resource_fields": {
         "include_all_fields": false,
         "fields": [
           "@OPSS-Iss"
         ],
-        "_comment": "Using '@OPSS-Iss' to include all fields from the OPSS-Iss field group"
+        "_comment": "USED BY: Published resources (all modes) + Type-based upsert_issue tool. Using '@OPSS-Iss' to include all fields from the OPSS-Iss field group"
       },
-      "query_filters": {
+      "type_based_query_filters": {
         "fields": [
           "@OPSS-Iss"
         ],
-        "_comment": "Using field group for filters as well"
+        "_comment": "USED BY: Type-based query_issues tool ONLY. Using field group for filters as well"
       }
     },
     {
@@ -70,22 +70,22 @@
         "upsert": "Create or update a risk in OpenPages. Automatically determines whether to insert a new risk or update an existing one based on provided identifiers (id, path, or name).",
         "query": "Search and retrieve risks from OpenPages. Supports filtering by name, owner, and custom field filters. Returns risk details including ID, name, description, and selected fields."
       },
-      "create_fields": {
-        "include_all_fields": true,
+      "resource_fields": {
+        "include_all_fields": false,
         "fields": [
           "OPSS-Rsk:Status",
           "OPSS-Rsk:RiskLevel",
           "OPSS-Rsk:Owner"
         ],
-        "_comment": "Individual fields listed. Could use '@OPSS-Rsk' to include all OPSS-Rsk fields, or mix: ['@OPSS-Rsk', 'OtherGroup:Field']"
+        "_comment": "USED BY: Published resources (all modes) + Type-based upsert_risk tool. Individual fields listed. Could use '@OPSS-Rsk' to include all OPSS-Rsk fields, or mix: ['@OPSS-Rsk', 'OtherGroup:Field']"
       },
-      "query_filters": {
+      "type_based_query_filters": {
         "fields": [
           "OPSS-Rsk:Status",
           "OPSS-Rsk:RiskLevel",
           "OPSS-Rsk:Owner"
         ],
-        "_comment": "Individual fields for query filters"
+        "_comment": "USED BY: Type-based query_risks tool ONLY. Individual fields for query filters"
       }
     },
     {
@@ -98,10 +98,12 @@
         "upsert": "Create or update a usecase in OpenPages. Automatically determines whether to insert a new usecase or update an existing one based on provided identifiers (id, path, or name).",
         "query": "Search and retrieve usecase from OpenPages. Supports filtering by name, owner, and custom field filters. Returns usecase details including ID, name, description, and selected fields."
       },
-      "create_fields": {
-        "include_all_fields": true
+      "resource_fields": {
+        "include_all_fields": false,
+        "_comment": "USED BY: Published resources (all modes) + Type-based upsert_usecase tool"
       },
-      "query_filters": {
+      "type_based_query_filters": {
+        "_comment": "USED BY: Type-based query_usecase tool ONLY. No specific filters configured"
       }
     }
   ]

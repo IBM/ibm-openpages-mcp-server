@@ -363,7 +363,7 @@ The server's tools and resources are dynamically generated based on [`src/app/co
 |---------|---------|-------------|
 | `tool_exposure_mode` | `ontology_based`, `type_based`, `all` | Controls which tools are exposed:<br>• `ontology_based` - Generic tools (e.g., `openpages_upsert_object`)<br>• `type_based` - Type-specific tools (e.g., `openpages_upsert_issue`)<br>• `all` - Both generic and type-specific tools |
 | `namespace` | string | Global namespace prefix for tools (default: `openpages`) |
-| `output_format` | `json`, `text` | Default output format for tool responses |
+| `output_format` | `json`, `text` | Default output format for upsert/delete/query_* tool responses.<br>**Note**: The `execute_openpages_query` tool has its own `format` parameter (`table`, `json`, `list`) for query-specific formatting. |
 
 #### Object Type Configuration
 
@@ -382,11 +382,11 @@ Each object type in the `object_types` array defines:
         "upsert": "Create or update an issue...",
         "query": "Search and retrieve issues..."
       },
-      "create_fields": {
+      "resource_fields": {
         "include_all_fields": false,
         "fields": ["@OPSS-Iss"]
       },
-      "query_filters": {
+      "type_based_query_filters": {
         "fields": ["@OPSS-Iss"]
       }
     }
@@ -402,8 +402,8 @@ Each object type in the `object_types` array defines:
 | `path_prefix` | Yes | Path prefix in OpenPages (e.g., `Issue`, `Controls`) |
 | `namespace` | No | Override global namespace for this type |
 | `tool_descriptions` | No | Custom descriptions for `upsert` and `query` tools |
-| `create_fields` | No | Fields configuration for create/update operations |
-| `query_filters` | No | Fields available for filtering in queries |
+| `resource_fields` | No | Fields configuration for resources and type-based upsert tools |
+| `type_based_query_filters` | No | Fields available for filtering in type-based query tools |
 
 #### Field Configuration
 
@@ -420,7 +420,10 @@ Each object type in the `object_types` array defines:
 "fields": ["@OPSS-Iss", "CustomField:Value"]
 ```
 
-**include_all_fields**: When `true`, includes all fields from the object type's schema in addition to specified fields.
+**include_all_fields**:
+- When `true`, includes all fields from the object type's schema
+- When `false` with fields specified, includes only the specified fields (plus system fields like Name, Description)
+- When `false` with no fields specified, includes only base fields (Name, Description, Title)
 
 #### Example Configurations
 
@@ -431,8 +434,8 @@ Each object type in the `object_types` array defines:
   "tool_prefix": "usecase",
   "display_name": "Use Case",
   "path_prefix": "Registers",
-  "create_fields": {
-    "include_all_fields": true
+  "resource_fields": {
+    "include_all_fields": false
   }
 }
 ```
@@ -444,11 +447,11 @@ Each object type in the `object_types` array defines:
   "tool_prefix": "issue",
   "display_name": "Issue",
   "path_prefix": "Issue",
-  "create_fields": {
+  "resource_fields": {
     "include_all_fields": false,
     "fields": ["@OPSS-Iss"]
   },
-  "query_filters": {
+  "type_based_query_filters": {
     "fields": ["@OPSS-Iss"]
   }
 }
@@ -461,15 +464,15 @@ Each object type in the `object_types` array defines:
   "tool_prefix": "risk",
   "display_name": "Risk",
   "path_prefix": "Risk",
-  "create_fields": {
-    "include_all_fields": true,
+  "resource_fields": {
+    "include_all_fields": false,
     "fields": [
       "OPSS-Rsk:Status",
       "OPSS-Rsk:RiskLevel",
       "OPSS-Rsk:Owner"
     ]
   },
-  "query_filters": {
+  "type_based_query_filters": {
     "fields": [
       "OPSS-Rsk:Status",
       "OPSS-Rsk:RiskLevel"
