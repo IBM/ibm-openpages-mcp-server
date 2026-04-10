@@ -941,6 +941,8 @@ Accepts optional context variables.""",
             
         except Exception as e:
             logger.error(f"Error loading dynamic schemas: {e}")
+            # Re-raise the exception to fail fast on critical errors (SSL, auth, etc.)
+            raise
     
     def _update_tool_schema(self, tool_name: str, schema: Dict[str, Any]) -> None:
         """

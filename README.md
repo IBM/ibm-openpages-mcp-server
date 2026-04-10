@@ -71,9 +71,24 @@ Before using any deployment option, complete these steps:
    ```
 
 2. **Configure environment variables**:
+   
+   Choose your configuration approach:
+   
+   **Quick Start** - Minimal configuration (recommended for first-time setup):
+   ```bash
+   # For Basic Authentication
+   cp .env.example.minimal.basic .env
+   
+   # OR for Bearer Token Authentication
+   cp .env.example.minimal.bearer .env
+   
+   # Edit .env with your OpenPages credentials
+   ```
+   
+   **Full Configuration** - All available options:
    ```bash
    cp .env.example .env
-   # Edit .env with your OpenPages credentials and settings
+   # Edit .env with your settings
    ```
    
    **Minimum required settings in `.env`**:
@@ -94,7 +109,13 @@ Before using any deployment option, complete these steps:
    OPENPAGES_AUTHENTICATION_URL=https://iam.cloud.ibm.com/identity/token
    ```
    
-   See [`.env.example`](.env.example) for all available options and [Authentication Guide](docs/AUTHENTICATION.md) for different auth methods.
+   **Configuration Files:**
+   - [`.env.example`](.env.example) - All settings with defaults
+   - [`.env.example.minimal.basic`](.env.example.minimal.basic) - Minimal Basic Auth template
+   - [`.env.example.minimal.bearer`](.env.example.minimal.bearer) - Minimal Bearer Auth template
+   - [`.env.example.full`](.env.example.full) - All settings with detailed comments
+   - [`docs/CONFIGURATION_DEFAULTS.md`](docs/CONFIGURATION_DEFAULTS.md) - Comprehensive configuration guide
+   - [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md) - Authentication methods guide
 
 Now choose your deployment method:
 
@@ -137,12 +158,18 @@ scripts\run_mcp.bat local
 
 **Best for**: Production deployments, containerized environments, scalability
 
+**Important for Podman**: Prepare logs directory before starting:
+```bash
+mkdir -p logs
+chown -R 1000:1000 logs  # Required for Podman to match container user UID:GID
+```
+
 1. **Standalone Deployment** (without monitoring):
    ```bash
    # Using Docker
    docker-compose up -d
    
-   # Using Podman
+   # Using Podman (see preparation step above)
    podman-compose up -d
    
    # Server available at http://localhost:8000
@@ -163,6 +190,8 @@ scripts\run_mcp.bat local
    
    Then deploy:
    ```bash
+   # For Podman: Prepare logs directory (see preparation step above)
+   
    # Step 1: Start monitoring stack
    cd monitoring
    docker-compose up -d  # or podman-compose up -d
@@ -997,6 +1026,7 @@ LOG_LEVEL=DEBUG
 - **[`docs/SETUP.md`](docs/SETUP.md)** - Detailed setup instructions
 - **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)** - Deployment architectures and patterns
 - **[`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md)** - Authentication methods and configuration
+- **[`docs/CONFIGURATION_DEFAULTS.md`](docs/CONFIGURATION_DEFAULTS.md)** - Configuration defaults and robustness guide
 
 ### Features & Usage
 

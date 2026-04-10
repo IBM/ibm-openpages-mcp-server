@@ -42,60 +42,36 @@ async def run_stdio_server(custom_settings: Optional[Settings] = None) -> None:
     logger.info(f"Debug mode: {app_settings.DEBUG}")
     logger.info(f"Server mode: {app_settings.SERVER_MODE}")
     
-    # Flag to track authentication status
-    auth_failed = False
-    auth_error_message = ""
     server = None
     
     try:
         # Create server instance with the custom settings
-        try:
-            server = MCPServer(custom_settings=app_settings)
-        except RuntimeError as init_error:
-            # Server initialization failed (likely due to missing credentials)
-            # Create a minimal server that can respond with errors
-            auth_failed = True
-            auth_error_message = f"Server initialization failed: {str(init_error)}. Please check your configuration in the .env file."
-            logger.error(f"Server initialization failed: {init_error}")
-            logger.warning("Server will continue running but all requests will return configuration error")
-            # We can't proceed without a server instance, so we need to handle this differently
-            # For now, we'll exit with an error
-            logger.critical("Cannot start server without valid configuration")
-            raise
+        server = MCPServer(custom_settings=app_settings)
         
-        # Initialize client authentication
+        # Initialize client authentication - FAIL FAST on errors (consistent with remote mode)
         try:
             await server.initialize_client()
             logger.info("Client authentication initialized")
-        except RuntimeError as auth_error:
-            # Authentication failed - but keep server running to respond to requests
-            auth_failed = True
-            auth_error_message = f"Authentication failed: {str(auth_error)}. Please check your authentication credentials and URLs in the .env file."
-            logger.error(f"Authentication failed: {auth_error}")
-            logger.warning("Server will continue running but all requests will return authentication error")
+        except Exception as auth_error:
+            logger.critical(f"Failed to initialize OpenPages client authentication: {auth_error}")
+            logger.critical("Cannot start server - unable to connect to OpenPages")
+            raise RuntimeError(f"Server startup failed: Cannot connect to OpenPages. {auth_error}") from auth_error
         
-        # PERFORMANCE OPTIMIZATION: Lazy loading instead of eager loading
-        # Schemas are now loaded on-demand (first request slower, subsequent requests fast)
-        # This reduces session.initialize() time from ~8 seconds to <1 second
-        #
-        # The caching system (Layer 1 + Layer 2) ensures subsequent requests are extremely fast (0.05ms)
-        # Trade-off: First request per schema type will be slower (~300ms), but all subsequent requests benefit from cache
-        
-        if not auth_failed:
-            # Load dynamic schemas at startup for tool definitions
-            # This is fast (~100ms) and necessary for tools/list to work
-            try:
-                logger.info("Loading dynamic schemas at startup...")
-                await server.load_dynamic_schemas()
-                logger.info("Dynamic schemas loaded successfully at startup")
-            except Exception as schema_error:
-                logger.error(f"Failed to load dynamic schemas: {schema_error}")
-                logger.warning("Schemas will be loaded on first list_tools call instead")
+        # Load dynamic schemas at startup - FAIL FAST on errors (consistent with remote mode)
+        # This is fast (~100ms) and necessary for tools/list to work
+        try:
+            logger.info("Loading dynamic schemas at startup...")
+            await server.load_dynamic_schemas()
+            logger.info("Dynamic schemas loaded successfully at startup")
+        except Exception as schema_error:
+            logger.critical(f"Failed to load dynamic schemas: {schema_error}")
+            logger.critical("Cannot start server - unable to load schemas from OpenPages")
+            raise RuntimeError(f"Server startup failed: Cannot load schemas from OpenPages. {schema_error}") from schema_error
             
-            # NOTE: Resource schema pre-loading has been REMOVED for performance
-            # Schemas will be loaded on-demand when first requested via get_resource
-            # The two-layer cache system ensures subsequent requests are extremely fast
-            logger.info("Resource schemas will be loaded on-demand (lazy loading for faster startup)")
+        # NOTE: Resource schema pre-loading has been REMOVED for performance
+        # Schemas will be loaded on-demand when first requested via get_resource
+        # The two-layer cache system ensures subsequent requests are extremely fast
+        logger.info("Resource schemas will be loaded on-demand (lazy loading for faster startup)")
         
         # Process JSON-RPC messages from stdin
         logger.info("Ready to process requests")
@@ -113,25 +89,6 @@ async def run_stdio_server(custom_settings: Optional[Settings] = None) -> None:
                     request = json.loads(line)
                     request_id = request.get("id")
                     is_notification = request_id is None
-                    
-                    # If authentication failed, return error for requests (not notifications)
-                    # JSON-RPC 2.0: notifications MUST NOT receive any response
-                    if auth_failed and request.get("method") != "initialize":
-                        if is_notification:
-                            # Silently discard notifications when auth has failed
-                            logger.debug(f"Discarding notification during auth failure: {request.get('method')}")
-                            continue
-                        error_response = {
-                            "jsonrpc": "2.0",
-                            "error": {
-                                "code": -32000,
-                                "message": auth_error_message
-                            },
-                            "id": request_id
-                        }
-                        sys.stdout.write(json.dumps(error_response) + "\n")
-                        sys.stdout.flush()
-                        continue
                     
                     # Process the request normally
                     logger.debug("Processing request")

@@ -33,7 +33,7 @@ services:
       # Logging Configuration
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FORMAT=${LOG_FORMAT:-json}
-      - LOG_FILE=${LOG_FILE:-}
+      - LOG_FILE=${LOG_FILE:-logs/grc-mcp.log}
       
       # Observability Settings
       - OBSERVABILITY_ENABLED=${OBSERVABILITY_ENABLED:-True}
@@ -56,16 +56,13 @@ services:
       - OBJECT_TYPES_CONFIG_PATH=${OBJECT_TYPES_CONFIG_PATH:-src/app/config/object_types.json}
       - OUTPUT_FORMAT=${OUTPUT_FORMAT:-text}
     
-    # volumes:
-      # Volume mounts are commented out for Podman compatibility on macOS
-      # Podman requires directories/files to exist before mounting
-      #
-      # To enable volumes (for Docker or after creating directories):
-      # 1. Create logs directory: mkdir -p logs
-      # 2. Uncomment the volumes section below
-      #
-      # - ./src/app/config/object_types.json:/app/src/app/config/object_types.json:ro
-      # - ./logs:/app/logs
+    volumes:
+      # Volume mounts for configuration and logging
+      # IMPORTANT: For Podman on macOS, create the logs directory first:
+      #   mkdir -p logs
+      # Docker will auto-create the directory, but Podman requires it to exist.
+      - ./src/app/config/object_types.json:/app/src/app/config/object_types.json:ro
+      - ./logs:/app/logs
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]

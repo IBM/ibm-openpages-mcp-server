@@ -7,6 +7,7 @@ import asyncio
 import logging
 import base64
 import time
+import ssl
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 import httpx  # type: ignore
@@ -19,6 +20,62 @@ from src.app.observability import metrics as metrics_module
 
 # Type annotation for better error handling
 HTTPXError = httpx.HTTPError
+
+def is_ssl_error(error: Exception) -> bool:
+    """
+    Check if an error is SSL/certificate related
+    
+    Args:
+        error: Exception to check
+        
+    Returns:
+        True if error is SSL-related
+    """
+    error_str = str(error).lower()
+    ssl_indicators = [
+        'certificate',
+        'ssl',
+        'tls',
+        'verify failed',
+        'certificate_verify_failed',
+        'self-signed',
+        'hostname mismatch',
+        'unable to get local issuer certificate'
+    ]
+    return any(indicator in error_str for indicator in ssl_indicators)
+
+def get_ssl_error_message(error: Exception, base_url: str) -> str:
+    """
+    Generate a helpful error message for SSL certificate errors
+    
+    Args:
+        error: The SSL error
+        base_url: The OpenPages base URL
+        
+    Returns:
+        Formatted error message with solution
+    """
+    return (
+        f"\n{'='*80}\n"
+        f"SSL CERTIFICATE ERROR\n"
+        f"{'='*80}\n"
+        f"Failed to connect to OpenPages at: {base_url}\n"
+        f"Error: {error}\n"
+        f"\n"
+        f"This typically occurs when:\n"
+        f"  1. The server uses a self-signed certificate\n"
+        f"  2. The certificate is expired or invalid\n"
+        f"  3. The certificate hostname doesn't match the URL\n"
+        f"\n"
+        f"SOLUTION:\n"
+        f"  For development/test environments, you can disable SSL verification:\n"
+        f"  1. Add to your .env file: SSL_VERIFY=false\n"
+        f"  2. Restart the server\n"
+        f"\n"
+        f"  WARNING: Only disable SSL verification in non-production environments!\n"
+        f"  For production, obtain a valid SSL certificate for your OpenPages server.\n"
+        f"{'='*80}\n"
+    )
 
 # Configure logging
 logger: StructuredLogger = get_logger(__name__)
@@ -511,6 +568,13 @@ class OpenPagesClient:
                         endpoint=operation,
                         error_type=error_type
                     ).inc()
+                
+                # Check if this is an SSL certificate error and provide helpful guidance
+                if is_ssl_error(e):
+                    error_msg = get_ssl_error_message(e, self.base_url)
+                    logger.error(error_msg)
+                    # Re-raise with the helpful message
+                    raise RuntimeError(error_msg) from e
                 
                 raise
 

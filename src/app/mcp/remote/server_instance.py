@@ -35,17 +35,28 @@ async def initialize_server_async() -> Optional[MCPServer]:
         _mcp_server_instance = MCPServer(custom_settings=settings)
         logger.info("MCP Server initialized successfully")
         
-        # Initialize client authentication
+        # Initialize client authentication - FAIL FAST on errors (including SSL)
         logger.info("Initializing OpenPages client authentication...")
-        await _mcp_server_instance.initialize_client()
-        logger.info("Client authentication initialized")
+        try:
+            await _mcp_server_instance.initialize_client()
+            logger.info("Client authentication initialized")
+        except Exception as auth_error:
+            logger.error(f"Failed to initialize OpenPages client authentication: {auth_error}")
+            # Re-raise to prevent server startup
+            raise RuntimeError(f"Server startup failed: Cannot connect to OpenPages. {auth_error}") from auth_error
         
-        # Eagerly load dynamic schemas at startup
+        # Eagerly load dynamic schemas at startup - FAIL FAST on errors (including SSL)
         logger.info("Loading dynamic schemas at startup...")
-        await _mcp_server_instance.load_dynamic_schemas()
-        logger.info("Dynamic schemas loaded successfully at startup")
+        try:
+            await _mcp_server_instance.load_dynamic_schemas()
+            logger.info("Dynamic schemas loaded successfully at startup")
+        except Exception as schema_error:
+            logger.error(f"Failed to load dynamic schemas: {schema_error}")
+            # Re-raise to prevent server startup
+            raise RuntimeError(f"Server startup failed: Cannot load schemas from OpenPages. {schema_error}") from schema_error
         
         # Pre-load resource schemas to warm both Layer 1 and Layer 2 caches
+        # This is optional - if it fails, we can still start (schemas will load on demand)
         try:
             logger.info("Pre-loading resource schemas for get_resource tool...")
             preload_count = 0
@@ -68,15 +79,17 @@ async def initialize_server_async() -> Optional[MCPServer]:
             logger.info(f"Layer 1 cache: {layer1_stats['current_size']}/{layer1_stats['max_size']} entries, hit rate: {layer1_stats['hit_rate']}")
             logger.info(f"Layer 2 cache: {layer2_stats['current_size']}/{layer2_stats['max_size']} entries, hit rate: {layer2_stats['hit_rate']}")
         except Exception as preload_error:
-            logger.error(f"Failed to pre-load resource schemas: {preload_error}")
+            logger.warning(f"Failed to pre-load resource schemas: {preload_error}")
             logger.warning("Resource schemas will be loaded on first get_resource call instead")
+            # Don't fail startup for preload errors - this is optional optimization
         
         return _mcp_server_instance
     except Exception as e:
-        logger.error(f"Failed to initialize MCP Server: {e}")
+        logger.critical(f"Failed to initialize MCP Server: {e}")
         import traceback
-        logger.error(traceback.format_exc())
-        return None
+        logger.critical(traceback.format_exc())
+        # Re-raise to prevent server startup
+        raise
 
 def get_server() -> Optional[MCPServer]:
     """

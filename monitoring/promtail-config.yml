@@ -44,19 +44,12 @@ scrape_configs:
           source: timestamp
           format: RFC3339Nano
 
-      # Set log level as label
+      # Only use essential labels (job, app, level)
+      # Other fields remain in the log line and can be queried
       - labels:
           level:
-          logger:
-          trace_id:
-          span_id:
-          user_id:
-          tool_name:
-          operation:
-          object_type:
-          error_type:
 
-      # Output the message
+      # Output the full structured message
       - output:
           source: message
 

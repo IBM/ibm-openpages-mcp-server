@@ -122,6 +122,18 @@ class SchemaBuilder:
                 return type_def
 
             except Exception as e:
+                # Check if this is an SSL/certificate error - these should propagate up
+                error_str = str(e).lower()
+                is_ssl_error = any(indicator in error_str for indicator in [
+                    'ssl', 'certificate', 'tls', 'verify failed', 'self-signed'
+                ])
+                
+                if is_ssl_error:
+                    logger.critical(f"SSL/Certificate error fetching type definition for {type_name}: {e}")
+                    # Re-raise SSL errors - they indicate fundamental connectivity issues
+                    raise
+                
+                # For other errors, log and return None (allows server to continue with degraded functionality)
                 logger.error(f"Error fetching type definition for {type_name}: {e}", exc_info=True)
                 return None
     

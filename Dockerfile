@@ -16,7 +16,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create non-root user for security
-RUN useradd -m -u 1000 mcpuser && chown -R mcpuser:mcpuser /app
+# Create logs directory with proper permissions before switching user
+RUN useradd -m -u 1000 mcpuser && \
+    mkdir -p /app/logs && \
+    chown -R mcpuser:mcpuser /app
+
 USER mcpuser
 
 # Expose port for HTTP server
