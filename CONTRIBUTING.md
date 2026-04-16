@@ -10,7 +10,7 @@ Before embarking on a more ambitious contribution, please quickly [get in touch]
 
 **Note: We appreciate your effort, and want to avoid a situation where a contribution
 requires extensive rework (by you or by us), sits in backlog for a long time, or
-cannot be accepted at all!**
+cannot be accepted at all**
 
 ### Proposing new features
 
