@@ -108,6 +108,7 @@ instructions: |-
   op_object_id - {op_object_id}
   op_object_name - {op_object_name}
   op_workflow_stage - {op_workflow_stage}
+  op_auth_header - {op_auth_header}
 guidelines:
 - display_name: Use Typed Tools
   condition: when creating or updating objects

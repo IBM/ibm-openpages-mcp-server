@@ -42,18 +42,19 @@ instructions: |-
   op_object_id - {op_object_id}
   op_object_name - {op_object_name}
   op_workflow_stage - {op_workflow_stage}
+  op_auth_header - {op_auth_header}
 guidelines:
 - display_name: Object Type Catalog
   condition: when requesting object types catalog
   action: |-
     ONCE ONLY - use the tool to get the catalog and cache the result for subsequent use
     Subsequently, DO NOT use the tool to get the information. Use the cached content instead
-  tool: grc-mcp-server-local:list_resources
+  tool: grc-mcp-server:list_resources
 - display_name: Object Type Schema
   condition: Get object type schema ONLY when it has not yet been retrieved
   action: Get the object type schema using uri openpages://schema/{object type} only
     if needed.  Cache the schema for subsequent use
-  tool: grc-mcp-server-local:get_resource
+  tool: grc-mcp-server:get_resource
 - display_name: When not to fetch object type schema
   condition: Only default resource fields are requested. These are [Resource ID],
     [Name], [Title], [Description],[Creation Date], [Last Modification Date], [Created
