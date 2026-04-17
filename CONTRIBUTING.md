@@ -72,8 +72,8 @@ git commit -s
 **FIXME** Please feel free to connect with us on our [Slack channel](https://ibm.enterprise.slack.com/archives/C09HXC0PB6C)
 
 ## Setup
-**FIXME** Please refer the [README.md](https://github.com/IBM/ibm-openpages-mcp-server/blob/develop/README.md) page for setup instructions.
+**FIXME** Please refer the [README.md](https://github.com/IBM/ibm-openpages-mcp-server/blob/develop/README.md#quick-start) page for setup instructions.
 
 ## Testing
-**FIXME** Please refer the [README.md](https://github.com/IBM/ibm-openpages-mcp-server/blob/develop/README.md) page for testing instructions.
+**FIXME** Please refer the [README.md](https://github.com/IBM/ibm-openpages-mcp-server/blob/develop/README.md#testing-the-server) page for testing instructions.
 
