@@ -11,7 +11,7 @@ A Model Context Protocol (MCP) server that enables AI agents to interact with IB
 - [Features](#features)
 - [Quick Start](#quick-start)
   - [Prerequisites](#prerequisites)
-  - [First-Time Setup](#first-time-setup)
+  - [First-Time Setup (Required for All Options)](#first-time-setup-required-for-all-options)
   - [Installation Options](#installation-options)
   - [Verify Installation](#verify-installation)
   - [Next Steps](#next-steps)
@@ -30,6 +30,7 @@ A Model Context Protocol (MCP) server that enables AI agents to interact with IB
 - [Deployment Architectures](#deployment-architectures)
 - [Project Structure](#project-structure)
 - [Troubleshooting](#troubleshooting)
+- [Known Issues](#known-issues)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -141,7 +142,7 @@ scripts\run_mcp.bat
 # Accessible via HTTP/REST API for multiple concurrent clients
 ```
 
-**Local Mode (stdio transport)** - For MCP clients like Claude Desktop, single-user:
+**Local Mode (stdio transport)** - For MCP clients like IBM Bob, single-user:
 ```bash
 # Linux/Mac
 ./scripts/run_mcp.sh local
@@ -249,7 +250,7 @@ chown -R 1000:1000 logs  # Required for Podman to match container user UID:GID
    
    **Mode Selection Guide**:
    - **Remote mode**: Use when you need HTTP/REST API access, multiple concurrent clients, or web-based access. Port is configurable via `--port` flag or `PORT` environment variable.
-   - **Local mode**: Use when integrating with MCP clients (Claude Desktop, MCP Inspector) that communicate via stdio. No network port required.
+   - **Local mode**: Use when integrating with MCP clients (IBM Bob, MCP Inspector) that communicate via stdio. No network port required.
 
 ---
 
@@ -316,7 +317,7 @@ curl -X POST http://localhost:8000/mcp \
 
 3. **Deploy to production**: See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for production deployment patterns, security hardening, and scaling strategies
 
-4. **Integrate with AI agents**: See [Using with AI Agents](#using-with-ai-agents) section for configuring Claude Desktop, Bob, MCP Inspector, and custom AI integrations
+4. **Integrate with AI agents**: See [Using with AI Agents](#using-with-ai-agents) section for configuring IBM Bob, MCP Inspector, and custom AI integrations
 
 5. **Explore authentication options**: Review [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md) for different authentication methods (Basic, IBM Cloud IAM, MCSP, CP4D) and configuration examples
 
@@ -644,12 +645,12 @@ For detailed information on resource tools and usage, see [`docs/RESOURCE_TOOLS.
 
 ### Context Variables
 
-All tools support optional context variables for multi-tenant scenarios and per-request authentication. Context variables are passed as additional parameters alongside regular tool arguments.
+All tools support optional context variables for multi-user scenarios and per-request authentication. Context variables are passed as additional parameters alongside regular tool arguments.
 
 #### Authentication Context
 
 - **`op_auth_header`**: Per-request authentication header
-  - Enables multi-tenant deployments where each request uses different credentials
+  - Enables multi-user deployments where each request uses different credentials
   - Overrides server-configured authentication for that specific request
   - Format: `"Basic base64(username:password)"` or `"Bearer token"`
   - Example: `{"object_type": "SOXIssue", "op_auth_header": "Bearer eyJ..."}`
@@ -712,7 +713,6 @@ The server exposes OpenPages object ontology as MCP resources:
 ```
 
 **Documentation**:
-- Resource schema format: [`docs/RESOURCE_SCHEMA_FORMAT.md`](docs/RESOURCE_SCHEMA_FORMAT.md)
 - Query grammar reference: [`docs/QUERY_GRAMMAR_RESOURCE.md`](docs/QUERY_GRAMMAR_RESOURCE.md)
 - Resource tools: [`docs/RESOURCE_TOOLS.md`](docs/RESOURCE_TOOLS.md)
 
@@ -773,20 +773,6 @@ The server implements the MCP protocol version `2025-03-26` and supports the fol
 **Note**: Both slash-notation (`tools/list`) and underscore-notation (`list_tools`) are supported for flexibility with different MCP clients.
 
 ## Using with AI Agents
-
-### Claude Desktop
-
-Add to Claude's MCP settings:
-```json
-{
-  "mcpServers": {
-    "openpages-grc": {
-      "url": "http://localhost:8000/mcp",
-      "protocol": "streamable_http"
-    }
-  }
-}
-```
 
 ### Bob
 
@@ -872,7 +858,7 @@ python main.py --mode local
 
 ### Using AI Agents
 
-Configure your AI agent (Claude Desktop, Bob, etc.) to connect to the server:
+Configure your AI agent (IBM Bob, Claude Desktop etc.) to connect to the server:
 1. Add server configuration to your AI agent's MCP settings
 2. Test basic operations:
    - List available tools
@@ -1018,6 +1004,39 @@ DEBUG=True
 LOG_LEVEL=DEBUG
 ```
 
+## Known Issues
+
+### Watsonx Orchestrate Agent Integration - JWT Token Truncation
+
+**Issue**: When using the GRC MCP Server with Watsonx Orchestrate agents in OpenPages embedded chat, JWT tokens passed via the `op_auth_header` context variable are being truncated during transmission from the agent to the MCP tool, causing tool execution failures.
+
+**Expected Behavior**: The `op_auth_header` JWT token should be passed intact from the embedded chat through the Watsonx Orchestrate agent to the MCP server, enabling [per-user authentication](docs/AUTHENTICATION.md#per-request-authentication-override) where each user's OpenPages access control is properly enforced.
+
+**Current Status**: This is a known issue in the Watsonx Orchestrate - OpenPages embedded chat interaction that is being addressed or alternative solution created.
+
+**Workaround**: Use the server credential authentication flow instead. When creating Watsonx Orchestrate agents using the sample YAML files in the [`samples/`](samples/) folder:
+
+- **Remove** `op_auth_header` from the `context_variables` section
+- **Remove** any references to `op_auth_header` from the agent instructions
+
+**Example**: In your agent YAML configuration, remove these sections:
+```yaml
+# REMOVE THIS:
+context_variables:
+  op_auth_header:
+    type: string
+    description: "Authentication header for API requests"
+
+# REMOVE THIS from instructions:
+# "Use the op_auth_header context variable for authentication"
+```
+
+**Related Documentation**:
+- [Per-Request Authentication Override](docs/AUTHENTICATION.md#per-request-authentication-override) - Explains the intended per-user authentication flow
+- [Authentication Methods](docs/AUTHENTICATION.md#authentication-methods) - Server credential configuration options
+
+---
+
 ## Documentation
 
 ### Core Documentation
@@ -1031,7 +1050,6 @@ LOG_LEVEL=DEBUG
 ### Features & Usage
 
 - **[`docs/RESOURCE_TOOLS.md`](docs/RESOURCE_TOOLS.md)** - Using MCP resources and resource tools
-- **[`docs/RESOURCE_SCHEMA_FORMAT.md`](docs/RESOURCE_SCHEMA_FORMAT.md)** - Schema resource format and structure
 - **[`docs/QUERY_GRAMMAR_RESOURCE.md`](docs/QUERY_GRAMMAR_RESOURCE.md)** - OpenPages query syntax and grammar
 
 ### Operations & Monitoring

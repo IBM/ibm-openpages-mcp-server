@@ -16,8 +16,8 @@ The GRC MCP Server supports two deployment modes:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          Client Layer                                    │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │
-│  │  AI Agents   │  │ MCP Inspector│  │   Claude     │                  │
-│  │  (Custom)    │  │    Tool      │  │   Desktop    │                  │
+│  │  AI Agents   │  │ MCP Inspector│  │   IBM        │                  │
+│  │  (Custom)    │  │    Tool      │  │   Bob.       │                  │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                  │
 │         │                  │                  │                          │
 │         └──────────────────┴──────────────────┘                          │
@@ -101,7 +101,7 @@ The GRC MCP Server supports two deployment modes:
 #### 1. Client Layer
 - **AI Agents**: Custom applications using MCP protocol
 - **MCP Inspector**: Development and testing tool
-- **Claude Desktop**: Anthropic's AI assistant with MCP support
+- **IBM Bob**: IBM Code assistant with MCP support
 - **Communication**: HTTP-based JSON-RPC 2.0 over MCP protocol
 
 #### 2. Network Layer (Optional)
@@ -226,8 +226,8 @@ docker-compose --profile with-proxy up -d
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          Client Layer                                    │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │
-│  │  AI Agents   │  │ MCP Inspector│  │   Claude     │                  │
-│  │  (Custom)    │  │    Tool      │  │   Desktop    │                  │
+│  │  AI Agents   │  │ MCP Inspector│  │   IBM        │                  │
+│  │  (Custom)    │  │    Tool      │  │   Bob        │                  │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                  │
 │         │                  │                  │                          │
 │         └──────────────────┴──────────────────┘                          │
@@ -292,7 +292,7 @@ docker-compose --profile with-proxy up -d
 #### 1. Client Layer
 - **AI Agents**: Direct process communication via stdio
 - **MCP Inspector**: Launches server as subprocess
-- **Claude Desktop**: Configures server as local command
+- **IBM Bob**: Configures server as local command
 - **Communication**: stdio-based JSON-RPC 2.0
 
 #### 2. Local Process Layer
@@ -384,7 +384,7 @@ python main.py --mode local
 }
 ```
 
-#### Option D: Claude Desktop Configuration
+#### Option D: IBM Bob Configuration
 ```json
 {
   "mcpServers": {
@@ -438,7 +438,7 @@ python main.py --mode local
 - ✅ Lower resource usage needed
 - ✅ Direct integration with AI tools
 - ✅ Simpler deployment preferred
-- ✅ Using MCP Inspector or Claude Desktop
+- ✅ Using MCP Inspector or IBM Bob
 
 ---
 

@@ -144,7 +144,7 @@ request_headers = await self._get_request_headers(auth_override)
 ```
 
 **Benefits:**
-- Enables multi-tenant scenarios where different users have different permissions
+- Enables multi-user scenarios where different users have different permissions
 - Supports WXO (Watson Orchestrate) embedded chat scenarios
 - Maintains security by validating passthrough tokens
 - Falls back gracefully to server credentials when no override is provided
@@ -256,7 +256,7 @@ SSL_VERIFY=False
 | **Automatic Token Refresh** | ✅ Fully implemented | On 401, with double-checked locking |
 | **Per-Request Auth Override** | ✅ Fully implemented | Via `op_auth_header` context variable |
 | **Token Validation** | ✅ Fully implemented | JWT expiry checking with caching |
-| **Multi-Tenant Support** | ✅ Enabled | Via passthrough tokens |
+| **Multi-User Support** | ✅ Enabled | Via passthrough tokens |
 | **Thread Safety** | ✅ Implemented | Async locks for token operations |
 
 ## Code References

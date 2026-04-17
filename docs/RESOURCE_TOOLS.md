@@ -230,7 +230,6 @@ Test coverage includes:
 ## Related Documentation
 
 - [Resource Handlers](../src/app/mcp/resource_handlers.py) - Core resource handling logic
-- [Schema Format](RESOURCE_SCHEMA_FORMAT.md) - Resource schema documentation
 - [Query Grammar Resource](QUERY_GRAMMAR_RESOURCE.md) - Query syntax and grammar reference
 
 ## Future Enhancements

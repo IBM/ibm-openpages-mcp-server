@@ -152,7 +152,6 @@ Both modes return these default fields in queries:
 - [TYPE_BASED_MODE_PROMPT.md](TYPE_BASED_MODE_PROMPT.md) - Type-Based Mode instructions
 
 ### Technical Documentation
-- [RESOURCE_SCHEMA_FORMAT.md](RESOURCE_SCHEMA_FORMAT.md) - Schema resource format
 - [QUERY_GRAMMAR_RESOURCE.md](QUERY_GRAMMAR_RESOURCE.md) - Query syntax reference
 - [RESOURCE_TOOLS.md](RESOURCE_TOOLS.md) - Resource access tools
 

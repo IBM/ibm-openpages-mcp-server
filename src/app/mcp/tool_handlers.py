@@ -966,11 +966,12 @@ class ToolHandlers:
             }
         
         logger.info("Executing OpenPages query tool")
+        tool_name = "execute_openpages_query"
         span_attrs: Dict[str, Any] = {}
         if is_tracing_enabled():
-            span_attrs = {"tool.operation": "query", "tool.name": "execute_openpages_query"}
+            span_attrs = {"tool.operation": "query", "tool.name": tool_name}
         t_start = time.monotonic()
-        async with start_async_span("mcp.tool.execute_openpages_query", attributes=span_attrs) as span:
+        async with start_async_span(f"mcp.tool.{tool_name}", attributes=span_attrs) as span:
             try:
                 result = await self._execute_tool(
                     self.query_tool.execute_query,
@@ -978,12 +979,38 @@ class ToolHandlers:
                 )
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_ok(span, duration_ms=duration_ms)
+                
+                # Record metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=tool_name,
+                        status="success"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=tool_name
+                    ).observe(duration_ms / 1000.0)
+                
                 return {
                     "result": [{"type": "text", "text": item.text} for item in result]
                 }
             except Exception as e:
                 duration_ms = (time.monotonic() - t_start) * 1000
                 set_span_error(span, e, duration_ms=duration_ms)
+                
+                # Record error metrics
+                if metrics_module.is_metrics_enabled():
+                    metrics_module.tool_executions_total.labels(
+                        tool_name=tool_name,
+                        status="error"
+                    ).inc()
+                    metrics_module.tool_execution_duration_seconds.labels(
+                        tool_name=tool_name
+                    ).observe(duration_ms / 1000.0)
+                    metrics_module.tool_execution_errors_total.labels(
+                        tool_name=tool_name,
+                        error_type=type(e).__name__
+                    ).inc()
+                
                 logger.error(f"Error executing OpenPages query: {e}", exc_info=True)
                 return {
                     "result": [

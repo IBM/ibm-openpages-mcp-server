@@ -118,7 +118,7 @@ pip install mcp>=1.9.4
 python main.py --mode local --debug
 ```
 
-**Note:** Local mode uses stdio transport and is designed for MCP clients like Claude Desktop or MCP Inspector. It does not provide an HTTP endpoint.
+**Note:** Local mode uses stdio transport and is designed for MCP clients like IBM Bob or MCP Inspector. It does not provide an HTTP endpoint.
 
 ### Test Remote Mode
 ```bash

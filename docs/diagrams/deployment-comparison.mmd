@@ -6,7 +6,7 @@ graph TB
         subgraph "RM_Clients [Multiple Clients]"
             RM_A1[AI Agent 1]
             RM_A2[AI Agent 2]
-            RM_A3[Claude Desktop]
+            RM_A3[IBM Bob]
         end
         
         RM_B[NGINX<br/>Load Balancer<br/>Optional]
@@ -30,7 +30,7 @@ graph TB
     
     subgraph "Local Mode Deployment"
         subgraph "LM_Clients [Single Client]"
-            LM_A[AI Agent<br/>or<br/>Claude Desktop]
+            LM_A[AI Agent<br/>or<br/>IBM Bob]
         end
         
         subgraph "LM_Process [Python Process]"

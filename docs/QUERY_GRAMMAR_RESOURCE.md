@@ -274,6 +274,5 @@ Potential improvements:
 
 ## Related Documentation
 
-- [Resource Schema Format](RESOURCE_SCHEMA_FORMAT.md) - Schema resource format documentation
 - [Query Tool Documentation](../src/app/tools/query_tool.py) - Query tool implementation
 - [Resource Handlers](../src/app/mcp/resource_handlers.py) - Resource handler implementation including query grammar generation

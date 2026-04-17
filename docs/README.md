@@ -14,7 +14,6 @@ This directory contains comprehensive documentation for the GRC MCP Server.
 ## Features & Usage
 
 - **[RESOURCE_TOOLS.md](RESOURCE_TOOLS.md)** - Using MCP resources and resource tools
-- **[RESOURCE_SCHEMA_FORMAT.md](RESOURCE_SCHEMA_FORMAT.md)** - Schema resource format and structure
 - **[QUERY_GRAMMAR_RESOURCE.md](QUERY_GRAMMAR_RESOURCE.md)** - OpenPages query syntax and grammar reference
 
 ## Operations

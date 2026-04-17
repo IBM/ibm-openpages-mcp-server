@@ -243,7 +243,7 @@ These tests verify:
 
 1. **Start with .env.example**: Copy it to `.env` and fill in mandatory settings
 2. **Enable features as needed**: Leave optional features disabled until you need them
-3. **Use object_types.json for customization**: Only create it when you need custom object type configurations
+3. **Use object_types.json for customization**: Extend the default object_types.json by adding custom object types specific to your use case
 4. **Check logs on startup**: Review stderr output for any warnings about auto-corrected settings
 5. **Validate before deployment**: Run tests to ensure your configuration is valid
 6. **SSL in production**: Always use `SSL_VERIFY=true` in production environments
