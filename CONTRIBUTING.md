@@ -69,16 +69,11 @@ git commit -s
 ```
 
 ## Communication
-**FIXME** Please feel free to connect with us.
+**FIXME** Please feel free to connect with us on our [Slack channel](https://ibm.enterprise.slack.com/archives/C09HXC0PB6C)
 
 ## Setup
-**FIXME** Please add any special setup instructions for your project to help the developer
-become productive quickly.
+**FIXME** Please refer the [README.md](https://github.com/IBM/ibm-openpages-mcp-server/blob/develop/README.md) page for setup instructions.
 
 ## Testing
-**FIXME** Please provide information that helps the developer test any changes they make
-before submitting.
+**FIXME** Please refer the [README.md](https://github.com/IBM/ibm-openpages-mcp-server/blob/develop/README.md) page for testing instructions.
 
-## Coding style guidelines
-**FIXME** Optional, but recommended: please share any specific style guidelines you might
-have for your project.
