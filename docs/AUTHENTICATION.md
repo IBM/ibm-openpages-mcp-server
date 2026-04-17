@@ -72,7 +72,7 @@ The header is cached and reused for all subsequent API calls.
 |---------|-------|
 | `OPENPAGES_AUTHENTICATION_TYPE` | `bearer` |
 | Required credentials | `OPENPAGES_USERNAME` + `OPENPAGES_PASSWORD` + `OPENPAGES_AUTHENTICATION_URL` |
-| URL detection pattern | `/icp4d-api/v1/authorize` or `cpd-` |
+| URL detection pattern | `/icp4d-api/v1/authorize` |
 
 **Token exchange flow:**
 - Uses **username/password** instead of API key

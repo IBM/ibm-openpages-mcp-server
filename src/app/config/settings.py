@@ -242,8 +242,8 @@ class Settings(BaseSettings):
             # Check if this is CP4D authentication
             is_cp4d = (
                 self.OPENPAGES_AUTHENTICATION_URL and
-                ('/icp4d-api/v1/authorize' in self.OPENPAGES_AUTHENTICATION_URL or
-                 'cpd-' in self.OPENPAGES_AUTHENTICATION_URL)
+                ('/icp4d-api/v1/authorize' in self.OPENPAGES_AUTHENTICATION_URL
+                 in self.OPENPAGES_AUTHENTICATION_URL)
             )
             
             if is_cp4d:

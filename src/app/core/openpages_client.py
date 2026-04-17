@@ -110,7 +110,7 @@ class OpenPagesClient:
             if not authentication_url:
                 raise ValueError("Authentication URL is required for bearer authentication")
             # Detect if this is CP4D authentication by checking URL pattern
-            is_cp4d = '/icp4d-api/v1/authorize' in authentication_url or 'cpd-' in authentication_url
+            is_cp4d = '/icp4d-api/v1/authorize' in authentication_url in authentication_url
             if is_cp4d:
                 # CP4D uses username/password
                 if not username or not password:
@@ -146,7 +146,7 @@ class OpenPagesClient:
         # Detect if this is CP4D based on authentication URL
         self.is_cp4d = False
         if self.auth_type == "bearer" and authentication_url:
-            self.is_cp4d = '/icp4d-api/v1/authorize' in authentication_url or 'cpd-' in authentication_url
+            self.is_cp4d = '/icp4d-api/v1/authorize' in authentication_url in authentication_url
         
         # Set instance name for CP4D
         self.instance_name = None

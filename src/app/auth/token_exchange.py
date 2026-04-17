@@ -23,7 +23,7 @@ def detect_auth_type(authentication_url: str) -> str:
     Returns:
         Either 'ibm_cloud', 'mcsp', or 'cp4d'
     """
-    if '/icp4d-api/v1/authorize' in authentication_url or 'cpd-' in authentication_url:
+    if '/icp4d-api/v1/authorize' in authentication_url in authentication_url:
         logger.info("Detected CP4D authentication")
         return 'cp4d'
     elif 'iam.cloud.ibm.com' in authentication_url or 'iam.test.cloud.ibm.com' in authentication_url:
