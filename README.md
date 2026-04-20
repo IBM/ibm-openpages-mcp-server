@@ -67,8 +67,8 @@ Before using any deployment option, complete these steps:
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/grc-mcp-server.git
-   cd grc-mcp-server
+   git clone https://github.com/IBM/ibm-openpages-mcp-server.git
+   cd ibm-openpages-mcp-server 
    ```
 
 2. **Configure environment variables**:
