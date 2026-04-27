@@ -24,6 +24,7 @@ A Model Context Protocol (MCP) server that enables AI agents to interact with IB
 - [MCP Prompts](#mcp-prompts)
 - [API Endpoints](#api-endpoints)
 - [Using with AI Agents](#using-with-ai-agents)
+  - [Watsonx Orchestrate](#watsonx-orchestrate)
 - [AI Agent Instructions](#ai-agent-instructions)
 - [Testing the Server](#testing-the-server)
 - [Observability & Monitoring](#observability--monitoring)
@@ -812,6 +813,293 @@ Add to Bob's MCP settings:
 ```bash
 python main.py --mode local
 ```
+
+### Watsonx Orchestrate
+
+Deploy the MCP server as a toolkit in IBM Watsonx Orchestrate to enable AI assistants to interact with OpenPages GRC.
+
+#### Prerequisites
+
+Before deploying to Watsonx Orchestrate, ensure you have:
+
+1. **Watsonx Orchestrate CLI installed and configured**
+   ```bash
+   # Verify CLI is installed
+   orchestrate --version
+   ```
+
+2. **Active Orchestrate environment**
+   ```bash
+   # Check current environment
+   orchestrate env list
+   
+   # Activate your environment if needed
+   orchestrate env use <environment-name>
+   ```
+
+3. **Completed the [First-Time Setup](#first-time-setup-required-for-all-options)** including:
+   - Repository cloned
+   - `.env` file configured with OpenPages credentials
+   - Dependencies verified
+
+#### Deployment Instructions
+
+Follow these steps to deploy the MCP server as a toolkit:
+
+1. **Verify your package structure**
+   
+   Ensure your package root contains:
+   - `main.py` - Entry point for the MCP server
+   - `requirements.txt` - Python dependencies (must be UV-compatible)
+   - `.env` - OpenPages configuration
+   - `src/` directory with MCP server code
+   
+   **Important**: Do NOT include `pyproject.toml` unless it's UV-compatible. The Orchestrate deployment uses UV for dependency management.
+
+2. **Verify requirements.txt**
+   
+   Your `requirements.txt` must include valid package names compatible with UV:
+   ```txt
+   mcp>=1.9.4
+   fastapi>=0.115.0
+   uvicorn>=0.32.0
+   httpx>=0.27.0
+   pydantic>=2.9.0
+   pydantic-settings>=2.5.0
+   python-dotenv>=1.0.0
+   ```
+   
+   **Critical**: Ensure `mcp>=1.9.4` is specified (not invalid package names like `mcp-server-openpages`).
+
+3. **Deploy the toolkit**
+   
+   Run the following command from your workspace directory:
+   
+   ```bash
+   orchestrate toolkits add \
+     --kind mcp \
+     --name "OpenPages_MCP_v9" \
+     --description "MCP tools for OpenPages integration" \
+     --package-root "/absolute/path/to/dependencies/ibm-openpages-mcp-server" \
+     --command "python main.py --mode local" \
+     --tools "*"
+   ```
+   
+   **Parameter explanations**:
+   - `--kind mcp`: Specifies this is an MCP toolkit
+   - `--name`: Unique identifier for your toolkit (use versioning for updates)
+   - `--description`: Human-readable description
+   - `--package-root`: **Absolute path** to the directory containing `main.py`
+   - `--command`: Command to start the MCP server in local (stdio) mode
+   - `--tools "*"`: Import all available tools (or specify specific tool names)
+   
+   **Important notes**:
+   - The `--mode local` flag is **required** for stdio transport (Orchestrate requirement)
+   - Use absolute paths for `--package-root` (relative paths may cause issues)
+   - The toolkit name must be unique; increment version for updates
+
+4. **Verify deployment**
+   
+   After deployment completes, verify the toolkit is registered:
+   
+   ```bash
+   # List all toolkits
+   orchestrate toolkits list
+   
+   # Get details about your toolkit
+   orchestrate toolkits get OpenPages_MCP_v9
+   ```
+   
+   Expected output should show:
+   - Toolkit status: `active` or `ready`
+   - Exposed tools list (8-10 tools depending on configuration)
+
+5. **View exposed tools**
+   
+   Check which tools were successfully imported:
+   
+   ```bash
+   orchestrate toolkits get OpenPages_MCP_v9 --show-tools
+   ```
+   
+   You should see tools like:
+   - `echo` - Test connectivity
+   - `list_resources` - List available MCP resources
+   - `get_resource` - Retrieve specific resource content
+   - `execute_openpages_query` - Execute SOQL queries
+   - `openpages_delete_object` - Delete OpenPages objects
+   - `openpages_associate_objects` - Create associations
+   - `openpages_dissociate_objects` - Remove associations
+   - `openpages_upsert_object` - Create or update objects
+
+#### Managing Toolkits
+
+**Update an existing toolkit**:
+```bash
+# Remove old version
+orchestrate toolkits remove OpenPages_MCP_v9
+
+# Deploy new version
+orchestrate toolkits add \
+  --kind mcp \
+  --name "OpenPages_MCP_v10" \
+  --description "MCP tools for OpenPages integration (updated)" \
+  --package-root "/absolute/path/to/dependencies/ibm-openpages-mcp-server" \
+  --command "python main.py --mode local" \
+  --tools "*"
+```
+
+**Remove a toolkit**:
+```bash
+orchestrate toolkits remove OpenPages_MCP_v9
+```
+
+**List all toolkits**:
+```bash
+orchestrate toolkits list
+```
+
+#### Deployment Troubleshooting
+
+Common issues and solutions when deploying to Watsonx Orchestrate:
+
+##### 1. UV Install Failed Errors
+
+**Symptom**: Deployment fails with "uv install failed" or dependency resolution errors.
+
+**Causes and solutions**:
+
+- **Invalid package names in requirements.txt**
+  ```bash
+  # ❌ Wrong - invalid package name
+  mcp-server-openpages>=1.0.0
+  
+  # ✅ Correct - valid PyPI package
+  mcp>=1.9.4
+  ```
+  
+  **Solution**: Verify all package names exist on PyPI. Use `pip search` or check https://pypi.org/
+
+- **Conflicting pyproject.toml**
+  
+  If you have a `pyproject.toml` file, it must be UV-compatible. UV uses different dependency resolution than pip.
+  
+  **Solution**: Either:
+  - Remove `pyproject.toml` and use only `requirements.txt`
+  - Ensure `pyproject.toml` follows UV's format requirements
+  
+- **Version conflicts**
+  
+  **Solution**: Use flexible version specifiers:
+  ```txt
+  # ✅ Good - allows compatible updates
+  mcp>=1.9.4
+  fastapi>=0.115.0
+  
+  # ❌ Avoid - too restrictive
+  mcp==1.9.4
+  ```
+
+##### 2. Runtime Errors
+
+**Symptom**: Toolkit deploys but tools fail when invoked.
+
+**Common causes**:
+
+- **FastAPI import errors**
+  
+  If your code imports FastAPI but it's not needed for local mode:
+  ```python
+  # Make FastAPI imports conditional
+  if mode == "remote":
+      from fastapi import FastAPI
+  ```
+
+- **Logging to stdout**
+  
+  MCP uses stdio for communication. Logging to stdout will corrupt the protocol.
+  
+  **Solution**: Ensure logging goes to stderr or files:
+  ```python
+  import logging
+  import sys
+  
+  # Configure logging to stderr
+  logging.basicConfig(
+      level=logging.INFO,
+      stream=sys.stderr,  # Not stdout!
+      format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  )
+  ```
+
+- **Missing environment variables**
+  
+  Ensure `.env` file is in the package root and contains all required variables:
+  ```env
+  OPENPAGES_BASE_URL=https://your-instance.com
+  OPENPAGES_AUTHENTICATION_TYPE=basic
+  OPENPAGES_USERNAME=your-username
+  OPENPAGES_PASSWORD=your-password
+  ```
+
+##### 3. Tool Import Issues
+
+**Symptom**: Toolkit deploys but no tools are exposed.
+
+**Solutions**:
+
+- Verify `--tools "*"` parameter is included in deployment command
+- Check that `main.py` properly registers tools with the MCP server
+- Review toolkit logs: `orchestrate toolkits logs OpenPages_MCP_v9`
+
+##### 4. Path Issues
+
+**Symptom**: "Package root not found" or "main.py not found" errors.
+
+**Solutions**:
+
+- Use absolute paths for `--package-root`
+- Verify the path contains `main.py` at the root level
+- Check file permissions (must be readable by Orchestrate)
+
+##### 5. Verification Steps
+
+After deployment, test the toolkit:
+
+1. **Check toolkit status**:
+   ```bash
+   orchestrate toolkits get OpenPages_MCP_v9
+   ```
+
+2. **View logs**:
+   ```bash
+   orchestrate toolkits logs OpenPages_MCP_v9
+   ```
+
+3. **Test with a simple tool**:
+   Create a test assistant that uses the `echo` tool to verify connectivity.
+
+4. **Monitor for errors**:
+   ```bash
+   orchestrate toolkits logs OpenPages_MCP_v9 --follow
+   ```
+
+#### Best Practices
+
+1. **Version your toolkits**: Use version numbers in toolkit names (e.g., `OpenPages_MCP_v9`, `OpenPages_MCP_v10`) to track changes
+
+2. **Test locally first**: Before deploying to Orchestrate, test the MCP server locally:
+   ```bash
+   python main.py --mode local
+   ```
+
+3. **Keep requirements minimal**: Only include packages actually needed for local mode operation
+
+4. **Document your configuration**: Keep notes on which `.env` settings work for your deployment
+
+5. **Use absolute paths**: Always use absolute paths in deployment commands to avoid ambiguity
+
+6. **Monitor logs**: Regularly check toolkit logs for warnings or errors
 
 ### Custom AI Agents
 

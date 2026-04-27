@@ -1,39 +1,20 @@
-# Core dependencies
-fastapi>=0.104.0
-uvicorn>=0.24.0
-httpx>=0.24.0
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
+# Dependencies for LOCAL MCP Server (stdio mode)
+# This file contains only the minimal dependencies needed for local stdio mode
+# For remote HTTP mode, additional dependencies (FastAPI, Uvicorn, etc.) would be needed
 
-# MCP dependencies
+# MCP Protocol
 mcp>=1.9.4
 
-# Environment variables
-python-dotenv>=1.0.0
-
-# Date parsing
-python-dateutil>=2.8.2
-
-# JWT token handling
-PyJWT>=2.8.0
-
-# Observability - Metrics
-prometheus-client>=0.19.0
-
-# Observability - Tracing (Optional)
-opentelemetry-api>=1.21.0
-opentelemetry-sdk>=1.21.0
-opentelemetry-exporter-otlp>=1.21.0
-opentelemetry-instrumentation-fastapi>=0.42b0
-
-# Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.1
+# HTTP Client (for OpenPages API calls)
 httpx>=0.24.0
 
-# Development
-black>=23.9.1
-isort>=5.12.0
-flake8>=6.1.0
-mypy>=1.5.1
-debugpy>=1.6.7
+# Configuration & Validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# Date/Time Utilities
+python-dateutil>=2.8.2
+
+# JWT token handling (if needed for OpenPages auth)
+PyJWT>=2.8.0
