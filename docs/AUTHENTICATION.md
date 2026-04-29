@@ -17,9 +17,25 @@ The middleware extracts `X-User-ID` and `X-Session-ID` headers for observability
 
 The server supports **4 authentication methods** with advanced features including automatic token refresh and per-request authentication override.
 
+### Deployment Model Guide
+
+Before configuring authentication, identify your OpenPages deployment model:
+
+| Deployment Model | Authentication Method | Description |
+|-----------------|----------------------|-------------|
+| **On-Premises** | Basic Authentication | Self-hosted OpenPages installations - use username/password |
+| **IBM Cloud Hosted** | Basic Authentication | Traditional IBM Cloud hosted instances - use username/password |
+| **IBM Cloud SaaS** | Bearer (IBM Cloud IAM) | Fully managed SaaS offering - use API key with IAM |
+| **MCSP** | Bearer (MCSP) | Managed Cloud Services Platform - use API key |
+| **CP4D** | Bearer (CP4D) | Cloud Pak for Data on-premises or private cloud - use username/password |
+
+**Important for Local MCP Servers:** If you are running this MCP server locally (not in IBM Cloud) and connecting to an **IBM Cloud hosted** or **on-premises** OpenPages instance, you must use **Basic Authentication**, not Bearer/API key authentication.
+
 ### Authentication Methods
 
 #### 1. Basic Authentication
+
+**Use for:** On-premises deployments, IBM Cloud hosted instances, development environments, or any deployment requiring username/password authentication.
 
 | Setting | Value |
 |---------|-------|
@@ -36,13 +52,16 @@ The header is cached and reused for all subsequent API calls.
 
 **Implementation**: `_create_basic_auth_header()` in [`openpages_client.py`](../src/app/core/openpages_client.py)
 
-#### 2. Bearer — IBM Cloud IAM
+#### 2. Bearer — IBM Cloud IAM (SaaS Only)
 
 | Setting | Value |
 |---------|-------|
 | `OPENPAGES_AUTHENTICATION_TYPE` | `bearer` |
 | Required credentials | `OPENPAGES_APIKEY` + `OPENPAGES_AUTHENTICATION_URL` |
 | URL detection pattern | `iam.cloud.ibm.com` or `iam.test.cloud.ibm.com` |
+| **Deployment Model** | **IBM Cloud SaaS deployments only** |
+
+**Important:** This authentication method is for **IBM Cloud SaaS** deployments only. If you are using **IBM Cloud hosted** OpenPages instances, use **Basic Authentication** (method 1) instead.
 
 **Token exchange flow:**
 - **POST** to auth URL with `Content-Type: application/x-www-form-urlencoded`
@@ -220,7 +239,7 @@ See [`.env.example`](../.env.example) for all available options.
 
 ### Example Configurations
 
-#### Basic Authentication
+#### Basic Authentication (On-Premises / IBM Cloud Hosted)
 ```env
 OPENPAGES_AUTHENTICATION_TYPE=basic
 OPENPAGES_USERNAME=admin
@@ -228,13 +247,22 @@ OPENPAGES_PASSWORD=your_password
 OPENPAGES_BASE_URL=https://openpages.example.com
 ```
 
-#### IBM Cloud IAM
+**Use this for:**
+- On-premises OpenPages installations
+- IBM Cloud hosted instances
+- Local MCP servers connecting to IBM Cloud hosted environments
+
+#### IBM Cloud IAM (IBM Cloud SaaS Only)
 ```env
 OPENPAGES_AUTHENTICATION_TYPE=bearer
 OPENPAGES_APIKEY=your_api_key
 OPENPAGES_AUTHENTICATION_URL=https://iam.cloud.ibm.com/identity/token
 OPENPAGES_BASE_URL=https://openpages.cloud.ibm.com
 ```
+
+**Use this for:**
+- IBM Cloud SaaS deployments only
+- **Not** for IBM Cloud hosted instances
 
 #### CP4D
 ```env

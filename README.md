@@ -362,14 +362,17 @@ See [`.env.example`](.env.example) for all available configuration options.
 
 ### Authentication Methods
 
-The server supports multiple authentication methods for connecting to OpenPages:
+The server supports multiple authentication methods for connecting to OpenPages. **Choose the method based on your OpenPages deployment model:**
 
-| Method | Type | Required Credentials |
-|--------|------|---------------------|
-| **Basic** | `basic` | Username + Password |
-| **IBM Cloud IAM** | `bearer` | API Key + Auth URL |
-| **MCSP** | `bearer` | API Key + Auth URL |
-| **CP4D** | `bearer` | Username + Password + Auth URL |
+| Deployment Model | Auth Type | Method | Required Credentials |
+|-----------------|-----------|--------|---------------------|
+| **On-Premises** | `basic` | Basic | Username + Password |
+| **IBM Cloud Hosted** | `basic` | Basic | Username + Password |
+| **IBM Cloud SaaS** | `bearer` | IBM Cloud IAM | API Key + Auth URL |
+| **MCSP** | `bearer` | MCSP | API Key + Auth URL |
+| **CP4D** | `bearer` | CP4D | Username + Password + Auth URL |
+
+**Important:** For **IBM Cloud hosted** or **on-premises** OpenPages instances, use **Basic Authentication** (username/password), not Bearer/API key.
 
 For detailed authentication configuration, see [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md).
 

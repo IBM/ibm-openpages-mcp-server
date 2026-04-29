@@ -23,7 +23,9 @@ pip install python-dotenv>=1.0.0
 
 ### 2. Configure Environment
 
-Create a `.env` file in the project root with your OpenPages credentials:
+Create a `.env` file in the project root with your OpenPages credentials.
+
+**For On-Premises or IBM Cloud Hosted instances (use Basic Authentication):**
 
 ```env
 # OpenPages Connection
@@ -32,7 +34,21 @@ OPENPAGES_AUTHENTICATION_TYPE=basic
 OPENPAGES_USERNAME=your-username
 OPENPAGES_PASSWORD=your-password
 
-# For Bearer Authentication (optional)
+# Server Settings
+SERVER_MODE=local
+SSL_VERIFY=True
+LOG_LEVEL=INFO
+DEBUG=False
+HOST=0.0.0.0
+PORT=8000
+```
+
+**For IBM Cloud SaaS instances (use Bearer Authentication):**
+
+```env
+# OpenPages Connection
+OPENPAGES_BASE_URL=your-openpages-url.com
+OPENPAGES_AUTHENTICATION_TYPE=bearer
 OPENPAGES_APIKEY=your-api-key
 OPENPAGES_AUTHENTICATION_URL=https://iam.cloud.ibm.com/identity/token
 
@@ -102,9 +118,11 @@ pip install mcp>=1.9.4
 **Solution:** Ensure `src/app/config/object_types.json` exists and is valid JSON. Tools are dynamically generated from this configuration file.
 
 ### Issue 4: Authentication errors
-**Solution:** 
+**Solution:**
 - Verify your credentials in `.env`
-- For bearer auth, ensure you have both `OPENPAGES_APIKEY` and `OPENPAGES_AUTHENTICATION_URL`
+- **For on-premises or IBM Cloud hosted instances:** Use `OPENPAGES_AUTHENTICATION_TYPE=basic` with username/password
+- **For IBM Cloud SaaS instances:** Use `OPENPAGES_AUTHENTICATION_TYPE=bearer` with API key and authentication URL
+- Ensure you have both `OPENPAGES_APIKEY` and `OPENPAGES_AUTHENTICATION_URL` for bearer auth
 - Check that `OPENPAGES_BASE_URL` is correct (with or without https://)
 
 ## Testing
