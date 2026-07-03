@@ -127,6 +127,14 @@ def mock_schema_builder():
                     {"name": "Inactive", "localized_label": "Inactive"}
                 ]
             }
+        ],
+        "associations": [
+            {
+                "name": "SOXIssue",
+                "relationship": "Child",
+                "enabled": True,
+                "localizedLabel": "Issues"
+            }
         ]
     }
     
@@ -373,5 +381,32 @@ async def test_configuration_in_schema(resource_handlers):
     assert "fields" in config["type_based_query_filters"]
     query_fields = config["type_based_query_filters"]["fields"]
     assert len(query_fields) > 0
+
+@pytest.mark.asyncio
+async def test_object_types_catalog_includes_high_level_relationships(resource_handlers):
+    """Test that the object types catalog includes a lightweight relationship summary"""
+    import json
+    
+    result = await resource_handlers.handle_read_resource({"uri": "openpages://catalog/object_types"})
+    
+    assert "contents" in result
+    assert len(result["contents"]) == 1
+    
+    catalog = json.loads(result["contents"][0]["text"])
+    assert "object_types" in catalog
+    
+    issue_entry = next(obj for obj in catalog["object_types"] if obj["id"] == "SOXIssue")
+    assert "relationships" in issue_entry
+    assert issue_entry["relationships"] == []
+    
+    control_entry = next(obj for obj in catalog["object_types"] if obj["id"] == "SOXControl")
+    assert "relationships" in control_entry
+    assert len(control_entry["relationships"]) == 1
+    control_rel = control_entry["relationships"][0]
+    assert control_rel["kind"] == "hierarchical"
+    assert control_rel["direction"] == "child"
+    assert control_rel["target_type"] == "SOXIssue"
+    assert "cardinality" not in control_rel
+
 
 # Made with Bob

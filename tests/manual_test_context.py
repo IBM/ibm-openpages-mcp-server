@@ -161,11 +161,12 @@ def test_allowed_variables():
         "op_object_id",
         "op_object_name",
         "op_workflow_stage",
-        "op_auth_header"
+        "op_auth_header",
+        "op_auth_ticket"
     }
-    
+
     assert ALLOWED_CONTEXT_VARIABLES == required_vars, "Should have exactly the required variables"
-    assert len(ALLOWED_CONTEXT_VARIABLES) == 12, "Should have exactly 12 variables"
+    assert len(ALLOWED_CONTEXT_VARIABLES) == 13, "Should have exactly 13 variables"
     print("[PASS] All required variables present")
     print("[PASS] No extra variables")
     

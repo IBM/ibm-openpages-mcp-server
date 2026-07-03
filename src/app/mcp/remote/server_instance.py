@@ -30,12 +30,13 @@ async def initialize_server_async() -> Optional[MCPServer]:
         return _mcp_server_instance
     
     try:
-        logger.info(f"Initializing MCP Server in {settings.SERVER_MODE} mode")
+        logger.info(f"Initializing MCP Server in {settings.SERVER_MODE} mode (environment: {settings.ENVIRONMENT})")
         
         _mcp_server_instance = MCPServer(custom_settings=settings)
         logger.info("MCP Server initialized successfully")
         
-        # Initialize client authentication - FAIL FAST on errors (including SSL)
+        # Initialize authentication eagerly and FAIL FAST on errors
+        # This ensures the server is fully operational before accepting requests
         logger.info("Initializing OpenPages client authentication...")
         try:
             await _mcp_server_instance.initialize_client()
@@ -45,7 +46,8 @@ async def initialize_server_async() -> Optional[MCPServer]:
             # Re-raise to prevent server startup
             raise RuntimeError(f"Server startup failed: Cannot connect to OpenPages. {auth_error}") from auth_error
         
-        # Eagerly load dynamic schemas at startup - FAIL FAST on errors (including SSL)
+        # Load schemas eagerly and FAIL FAST on errors
+        # This ensures schemas are available before accepting requests
         logger.info("Loading dynamic schemas at startup...")
         try:
             await _mcp_server_instance.load_dynamic_schemas()
@@ -55,33 +57,9 @@ async def initialize_server_async() -> Optional[MCPServer]:
             # Re-raise to prevent server startup
             raise RuntimeError(f"Server startup failed: Cannot load schemas from OpenPages. {schema_error}") from schema_error
         
-        # Pre-load resource schemas to warm both Layer 1 and Layer 2 caches
-        # This is optional - if it fails, we can still start (schemas will load on demand)
-        try:
-            logger.info("Pre-loading resource schemas for get_resource tool...")
-            preload_count = 0
-            for obj_config in _mcp_server_instance.settings.OPENPAGES_OBJECT_TYPES:
-                type_id = obj_config.get("type_id")
-                if type_id:
-                    # Pre-load compact mode (most commonly used)
-                    await _mcp_server_instance.resource_handlers.handle_read_resource({
-                        "uri": f"openpages://schema/{type_id}",
-                        "mode": "compact"
-                    })
-                    preload_count += 1
-                    logger.debug(f"Pre-loaded resource schema for {type_id} (compact mode)")
-            
-            # Get cache statistics
-            layer1_stats = _mcp_server_instance.schema_builder.get_cache_stats()
-            layer2_stats = _mcp_server_instance.resource_handlers.get_schema_cache_stats()
-            
-            logger.info(f"Resource schemas pre-loaded successfully ({preload_count} types)")
-            logger.info(f"Layer 1 cache: {layer1_stats['current_size']}/{layer1_stats['max_size']} entries, hit rate: {layer1_stats['hit_rate']}")
-            logger.info(f"Layer 2 cache: {layer2_stats['current_size']}/{layer2_stats['max_size']} entries, hit rate: {layer2_stats['hit_rate']}")
-        except Exception as preload_error:
-            logger.warning(f"Failed to pre-load resource schemas: {preload_error}")
-            logger.warning("Resource schemas will be loaded on first get_resource call instead")
-            # Don't fail startup for preload errors - this is optional optimization
+        # Resource schemas are loaded in background by _background_schema_loader()
+        # No need for explicit pre-loading here
+        logger.info("Resource schemas loading in background task")
         
         return _mcp_server_instance
     except Exception as e:

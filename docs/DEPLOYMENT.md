@@ -370,7 +370,7 @@ python main.py --mode local
     "openpages-grc": {
       "command": "python",
       "args": [
-        "/path/to/grc-mcp-server/main.py",
+        "/path/to/ibm-openpages-mcp-server/main.py",
         "--mode",
         "local"
       ],
@@ -391,7 +391,7 @@ python main.py --mode local
     "openpages-grc": {
       "command": "/path/to/venv/bin/python",
       "args": [
-        "/path/to/grc-mcp-server/main.py",
+        "/path/to/ibm-openpages-mcp-server/main.py",
         "--mode",
         "local"
       ]

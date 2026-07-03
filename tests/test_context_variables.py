@@ -206,14 +206,15 @@ class TestAllowedContextVariables:
             "op_object_id",
             "op_object_name",
             "op_workflow_stage",
-            "op_auth_header"
+            "op_auth_header",
+            "op_auth_ticket"
         }
 
         assert ALLOWED_CONTEXT_VARIABLES == required_vars
 
     def test_no_extra_variables(self):
         """Test that no extra variables are defined"""
-        assert len(ALLOWED_CONTEXT_VARIABLES) == 12
+        assert len(ALLOWED_CONTEXT_VARIABLES) == 13
 
 
 # Made with Bob

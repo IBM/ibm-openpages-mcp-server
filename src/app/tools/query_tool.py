@@ -168,6 +168,7 @@ class QueryTool(BaseTool):
                 - offset: Result offset (optional, default: 0)
                 - limit: Maximum number of results (optional, default: 100, max: 500)
                 - format: Output format - "table", "json", or "list" (optional, default: "table")
+            auth_override: Optional auth header override for per-request auth
                 
         Returns:
             List of text content with query results

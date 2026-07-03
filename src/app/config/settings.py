@@ -14,11 +14,17 @@ The settings are loaded from environment variables with the prefix matching
 the variable names, and can be overridden via .env files.
 """
 
+import base64
 import os
 import json
 import pathlib
+from pathlib import Path
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Dict, Any, List
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Get the project root directory (where main.py is located)
 # This file is at: project_root/src/app/config/settings.py
@@ -66,6 +72,7 @@ class Settings(BaseSettings):
     # Application settings
     APP_NAME: str = "GRC MCP Server"
     DEBUG: bool = False
+    ENVIRONMENT: str = "dev"  # 'dev' or 'production'
     
     # Server mode settings
     SERVER_MODE: str = "remote"  # 'remote' or 'local'
@@ -78,8 +85,71 @@ class Settings(BaseSettings):
     OPENPAGES_USERNAME: str = ""
     OPENPAGES_PASSWORD: str = ""
     OPENPAGES_APIKEY: str = ""
+    OPENPAGES_APIKEY_FILE: Optional[str] = None  # Path to file containing API key
     OPENPAGES_AUTHENTICATION_URL: str = ""
     OPENPAGES_INSTANCE_NAME: str = ""  # For CP4D deployments
+
+    # Cloud provider the server is provisioned on.
+    # When set to "aws" the user-presented API key (auth type 3) must be exchanged
+    # at an INSTANCE-specific MCSP token endpoint rather than OPENPAGES_AUTHENTICATION_URL
+    # (which on AWS Marketplace only accepts service-level keys). See
+    # resolve_user_apikey_auth_url(). Empty/anything-else preserves the existing flow.
+    CLOUD_PROVIDER: str = ""
+    # MCSP IAM base URL used to construct the instance-specific API-key exchange
+    # endpoint on AWS Marketplace ({MCSP_IAM_URL}/api/2.0/services/{OPENPAGES_INSTANCE_ID}/apikeys/token).
+    MCSP_IAM_URL: str = ""
+
+    # OpenPages instance identification (for RabbitMQ routing key construction)
+    OPENPAGES_ACCOUNT_ID: str = ""  # Account ID for routing key (e.g., "999")
+    OPENPAGES_INSTANCE_ID: str = ""  # OpenPages instance identifier
+    OP_EXT_HOST: str = ""
+
+    # MCP auth posture — the SINGLE explicit axis that drives authentication behavior
+    # (see uses_server_credentials()), independent of ENVIRONMENT (boot strategy),
+    # SERVER_MODE (transport), and OP topology (which is inferred from the auth URL):
+    #   * "user" (default) — production-remote multi-tenant: connection gate active
+    #     and the 4-key user-auth framework enforced. Tool calls never fall back to
+    #     server creds; server creds are used only for the redeemTicket call. This is
+    #     the safe default for SaaS and ticket-issuing Cloud Pak deployments.
+    #   * "server" — the MCP server runs on its own credentials: no connection gate,
+    #     tool calls fall back to server creds. Opt in explicitly for on-prem /
+    #     Cloud Pak agent / local / dev.
+    OPENPAGES_AUTH_MODE: str = "user"
+
+    # ── Embedded-chat ticket auth (type 4) + shared 4-type framework ─────────
+    # Type-3 API-key header name(s) — a comma-separated list (default "X-Api-Key").
+    # Lets different agent deployments carry the key under different headers
+    # (first present wins).
+    SUPPORTED_APIKEY_AUTH_HEADER_NAMES: str = "X-Api-Key"
+    # The op_auth_ticket (type 3) redeem+exchange flow has no enable/disable toggle: it is
+    # deployment-driven (a ticket is only ever present when OpenPages issued one — SaaS / Cloud Pak).
+    # The internal redeemTicket call targets the OpenPages REST API
+    # (OPENPAGES_BASE_URL + "/opgrc/api/v2/token/redeemTicket"), authenticated with server credentials.
+    # Shared confidential OAuth client used for the refresh-artifact exchange.
+    # The id/secret are mounted onto the pods as secret files (see __init__); direct
+    # env vars are honoured as a local/dev fallback. All values are deployment-provided
+    # (env / configMap / mounted secret) — no tenant-specific values are hardcoded here.
+    OPENPAGES_OAUTH_CLIENT_ID: str = ""                      # APP (confidential) client
+    OPENPAGES_OAUTH_CLIENT_SECRET: Optional[SecretStr] = None
+    OPENPAGES_OAUTH_CLIENT_ID_FILE: Optional[str] = None
+    OPENPAGES_OAUTH_CLIENT_SECRET_FILE: Optional[str] = None
+    # API client id / audience (receiver_client_ids for IAM, audience for ISV).
+    OPENPAGES_OAUTH_AUDIENCE: str = ""                       # API client / token audience
+    # IDP token endpoint for the ticket refresh-artifact exchange. When unset, the
+    # exchange falls back to OPENPAGES_AUTHENTICATION_URL (the same IDP in the common
+    # IBM Cloud case). The grant flow (IBM Cloud IAM delegated-refresh vs RFC 8693
+    # refresh_token) is derived from the resolved URL's type, not from the redeem mode.
+    OPENPAGES_USER_IDP_TOKEN_URL: str = ""
+    # Token cache / refresh tuning (types 3 & 4). Ticket sessions are held in a
+    # per-pod in-process cache (no shared store), so each pod redeems independently.
+    AUTH_TOKEN_EXP_SKEW_SECONDS: int = 60   # treat tokens as expired this early
+    AUTH_TOKEN_CACHE_TTL: int = 3600        # default local cache TTL
+    AUTH_TOKEN_CACHE_MAX_SIZE: int = 100    # local cache LRU bound
+
+    # Connection gate: a request is allowed iff a credential is present in a header
+    # (Authorization or any configured API-key header). The gate is skipped entirely
+    # for server-credential deployments (see uses_server_credentials()). No env toggle
+    # — see src/app/auth/channel_auth.py.
 
     # Server settings (with sensible defaults)
     HOST: str = "0.0.0.0"
@@ -125,9 +195,9 @@ class Settings(BaseSettings):
     
     # Tool exposure configuration (safe default)
     TOOL_EXPOSURE_MODE: str = "ontology_based"  # Options: "all", "ontology_based", "type_based"
-
-    # Authentication framework settings (default to True for security)
-    AUTH_ENABLED: bool = True
+    
+    # Include all object types in schemas (safe default)
+    INCLUDE_ALL_OBJECT_TYPES: bool = False  # When True, includes ALL object types from OpenPages, not just configured ones
     
     # Default currency for CURRENCY_TYPE fields (safe default)
     DEFAULT_CURRENCY: str = "USD"  # ISO 4217 currency code
@@ -135,8 +205,11 @@ class Settings(BaseSettings):
     # Path to object types configuration file (safe default)
     OBJECT_TYPES_CONFIG_PATH: str = "src/app/config/object_types.json"
     
+    # ── OpenPages Query settings ─────────────────────────────
+    OPENPAGES_QUERY_PAGE_SIZE: int = 500  # Batch size for paginated OpenPages queries (max: 50000)
+
     # Token optimization settings (Phase 2) - with sensible defaults
-    SCHEMA_CACHE_MAX_SIZE: int = 20  # Maximum number of schemas to cache (LRU)
+    SCHEMA_CACHE_MAX_SIZE: int = 200  # Maximum number of schemas to cache (LRU)
     SCHEMA_CACHE_TTL: int = 3600  # Schema cache TTL in seconds (1 hour)
     ENABLE_MINIMAL_SCHEMA_MODE: bool = True  # Enable minimal schema mode by default
     CACHE_QUERY_EXAMPLES: bool = True  # Cache query examples by default
@@ -144,11 +217,31 @@ class Settings(BaseSettings):
     # MCP session enforcement (Streamable HTTP transport, spec 2025-03-26)
     # Default to False to allow clients that do not support session headers
     MCP_SESSION_ENFORCEMENT: bool = False
-    
+
+    # Connect-time OpenPages access verification: at `initialize`, resolve the
+    # transport credential and probe GET /api/v2/types so a caller that OpenPages
+    # would reject cannot establish a session. Only active in user-auth mode.
+    MCP_VERIFY_ACCESS_ON_CONNECT: bool = True
+
     # MCP session management settings (with sensible defaults)
     MCP_SESSION_TTL: int = 3600  # Session TTL in seconds (1 hour)
     MCP_SESSION_MAX_COUNT: int = 1000  # Maximum number of concurrent sessions
     MCP_SESSION_CLEANUP_INTERVAL: int = 300  # Cleanup task interval in seconds (5 minutes)
+    
+    # Secrets path for SaaS deployments (file-based credentials)
+    SECRETS_PATH: str = os.getenv("SECRETS_PATH", "/secrets/store")
+    
+    # RabbitMQ configuration for SaaS schema synchronization (optional)
+    RABBITMQ_ENABLED: bool = False  # Enable RabbitMQ-based schema sync
+    RABBITMQ_HOST: Optional[str] = None  # RabbitMQ host
+    RABBITMQ_PORT: int = 5671  # RabbitMQ port (default AMQPS)
+    RABBITMQ_USER: Optional[str] = None  # RabbitMQ username (renamed from RABBITMQ_USERNAME)
+    RABBITMQ_PASSWORD: Optional[str] = None  # RabbitMQ password
+    RABBITMQ_METADATA_EXCHANGE: str = "op.public.metadata"  # Exchange name for metadata events
+    RABBITMQ_USE_SSL: bool = True  # Use SSL/TLS for RabbitMQ connection
+    RABBITMQ_VIRTUAL_HOST: str = "/"  # RabbitMQ virtual host
+    MCP_SERVER_DEPLOYMENT_NAME: str = "mcp-server"  # MCP server deployment name prefix for queue naming
+    SCHEMA_UPDATE_INTERVAL: int = 60  # Interval in seconds for processing schema updates
     
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE_PATH),
@@ -157,6 +250,130 @@ class Settings(BaseSettings):
         extra="ignore",  # Ignore extra fields from environment
     )
     
+    @staticmethod
+    def load_vcap_services(data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Load credentials from VCAP_SERVICES file on-demand.
+        
+        Args:
+            data: Dictionary to update with VCAP credentials
+            
+        Returns:
+            Updated dictionary with VCAP credentials (if available)
+        """
+        return data
+    
+    @staticmethod
+    def _read_mounted_secret(file_path: Optional[str], already_set: bool) -> Optional[str]:
+        """
+        Read a secret value from an explicitly configured mounted file.
+
+        Used for the shared OAuth client id/secret. Honors only an explicit ``file_path``;
+        no default path is assumed. If neither a direct value nor an explicit file is
+        configured, the value stays unset (and the exchange path fails fast when it needs it).
+
+        Args:
+            file_path: Explicit path from settings (may be None).
+            already_set: If True, a direct value is already configured; skip the file.
+
+        Returns:
+            The trimmed secret value, or None if not available.
+        """
+        if already_set or not file_path:
+            return None
+
+        try:
+            secret_path = pathlib.Path(file_path)
+            if not secret_path.exists():
+                logger.debug(f"Mounted secret file not found: {file_path}")
+                return None
+            value = secret_path.read_text().strip()
+            if not value:
+                logger.debug(f"Mounted secret file is empty: {file_path}")
+                return None
+            logger.info(f"Loaded mounted secret from file: {file_path}")
+            return value
+        except Exception as e:  # noqa: BLE001 - never block startup on a secret read
+            logger.debug(f"Failed to read mounted secret from {file_path}: {e}")
+            return None
+
+    def get_apikey_header_names(self) -> list:
+        """Configured API-key header name(s), in priority order (first present wins).
+
+        ``SUPPORTED_APIKEY_AUTH_HEADER_NAMES`` is a comma-separated list so different agent
+        deployments may carry the API key under different header names. Falls back to
+        the default ``X-Api-Key`` when unset/empty.
+        """
+        names = [h.strip() for h in self.SUPPORTED_APIKEY_AUTH_HEADER_NAMES.split(",") if h.strip()]
+        return names or ["X-Api-Key"]
+
+    def resolve_user_apikey_auth_url(self) -> str:
+        """Token endpoint for exchanging a *user-presented* API key (auth type 3).
+
+        On AWS Marketplace (``CLOUD_PROVIDER=aws``) the shared
+        ``OPENPAGES_AUTHENTICATION_URL`` only accepts service-level keys, so a user's
+        key passed in the API-key header (at initialize or per tool call) must be
+        exchanged at the INSTANCE-specific MCSP endpoint:
+
+            {MCSP_IAM_URL}/api/2.0/services/{OPENPAGES_INSTANCE_ID}/apikeys/token
+
+        Every other environment (and the internal MCP→OpenPages call that exchanges
+        the server's ``OPENPAGES_APIKEY``) continues to use
+        ``OPENPAGES_AUTHENTICATION_URL`` unchanged.
+
+        Raises:
+            ValueError: On AWS when MCSP_IAM_URL or OPENPAGES_INSTANCE_ID is missing
+                (fail-fast rather than building a malformed endpoint).
+        """
+        if self.CLOUD_PROVIDER.strip().lower() == "aws":
+            base = self.MCSP_IAM_URL.strip().rstrip("/")
+            instance_id = self.OPENPAGES_INSTANCE_ID.strip()
+            missing = [
+                name
+                for name, value in (("MCSP_IAM_URL", base), ("OPENPAGES_INSTANCE_ID", instance_id))
+                if not value
+            ]
+            if missing:
+                raise ValueError(
+                    f"CLOUD_PROVIDER=aws requires {' and '.join(missing)} to build the "
+                    f"instance-specific API-key token endpoint, but "
+                    f"{'it is' if len(missing) == 1 else 'they are'} unset."
+                )
+            return f"{base}/api/2.0/services/{instance_id}/apikeys/token"
+        return self.OPENPAGES_AUTHENTICATION_URL
+
+    def uses_server_credentials(self) -> bool:
+        """Whether this deployment runs entirely on the server's own credentials.
+
+        Auth posture is driven solely by OPENPAGES_AUTH_MODE, independent of
+        ENVIRONMENT (boot strategy), SERVER_MODE (transport), and OP topology:
+          * "user" (default) — production-remote multi-tenant: connection gate active
+            and the 4-key user-auth framework enforced; no server-cred fallback.
+          * "server" — no connection gate; tool calls fall back to server credentials.
+
+        Default is "user" (safe by default); server-credential mode must opt in with
+        OPENPAGES_AUTH_MODE=server (on-prem / Cloud Pak agent / local / dev).
+        """
+        return self.OPENPAGES_AUTH_MODE.strip().lower() != "user"
+
+    def verify_access_on_connect_active(self) -> bool:
+        """Whether the connect-time OpenPages access probe runs.
+
+        Active only in user-auth mode (where per-user credentials flow) and when
+        MCP_VERIFY_ACCESS_ON_CONNECT is enabled. Server-credential deployments
+        (dev / local / on-prem) run everything on the server's own creds and skip it.
+        """
+        return self.MCP_VERIFY_ACCESS_ON_CONNECT and not self.uses_server_credentials()
+
+    def session_enforcement_effective(self) -> bool:
+        """Whether Mcp-Session-Id is enforced on non-initialize requests.
+
+        Enforced if explicitly enabled OR implied by connect-time verification:
+        without session enforcement a client could skip `initialize` and call tools
+        directly, bypassing the connect-time access probe.
+        """
+        return self.MCP_SESSION_ENFORCEMENT or self.verify_access_on_connect_active()
+
     def __init__(self, env_file: Optional[str] = None, **data: Any):
         """
         Initialize settings with optional custom environment file
@@ -184,15 +401,158 @@ class Settings(BaseSettings):
             
         super().__init__(**data)
         
+        # Read API key from file if path is provided and API key is not already set
+        if self.OPENPAGES_APIKEY_FILE and not self.OPENPAGES_APIKEY:
+            try:
+                api_key_path = pathlib.Path(self.OPENPAGES_APIKEY_FILE)
+                if not api_key_path.exists():
+                    raise FileNotFoundError(f"API key file not found: {self.OPENPAGES_APIKEY_FILE}")
+                
+                with open(api_key_path, 'r') as f:
+                    self.OPENPAGES_APIKEY = f.read().strip()
+                
+                if not self.OPENPAGES_APIKEY:
+                    raise ValueError(f"API key file is empty: {self.OPENPAGES_APIKEY_FILE}")
+                    
+                # Log that we loaded from file (mask the key)
+   
+                logger.info(f"Loaded API key from file: {self.OPENPAGES_APIKEY_FILE}")
+                
+            except Exception as e:
+                raise ValueError(f"Failed to read API key from {self.OPENPAGES_APIKEY_FILE}: {e}") from e
+
+        # Read the shared OAuth client id/secret from an explicitly configured mounted
+        # secret file (*_FILE). No default path is assumed; a direct env value takes
+        # precedence. Left unset when neither is provided.
+        client_id = self._read_mounted_secret(
+            self.OPENPAGES_OAUTH_CLIENT_ID_FILE,
+            already_set=bool(self.OPENPAGES_OAUTH_CLIENT_ID),
+        )
+        if client_id:
+            self.OPENPAGES_OAUTH_CLIENT_ID = client_id
+
+        if not self.OPENPAGES_OAUTH_CLIENT_SECRET:
+            client_secret = self._read_mounted_secret(
+                self.OPENPAGES_OAUTH_CLIENT_SECRET_FILE,
+                already_set=False,
+            )
+            if client_secret:
+                self.OPENPAGES_OAUTH_CLIENT_SECRET = SecretStr(client_secret)
+
         # Process base URL to ensure it has the correct protocol
         if self.OPENPAGES_BASE_URL and not (self.OPENPAGES_BASE_URL.startswith('http://') or self.OPENPAGES_BASE_URL.startswith('https://')):
             self.OPENPAGES_BASE_URL = f"https://{self.OPENPAGES_BASE_URL}"
+        
+        # Load RabbitMQ credentials (from env vars or SaaS secret files)
+        self._load_rabbitmq_credentials()
         
         # Load object types from JSON file (non-blocking)
         self._load_object_types()
         
         # Validate mandatory settings
         self._validate_settings()
+    
+    def _read_secret_file(self, filename: str) -> Optional[str]:
+        """
+        Read a plain text secret file from SECRETS_PATH.
+        
+        Args:
+            filename: Name of the secret file to read (e.g., 'RABBITMQ_HOST')
+            
+        Returns:
+            Secret value or None if file doesn't exist or read fails
+        """
+        file_path = None
+        try:
+            file_path = Path(self.SECRETS_PATH) / filename
+            if file_path.exists():
+                content = file_path.read_text().strip()
+                
+                # Basic validation - ensure not empty
+                if not content:
+                    raise ValueError("Secret file is empty")
+                
+                return content
+        except Exception as e:
+            # Use print to stderr to avoid polluting stdout in stdio mode
+            import sys
+            print(
+                f"Warning: Failed to read secret file {file_path}: {type(e).__name__}: {e}",
+                file=sys.stderr
+            )
+        return None
+    
+    def _load_rabbitmq_credentials(self) -> None:
+        """
+        Load RabbitMQ credentials from environment variables or secret files.
+        
+        For SaaS deployments, credentials are read from base64-encoded files
+        in SECRETS_PATH when environment variables are not available.
+        
+        Priority:
+        1. Environment variables (RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASSWORD)
+        2. Secret files in SECRETS_PATH (for SaaS deployments)
+        
+        Note: Pydantic BaseSettings automatically loads environment variables into fields,
+        but we need to explicitly check and load from files for SaaS deployments.
+        """
+        import sys
+        
+        # Check if environment variables are already loaded by Pydantic
+        # If not set, try reading from secret files (SaaS mode)
+        if not self.RABBITMQ_HOST:
+            host = self._read_secret_file("RABBITMQ_HOST")
+            if host:
+                self.RABBITMQ_HOST = host
+                print("Loaded RABBITMQ_HOST from secret file", file=sys.stderr)
+        
+        # For port, check if it's still the default value and no env var was set
+        if self.RABBITMQ_PORT == 5671 and not os.getenv("RABBITMQ_PORT"):
+            port_str = self._read_secret_file("RABBITMQ_PORT")
+            if port_str:
+                try:
+                    self.RABBITMQ_PORT = int(port_str)
+                    print("Loaded RABBITMQ_PORT from secret file", file=sys.stderr)
+                except ValueError:
+                    print(f"Warning: Invalid port value in secret file: {port_str}", file=sys.stderr)
+        
+        if not self.RABBITMQ_USER:
+            user = self._read_secret_file("RABBITMQ_USER")
+            if user:
+                self.RABBITMQ_USER = user
+                print("Loaded RABBITMQ_USER from secret file", file=sys.stderr)
+        
+        if not self.RABBITMQ_PASSWORD:
+            password = self._read_secret_file("RABBITMQ_PASSWORD")
+            if password:
+                self.RABBITMQ_PASSWORD = password
+                print("Loaded RABBITMQ_PASSWORD from secret file", file=sys.stderr)
+    
+    def get_rabbitmq_routing_key(self) -> str:
+        """
+        Construct RabbitMQ routing key from OpenPages account and instance IDs.
+        
+        Format: v1.account.{OPENPAGES_ACCOUNT_ID}.instance.{OPENPAGES_INSTANCE_ID}.#
+        
+        Returns:
+            Constructed routing key string
+            
+        Raises:
+            ValueError: If OPENPAGES_ACCOUNT_ID or OPENPAGES_INSTANCE_ID is not set
+        """
+        if not self.OPENPAGES_ACCOUNT_ID:
+            raise ValueError(
+                "OPENPAGES_ACCOUNT_ID is required for RabbitMQ routing key construction. "
+                "Please set it in your .env file."
+            )
+        
+        if not self.OPENPAGES_INSTANCE_ID:
+            raise ValueError(
+                "OPENPAGES_INSTANCE_ID is required for RabbitMQ routing key construction. "
+                "Please set it in your .env file."
+            )
+        
+        return f"v1.account.{self.OPENPAGES_ACCOUNT_ID}.instance.{self.OPENPAGES_INSTANCE_ID}.#"
     
     def _validate_settings(self) -> None:
         """
@@ -242,8 +602,7 @@ class Settings(BaseSettings):
             # Check if this is CP4D authentication
             is_cp4d = (
                 self.OPENPAGES_AUTHENTICATION_URL and
-                ('/icp4d-api/v1/authorize' in self.OPENPAGES_AUTHENTICATION_URL
-                 in self.OPENPAGES_AUTHENTICATION_URL)
+                '/icp4d-api/v1/authorize' in self.OPENPAGES_AUTHENTICATION_URL
             )
             
             if is_cp4d:
@@ -328,10 +687,10 @@ class Settings(BaseSettings):
         if self.SCHEMA_CACHE_MAX_SIZE < 1:
             print(
                 f"Warning: SCHEMA_CACHE_MAX_SIZE must be at least 1, got {self.SCHEMA_CACHE_MAX_SIZE}. "
-                f"Defaulting to 20.",
+                f"Defaulting to 200.",
                 file=sys.stderr
             )
-            self.SCHEMA_CACHE_MAX_SIZE = 20
+            self.SCHEMA_CACHE_MAX_SIZE = 200
         
         if self.SCHEMA_CACHE_TTL < 0:
             print(
@@ -508,6 +867,19 @@ class Settings(BaseSettings):
                             print(
                                 f"Warning: Invalid tool_exposure_mode '{tool_mode}' in configuration file. "
                                 f"Valid options are: {', '.join(valid_modes)}. Using default: ontology_based",
+                                file=sys.stderr
+                            )
+                    
+                    # Load include_all_object_types if present
+                    if 'include_all_object_types' in global_settings:
+                        include_all = global_settings['include_all_object_types']
+                        if isinstance(include_all, bool):
+                            self.INCLUDE_ALL_OBJECT_TYPES = include_all
+                            print(f"Loaded include_all_object_types: {self.INCLUDE_ALL_OBJECT_TYPES}", file=sys.stderr)
+                        else:
+                            print(
+                                f"Warning: 'include_all_object_types' in configuration file must be a boolean, got {type(include_all).__name__}. "
+                                f"Using default: False",
                                 file=sys.stderr
                             )
                     

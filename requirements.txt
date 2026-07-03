@@ -1,3 +1,7 @@
+# Security patches for CVEs
+setuptools>=70.0.0  # CVE-2024-6345: RCE vulnerability in package_index module
+protobuf>=6.33.5,!=6.30.0rc1  # CVE-2026-0994: DoS vulnerability in json_format.ParseDict()
+
 # Core dependencies
 fastapi>=0.104.0
 uvicorn>=0.24.0
@@ -16,6 +20,9 @@ python-dateutil>=2.8.2
 
 # JWT token handling
 PyJWT>=2.8.0
+
+# RabbitMQ client for schema synchronization (async with built-in resilience)
+aio-pika>=9.3.0
 
 # Observability - Metrics
 prometheus-client>=0.19.0

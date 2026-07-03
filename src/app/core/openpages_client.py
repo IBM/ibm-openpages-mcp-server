@@ -6,10 +6,10 @@ Provides functionality to interact with IBM OpenPages REST API
 import asyncio
 import logging
 import base64
+import gzip
 import time
-import ssl
-from typing import Any, Dict, List, Optional
-from datetime import datetime, timedelta
+import json
+from typing import Any, Dict, List, Optional, Union
 import httpx  # type: ignore
 from src.app.config.settings import Settings, settings
 from src.app.observability.logger import StructuredLogger, get_logger, log_method_call
@@ -17,9 +17,15 @@ from src.app.observability.tracing import (
     start_async_span, set_span_ok, set_span_error, is_tracing_enabled
 )
 from src.app.observability import metrics as metrics_module
+from src.app.mcp.schema_builder import SchemaBuilder
 
 # Type annotation for better error handling
 HTTPXError = httpx.HTTPError
+
+# Rate limiting retry configuration
+MAX_RATE_LIMIT_RETRIES = 3
+INITIAL_BACKOFF_SECONDS = 1.0
+MAX_BACKOFF_SECONDS = 10.0
 
 def is_ssl_error(error: Exception) -> bool:
     """
@@ -110,7 +116,7 @@ class OpenPagesClient:
             if not authentication_url:
                 raise ValueError("Authentication URL is required for bearer authentication")
             # Detect if this is CP4D authentication by checking URL pattern
-            is_cp4d = '/icp4d-api/v1/authorize' in authentication_url in authentication_url
+            is_cp4d = '/icp4d-api/v1/authorize' in authentication_url
             if is_cp4d:
                 # CP4D uses username/password
                 if not username or not password:
@@ -146,7 +152,7 @@ class OpenPagesClient:
         # Detect if this is CP4D based on authentication URL
         self.is_cp4d = False
         if self.auth_type == "bearer" and authentication_url:
-            self.is_cp4d = '/icp4d-api/v1/authorize' in authentication_url in authentication_url
+            self.is_cp4d = '/icp4d-api/v1/authorize' in authentication_url
         
         # Set instance name for CP4D
         self.instance_name = None
@@ -491,6 +497,93 @@ class OpenPagesClient:
                     return response
                     
                 except httpx.HTTPStatusError as e:
+                    # Handle 429 Rate Limit errors with exponential backoff
+                    if e.response.status_code == 429:
+                        retry_after = e.response.headers.get('Retry-After')
+                        
+                        # Try to parse Retry-After header (can be seconds or HTTP date)
+                        backoff_time = INITIAL_BACKOFF_SECONDS
+                        if retry_after:
+                            try:
+                                # Try as integer seconds first
+                                backoff_time = float(retry_after)
+                            except ValueError:
+                                # If not a number, might be HTTP date - use default backoff
+                                pass
+                        
+                        # Implement retry loop with exponential backoff
+                        for retry_attempt in range(1, MAX_RATE_LIMIT_RETRIES + 1):
+                            # Calculate backoff with exponential increase
+                            current_backoff = min(backoff_time * (2 ** (retry_attempt - 1)), MAX_BACKOFF_SECONDS)
+                            
+                            logger.warning(
+                                f"Received 429 Rate Limit for {method} {url}, "
+                                f"retry {retry_attempt}/{MAX_RATE_LIMIT_RETRIES} after {current_backoff:.2f}s"
+                            )
+                            
+                            # Add retry event to span
+                            if span and is_tracing_enabled():
+                                span.add_event("rate_limit_retry", {
+                                    "reason": "429_rate_limit",
+                                    "retry_attempt": retry_attempt,
+                                    "backoff_seconds": current_backoff
+                                })
+                            
+                            # Wait before retrying
+                            await asyncio.sleep(current_backoff)
+                            
+                            try:
+                                # Retry the request
+                                retry_headers = await self._get_request_headers(auth_override)
+                                response = await client.request(method, url, headers=retry_headers, **kwargs)
+                                response.raise_for_status()
+                                
+                                # Success after retry
+                                duration_ms = (time.monotonic() - t_start) * 1000
+                                logger.info(
+                                    f"Successfully retried after 429 error on attempt {retry_attempt}, "
+                                    f"total duration: {duration_ms:.2f}ms"
+                                )
+                                
+                                if span and is_tracing_enabled():
+                                    span.set_attribute("http.status_code", response.status_code)
+                                    span.set_attribute("http.response.body.size", len(response.content))
+                                    span.set_attribute("http.retry_count", retry_attempt)
+                                    span.set_attribute("http.rate_limit_retries", retry_attempt)
+                                
+                                set_span_ok(span, duration_ms=duration_ms)
+                                
+                                # Record metrics after successful retry
+                                if metrics_module.is_metrics_enabled():
+                                    metrics_module.openpages_api_calls_total.labels(
+                                        method=method,
+                                        endpoint=operation,
+                                        status="success"
+                                    ).inc()
+                                    metrics_module.openpages_api_duration_seconds.labels(
+                                        method=method,
+                                        endpoint=operation
+                                    ).observe(duration_ms / 1000.0)
+                                
+                                return response
+                                
+                            except httpx.HTTPStatusError as retry_error:
+                                if retry_error.response.status_code == 429:
+                                    # Still getting 429, continue to next retry
+                                    if retry_attempt == MAX_RATE_LIMIT_RETRIES:
+                                        # Last attempt failed, log and re-raise
+                                        logger.error(
+                                            f"Rate limit retry exhausted after {MAX_RATE_LIMIT_RETRIES} attempts "
+                                            f"for {method} {url}"
+                                        )
+                                        raise
+                                    # Continue to next retry attempt
+                                    continue
+                                else:
+                                    # Different error, re-raise immediately
+                                    raise
+                    
+                    # Handle 401 Unauthorized errors (token refresh)
                     if e.response.status_code == 401 and auth_override is None and self.auth_type == "bearer":
                         logger.warning(f"Received 401 for {method} {url}, attempting token refresh and retry")
                         
@@ -621,6 +714,15 @@ class OpenPagesClient:
                 "POST", full_url, auth_override=auth_override, json=request_body, timeout=30.0
             )
             response_json = response.json()
+            
+            # Always log response type and structure for debugging
+            logger.info(f"Query response type: {type(response_json)}")
+            if isinstance(response_json, dict):
+                logger.info(f"Query response keys: {list(response_json.keys())}")
+            elif isinstance(response_json, list):
+                logger.info(f"Query response is a list with {len(response_json)} items")
+                if response_json:
+                    logger.info(f"First item type: {type(response_json[0])}")
 
             # Log the response, but truncate if too large
             if settings.DEBUG:
@@ -642,7 +744,222 @@ class OpenPagesClient:
         except httpx.RequestError as e:
             logger.error(f"Request error during query: {e}")
             raise RuntimeError(f"Network error during query: {str(e)}") from e
-    
+
+    async def redeem_ticket(self, ticket: str) -> Dict[str, Any]:
+        """
+        Redeem an embedded-chat auth ticket against OpenPages (auth type 4, internal).
+
+        This is the ONE sanctioned use of the MCP server's own OpenPages server
+        credentials for an outbound call: it is an internal MCP→OP call, not a user
+        tool call. The OP ``redeemTicket`` endpoint is admin-restricted and is
+        **multi-use** — it returns the bound artifact without consuming the ticket,
+        so each pod can redeem independently. The ticket stays valid until its bound
+        IDP refresh artifact expires.
+
+        The endpoint is served on the OpenPages REST API
+        (``/opgrc/api/v2/token/redeemTicket``, via ``_get_api_path``), so it accepts the
+        same bearer/basic server credentials the client uses for every other REST call.
+        It is issued WITHOUT ``auth_override`` so ``_get_request_headers(None)`` uses
+        ``self.headers`` (server credentials). The REST endpoint was chosen over the
+        former ``/app/api/chat/redeemTicket`` app-context call (since removed), whose
+        interactive SSO rejected the server bearer with a ``/singlesignon.do`` HTML redirect.
+
+        Args:
+            ticket: The opaque ticket presented by the embedded chat.
+
+        Returns:
+            Minimal redeem response ``{"mode": "access_token"|"isv"|"iam", "refreshArtifact": "..."}``.
+
+        Raises:
+            RuntimeError: If the redeem call fails (expired/unknown ticket, network).
+        """
+        api_path = self._get_api_path("/api/v2/token/redeemTicket")
+        full_url = f"{self.base_url}{api_path}"
+        # Never log the ticket value itself.
+        logger.debug(f"Redeeming embedded-chat ticket at {full_url}")
+
+        try:
+            response = await self._request_with_auth_retry(
+                "POST", full_url, auth_override=None, json={"ticket": ticket}, timeout=30.0
+            )
+            response_json = self._parse_redeem_response(response)
+            if not isinstance(response_json, dict) or "refreshArtifact" not in response_json:
+                raise RuntimeError("redeemTicket response missing 'refreshArtifact'")
+            logger.debug(f"Ticket redeemed successfully (mode={response_json.get('mode')})")
+            return response_json
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error during redeemTicket: {e.response.status_code}")
+            raise RuntimeError(
+                f"OpenPages redeemTicket error ({e.response.status_code}): {e.response.text}"
+            ) from e
+        except httpx.RequestError as e:
+            logger.error(f"Request error during redeemTicket: {e}")
+            raise RuntimeError(f"Network error during redeemTicket: {str(e)}") from e
+
+    @staticmethod
+    def _parse_redeem_response(response: httpx.Response) -> Any:
+        """Parse the redeemTicket JSON body, tolerating a gzip-encoded body httpx didn't decode.
+
+        Some OpenPages deployments run a compression filter on the ``/app`` context that gzips the
+        response (``Content-Encoding: gzip``, chunked). If the body wasn't transparently decoded,
+        decode it here based on the gzip magic bytes. Never logs the token value.
+        """
+        raw = response.content
+        body = raw
+        if len(raw) >= 2 and raw[:2] == b"\x1f\x8b":  # gzip magic — httpx didn't decode it
+            try:
+                body = gzip.decompress(raw)
+            except Exception as e:
+                logger.warning("redeemTicket gzip decode failed: %s", e)
+        try:
+            return json.loads(body)
+        except Exception as e:
+            ce = response.headers.get("content-encoding", "")
+            ct = response.headers.get("content-type", "")
+            raise RuntimeError(
+                f"redeemTicket returned a non-JSON body (status={response.status_code}, "
+                f"content-type={ct}, content-encoding={ce}, bytes={len(raw)}): {body[:120]!r}"
+            ) from e
+
+    async def get_object_count(
+        self,
+        object_type: str,
+        auth_override: Optional[str] = None,
+        filter_field: Optional[Union[str, List[str]]] = None,
+        filter_value: Optional[Union[str, List[str]]] = None
+    ) -> int:
+        """
+        Get the total count of objects of a specific type, optionally filtered.
+        
+        Args:
+            object_type: The OpenPages object type (e.g., 'SOXRisk', 'Control', 'Issue')
+            auth_override: Optional authentication token override
+            filter_field: Optional field name(s) to filter by. Can be:
+                - Single string: 'watsonx-risk:Type'
+                - List of strings: ['watsonx-risk:Type', 'Status']
+            filter_value: Optional value(s) to filter by. Can be:
+                - Single string: 'Operational'
+                - List of strings: ['Operational', 'Active']
+                Must match the length of filter_field if both are lists.
+            
+        Returns:
+            Total number of objects matching the criteria
+            
+        Raises:
+            ValueError: If object_type is empty, or if filter_field and filter_value
+                       lists have mismatched lengths
+            
+        Examples:
+            # Count all SOXRisk objects
+            count = await client.get_object_count('SOXRisk')
+            
+            # Count with single filter
+            count = await client.get_object_count(
+                'SOXRisk',
+                filter_field='watsonx-risk:Type',
+                filter_value='Operational'
+            )
+            
+            # Count with multiple filters (AND condition)
+            count = await client.get_object_count(
+                'SOXRisk',
+                filter_field=['watsonx-risk:Type', 'Status'],
+                filter_value=['Operational', 'Active']
+            )
+        """
+        # Validate object_type
+        if not object_type or not object_type.strip():
+            raise ValueError("object_type cannot be empty")
+        
+        # Normalize filter_field and filter_value to lists
+        filter_fields: List[str] = []
+        filter_values: List[str] = []
+        
+        if filter_field is not None and filter_value is not None:
+            # Convert to lists if they're strings
+            if isinstance(filter_field, str):
+                filter_fields = [filter_field]
+            else:
+                filter_fields = list(filter_field)
+            
+            if isinstance(filter_value, str):
+                filter_values = [filter_value]
+            else:
+                filter_values = list(filter_value)
+            
+            # Validate that both lists have the same length
+            if len(filter_fields) != len(filter_values):
+                raise ValueError(
+                    f"filter_field and filter_value must have the same length. "
+                    f"Got {len(filter_fields)} fields and {len(filter_values)} values."
+                )
+        
+        try:
+            logger.info(
+                f"Getting count for {object_type}",
+                extra={
+                    "object_type": object_type,
+                    "filter_fields": filter_fields,
+                    "filter_values": filter_values,
+                    "filter_count": len(filter_fields)
+                }
+            )
+            
+            # Build COUNT query
+            statement = f"SELECT COUNT(*) FROM [{object_type}]"
+            
+            # Add filters if provided
+            if filter_fields and filter_values:
+                conditions = []
+                for field, value in zip(filter_fields, filter_values):
+                    # Escape single quotes in value to prevent SQL injection
+                    escaped_value = value.replace("'", "''")
+                    conditions.append(f"[{field}] = '{escaped_value}'")
+                
+                statement += " WHERE " + " AND ".join(conditions)
+            
+            result = await self.query(
+                statement,
+                offset=0,
+                limit=1,
+                auth_override=auth_override
+            )
+            
+            # Extract count from result
+            rows = result.get("rows", [])
+            if rows and len(rows) > 0:
+                fields = rows[0].get('fields', [])
+                if fields and len(fields) > 0:
+                    count = fields[0].get('value', 0)
+                    logger.info(
+                        f"Found {count} {object_type} objects",
+                        extra={
+                            "object_type": object_type,
+                            "count": count,
+                            "filtered": bool(filter_fields),
+                            "filter_count": len(filter_fields)
+                        }
+                    )
+                    return int(count)
+            
+            logger.warning(
+                f"Could not determine count for {object_type}, returning 0",
+                extra={"object_type": object_type}
+            )
+            return 0
+            
+        except Exception as e:
+            logger.error(
+                f"Failed to get count for {object_type}: {e}",
+                exc_info=True,
+                extra={
+                    "object_type": object_type,
+                    "filter_fields": filter_fields if 'filter_fields' in locals() else None
+                }
+            )
+            # Return 0 on error, caller can handle appropriately
+            return 0
+
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def get_content(self, resource_id: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -700,7 +1017,6 @@ class OpenPagesClient:
             Created content data
         """
         logger.info(f"Creating content of type: {content_data.get('type_definition_id', 'unknown')}")
-
 
         api_path = self._get_api_path("/api/v2/contents")
         url = f"{self.base_url}{api_path}"
@@ -813,6 +1129,68 @@ class OpenPagesClient:
                 import traceback
                 logger.error(f"Traceback: {traceback.format_exc()}")
             return "admin"  # Return a default user on error
+    async def check_effective_permissions(
+        self,
+        object_id: str,
+        username: Optional[str] = None,
+        auth_override: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Check effective permissions for a user on a specific object.
+        
+        This API takes into consideration both the permissions in the role template
+        and the security rules. The API automatically uses the authenticated user from
+        the bearer token, so no username parameter is needed.
+        
+        Args:
+            object_id: The ID of the object to check permissions for
+            username: DEPRECATED - Not used. The API uses the authenticated user from the bearer token.
+            auth_override: Optional auth header override for per-request auth
+        
+        Returns:
+            Dictionary containing permission information:
+            {
+                "folder_id": "<objectID>",
+                "security_principal": "<user_id>",
+                "can_read": bool,
+                "can_write": bool,
+                "can_delete": bool,
+                "can_associate": bool
+            }
+        
+        Raises:
+            httpx.HTTPStatusError: If the API request fails
+            httpx.RequestError: If there's a network error
+        """
+        # Build the API path - no user parameter needed, uses authenticated user from token
+        api_path = self._get_api_path(f"/api/v2/contents/{object_id}/permissions/effective")
+        url = f"{self.base_url}{api_path}"
+        
+        logger.info(f"Checking effective permissions for object {object_id} (using authenticated user from bearer token)")
+        logger.debug(f"OpenPages API Check Permissions Request: {url}")
+        
+        try:
+            response = await self._request_with_auth_retry(
+                "GET", url, auth_override=auth_override, timeout=30.0
+            )
+            response_json = response.json()
+            
+            # Log the response
+            if settings.DEBUG:
+                logger.info(f"OpenPages API Check Permissions Response Status: {response.status_code}")
+                logger.info(f"Response Body: {response_json}")
+            
+            return response_json
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error checking permissions: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Request error checking permissions: {e}")
+            raise
+    
+    
     
     async def get_type_definition(self, type_name: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -854,22 +1232,144 @@ class OpenPagesClient:
         except httpx.RequestError as e:
             logger.error(f"Request error getting type definition: {e}")
             raise
-    
-    async def get_type_associations(self, type_name: str, auth_override: Optional[str] = None) -> Dict[str, Any]:
+
+    async def verify_access(self, auth_override: Optional[str] = None) -> bool:
+        """Connect-time authorization probe against OpenPages.
+
+        Makes a real GET /api/v2/types and returns True on HTTP 2xx. Unlike
+        get_all_object_types (which swallows errors and returns []), this re-raises
+        so the caller can distinguish an auth rejection from an upstream failure.
+
+        Args:
+            auth_override: Full "Bearer <jwt>" header value, or None to use server creds.
+
+        Returns:
+            True if OpenPages returned 2xx.
+
+        Raises:
+            httpx.HTTPStatusError: non-2xx response (e.g. 401/403/5xx; has .response.status_code).
+            httpx.RequestError: network/connection/timeout failure.
         """
-        Get type association information from OpenPages
+        # Minimal payload: no field defs or localized labels — fastest possible probe.
+        api_path = self._get_api_path(
+            "/api/v2/types?include_field_definitions=false&include_localized_labels=false"
+        )
+        url = f"{self.base_url}{api_path}"
+        # Log URL/status only — never the token, headers, or response body.
+        logger.info(f"Connect-time access verification: GET {url}")
+        try:
+            response = await self._request_with_auth_retry(
+                "GET", url, auth_override=auth_override, timeout=30.0
+            )
+            return 200 <= response.status_code < 300
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                f"Connect-time verification rejected by OpenPages (status {e.response.status_code})"
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.warning(f"Connect-time verification network error: {type(e).__name__}")
+            raise
+
+    async def get_all_object_types(
+        self,
+        auth_override: Optional[str] = None,
+        include_associations: bool = True
+    ) -> List[str] | Dict[str, Any]:
+        """
+        Get all available object types from OpenPages using the REST API
+        
+        Args:
+            auth_override: Optional auth header override for per-request auth
+            include_associations: If True (default), attempts to fetch types with association metadata
+                                 using the new OpenPages API feature. Falls back to type names only
+                                 if the API doesn't support this feature.
+            
+        Returns:
+            If include_associations=True and API supports it:
+                Dict with 'types' array containing type objects with associations
+            Otherwise:
+                List of object type names (e.g., ['SOXIssue', 'SOXControl', ...])
+        """
+        try:
+            # Build query parameters - try with associations first if requested
+            params = "include_field_definitions=false&include_localized_labels=false"
+            if include_associations:
+                params += "&include_association=true"
+            
+            api_path = self._get_api_path(f"/api/v2/types?{params}")
+            url = f"{self.base_url}{api_path}"
+            logger.info(f"OpenPages API Get All Types Request: {url}")
+            
+            response = await self._request_with_auth_retry(
+                "GET", url, auth_override=auth_override, timeout=30.0
+            )
+            response_json = response.json()
+            
+            # The API returns a dict with 'types' array containing type objects
+            types_array = response_json.get('types', [])
+            
+            if include_associations and isinstance(types_array, list):
+                # Check if any type has associations (indicates new API feature support)
+                has_associations = any(
+                    isinstance(t, dict) and 'associations' in t and t['associations']
+                    for t in types_array
+                )
+                
+                if has_associations:
+                    logger.info(
+                        f"Found {len(types_array)} object types with association metadata "
+                        f"(new API feature supported)"
+                    )
+                    # Return full response with associations for optimization
+                    return response_json
+                else:
+                    logger.info(
+                        f"API does not support include_association parameter or no associations found, "
+                        f"returning type names only"
+                    )
+            
+            # Extract type names (default behavior or fallback when associations not supported)
+            type_names = []
+            if isinstance(types_array, list):
+                for type_obj in types_array:
+                    type_name = type_obj.get('name')
+                    if type_name:
+                        type_names.append(type_name)
+            
+            logger.info(f"Found {len(type_names)} object types in OpenPages")
+            return sorted(type_names)  # Return sorted list for consistency
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error getting all object types: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            return []
+        except httpx.RequestError as e:
+            logger.error(f"Request error getting all object types: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Failed to get all object types: {e}")
+            if hasattr(e, '__traceback__'):
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+            return []
+    
+    async def get_type_associations(self, type_name: str, auth_override: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get type association information from OpenPages, filtered to only enabled associations
 
         Args:
             type_name: Name of the type to retrieve associations for (e.g., 'SOXIssue')
             auth_override: Optional auth header override for per-request auth
 
         Returns:
-            Type association data including parent and child relationships
+            List of enabled association objects with name, localized_label, and relationship fields
         """
         
         api_path = self._get_api_path(f"/api/v2/types/{type_name}/associations?includeLocalizedLabels=false")
         url = f"{self.base_url}{api_path}"
-        logger.info(f"OpenPages API Get Type Associations Request: {url}")
+        logger.debug(f"Fetching type associations from: {url}")
 
         try:
             response = await self._request_with_auth_retry(
@@ -877,28 +1377,59 @@ class OpenPagesClient:
             )
             response_json = response.json()
             
-            # Log the response, but truncate if too large
+            # Log the response in debug mode only
             if settings.DEBUG:
-                logger.info(f"OpenPages API Get Type Associations Response Status: {response.status_code}")
+                logger.debug(f"Type associations response status: {response.status_code}")
                 response_str = str(response_json)
                 if len(response_str) > 1000:
-                    logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                    logger.debug(f"Response body (truncated): {response_str[:1000]}...")
                 else:
-                    logger.info(f"Response Body: {response_json}")
+                    logger.debug(f"Response body: {response_json}")
             
-            return response_json
+            # Extract associations array from response
+            # Current API returns: {"associations": [...]}
+            if isinstance(response_json, dict) and 'associations' in response_json:
+                all_associations = response_json['associations']
+            elif isinstance(response_json, list):
+                # Defensive fallback: handle direct array response (edge case)
+                logger.warning(f"Unexpected direct array response for {type_name} associations")
+                all_associations = response_json
+            else:
+                all_associations = []
+            
+            logger.info(f"Received {len(all_associations)} total associations for {type_name}")
+            if all_associations and len(all_associations) > 0:
+                # Log first association for debugging
+                logger.debug(f"First association sample: {all_associations[0]}")
+            
+            # Filter to only enabled associations
+            # Default to True for backward compatibility with APIs that don't return is_enabled field
+            enabled_associations = [
+                assoc for assoc in all_associations
+                if isinstance(assoc, dict) and assoc.get('is_enabled', True)
+            ]
+            
+            if len(all_associations) != len(enabled_associations):
+                logger.debug(
+                    f"Filtered associations for {type_name}: "
+                    f"{len(enabled_associations)} enabled out of {len(all_associations)} total"
+                )
+            else:
+                logger.debug(f"All {len(enabled_associations)} associations are enabled for {type_name}")
+            
+            return enabled_associations
         except httpx.HTTPStatusError as e:
             # This exception has response attribute
             logger.error(f"HTTP status error getting type associations: {e}")
             logger.error(f"Response status: {e.response.status_code}")
             logger.error(f"Response body: {e.response.text}")
-            # Return empty dict on error rather than raising
-            return {}
+            # Return empty list on error rather than raising
+            return []
         except httpx.RequestError as e:
             # Network-related errors
             logger.error(f"Request error getting type associations: {e}")
-            # Return empty dict on error rather than raising
-            return {}
+            # Return empty list on error rather than raising
+            return []
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def get_username_by_email(self, email: str, auth_override: Optional[str] = None) -> Optional[str]:
@@ -1010,7 +1541,107 @@ class OpenPagesClient:
             raise
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def add_associations(self, resource_id: str, associations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def copy_content(
+        self,
+        parent_id: str,
+        object_ids_to_copy: List[str],
+        options: Optional[Dict[str, Any]] = None,
+        auth_override: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Copy objects in OpenPages to a specified parent
+        
+        Uses: PUT /v2/contents/{parent_id}/action/copy
+        
+        Args:
+            parent_id: Resource ID of the parent object where content will be copied
+            object_ids_to_copy: List of resource IDs to copy
+            options: Optional dictionary containing copy options:
+                - include_children: Whether to include child objects (default: True)
+                - conflict_behavior: How to handle conflicts - "createcopyof" or other values
+                - type_definitions: List of type definitions to include (e.g., ["SOXRisk", "SOXControl"])
+                - type_associations: List of type association mappings with parent_object_type and child_object_type
+                - auto_name_children: Whether to automatically name children (default: True)
+            auth_override: Optional auth header override for per-request auth
+            
+        Returns:
+            Response data from the copy operation
+            
+        Raises:
+            ValueError: If parent_id is None or empty, or if object_ids_to_copy is None or empty
+        """
+        # Validate required arguments
+        if not parent_id:
+            raise ValueError("parent_id cannot be None or empty")
+        if not object_ids_to_copy:
+            raise ValueError("object_ids_to_copy cannot be None or empty")
+        
+        logger.info(f"Copying {len(object_ids_to_copy)} object(s) to parent: {parent_id}")
+        
+        api_path = self._get_api_path(f"/api/v2/contents/{parent_id}/action/copy")
+        url = f"{self.base_url}{api_path}"
+        logger.debug(f"OpenPages API Copy Content Request: {url}")
+        
+        # Prepare the request payload
+        payload: Dict[str, Any] = {
+            "ids": object_ids_to_copy
+        }
+        
+        # Add options if provided, otherwise use defaults
+        if options:
+            payload["options"] = options
+        else:
+            # Default options
+            payload["options"] = {
+                "include_children": True,
+                "conflict_behavior": "createcopyof",
+                "auto_name_children": True
+            }
+        
+        logger.debug(f"Copy payload: {payload}")
+        
+        try:
+            #Increased timeout for batch copy operations to prevent premature timeouts
+            response = await self._request_with_auth_retry(
+                "PUT", url, auth_override=auth_override, json=payload, timeout=90.0
+            )
+            
+            # Parse response
+            if response.text:
+                response_json = response.json()
+            else:
+                response_json = {
+                    "status": "success",
+                    "message": f"Successfully copied {len(object_ids_to_copy)} object(s) to parent {parent_id}"
+                }
+            
+            # Log the response
+            if self.settings.DEBUG:
+                logger.info(f"OpenPages API Copy Content Response Status: {response.status_code}")
+                if response.text:
+                    response_str = str(response_json)
+                    if len(response_str) > 1000:
+                        logger.info(f"Response Body (truncated): {response_str[:1000]}...")
+                    else:
+                        logger.info(f"Response Body: {response_json}")
+                else:
+                    logger.info("Response Body: Empty (successful copy)")
+            
+            logger.info(f"Successfully copied {len(object_ids_to_copy)} object(s) to parent {parent_id}")
+            return response_json
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP status error copying content: {e}")
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Request error copying content: {e}")
+            raise
+    
+    
+    @log_method_call(log_args=True, level=logging.DEBUG)
+    async def add_associations(self, resource_id: str, associations: List[Dict[str, Any]], auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Add associations to an object in OpenPages using the dedicated associations API
         
@@ -1021,6 +1652,7 @@ class OpenPagesClient:
             associations: List of association dictionaries, each containing:
                 - relationship_type: Type of relationship (e.g., "Parent", "Child", "Sibling", "Peer")
                 - target_id: Resource ID of the target object
+            auth_override: Optional authentication token to use instead of the default
                 
         Returns:
             Response data from the association operation
@@ -1084,7 +1716,7 @@ class OpenPagesClient:
         # Send all associations in a single API call using retry mechanism
         try:
             response = await self._request_with_auth_retry(
-                "POST", url, auth_override=None, json=association_payload, timeout=30.0
+                "POST", url, auth_override=auth_override, json=association_payload, timeout=30.0
             )
             
             # The response might be empty for successful association creation
@@ -1129,7 +1761,7 @@ class OpenPagesClient:
             }
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def remove_associations(self, resource_id: str, associations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def remove_associations(self, resource_id: str, associations: List[Dict[str, Any]], auth_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Remove associations from an object in OpenPages using the dedicated associations API
         
@@ -1146,12 +1778,12 @@ class OpenPagesClient:
             associations: List of association dictionaries, each containing:
                 - relationship_type: Type of relationship (e.g., "Parent", "Child", "Sibling", "Peer")
                 - target_id: Resource ID of the target object to remove
+            auth_override: Optional authentication token to use instead of the default
                 
         Returns:
             Response data from the association operation
         """
         logger.info(f"Removing {len(associations)} association(s) from resource: {resource_id}")
-        
         
         # Group associations by relationship type
         grouped_associations = {}
@@ -1204,7 +1836,7 @@ class OpenPagesClient:
         # Use retry mechanism for DELETE request
         try:
             response = await self._request_with_auth_retry(
-                "DELETE", url, auth_override=None, params=query_params, timeout=30.0
+                "DELETE", url, auth_override=auth_override, params=query_params, timeout=30.0
             )
             
             # The response might be empty for successful removal
@@ -1247,5 +1879,3 @@ class OpenPagesClient:
                 "failed": len(associations),
                 "error": str(e)
             }
-
-# Made with Bob

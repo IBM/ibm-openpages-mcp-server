@@ -90,14 +90,9 @@ full_schema = {
             "system_field": False
         } for i in range(1, 21)}
     },
-    "hierarchical_relationships": [
-        {
-            "direction": "parent",
-            "type": "SOXControl",
-            "label": "Controls",
-            "join_syntax": "FROM [SOXIssue] JOIN [SOXControl] ON CHILD([SOXIssue])"
-        }
-    ]
+    "hierarchical_relationships": {
+        "parent": ["SOXControl"]
+    }
 }
 
 # Compact schema (only required and system fields, no enum values)
@@ -139,14 +134,9 @@ compact_schema = {
             "note": "Enum values omitted in compact mode"
         }
     },
-    "hierarchical_relationships": [
-        {
-            "direction": "parent",
-            "type": "SOXControl",
-            "label": "Controls",
-            "join_syntax": "FROM [SOXIssue] JOIN [SOXControl] ON CHILD([SOXIssue])"
-        }
-    ]
+    "hierarchical_relationships": {
+        "parent": ["SOXControl"]
+    }
 }
 
 def analyze_schemas():

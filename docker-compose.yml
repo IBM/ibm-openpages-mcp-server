@@ -26,6 +26,7 @@ services:
       - OPENPAGES_PASSWORD=${OPENPAGES_PASSWORD:-password}
       - OPENPAGES_APIKEY=${OPENPAGES_APIKEY:-}
       - OPENPAGES_AUTHENTICATION_URL=${OPENPAGES_AUTHENTICATION_URL:-}
+      - OPENPAGES_INSTANCE_ID=${OPENPAGES_INSTANCE_ID:-}
       
       # SSL Settings
       - SSL_VERIFY=${SSL_VERIFY:-True}
@@ -55,7 +56,7 @@ services:
       # Object Types Configuration
       - OBJECT_TYPES_CONFIG_PATH=${OBJECT_TYPES_CONFIG_PATH:-src/app/config/object_types.json}
       - OUTPUT_FORMAT=${OUTPUT_FORMAT:-text}
-    
+      
     volumes:
       # Volume mounts for configuration and logging
       # IMPORTANT: For Podman on macOS, create the logs directory first:

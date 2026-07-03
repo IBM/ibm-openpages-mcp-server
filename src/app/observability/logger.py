@@ -286,16 +286,20 @@ def setup_logging(
             # Ensure the log directory exists
             log_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Use RotatingFileHandler for automatic log rotation
-            file_handler = RotatingFileHandler(
-                filename=str(log_path),
-                maxBytes=log_max_bytes,
-                backupCount=log_backup_count,
-                encoding='utf-8'
-            )
-            file_handler.setLevel(getattr(logging, level.upper()))
-            file_handler.setFormatter(formatter)
-            root_logger.addHandler(file_handler)
+            # Check if a RotatingFileHandler already exists to prevent accumulation
+            if not any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers):
+                # Use RotatingFileHandler for automatic log rotation
+                file_handler = RotatingFileHandler(
+                    filename=str(log_path),
+                    maxBytes=log_max_bytes,
+                    backupCount=log_backup_count,
+                    encoding='utf-8'
+                )
+                file_handler.setLevel(getattr(logging, level.upper()))
+                file_handler.setFormatter(formatter)
+                root_logger.addHandler(file_handler)
+            else:
+                root_logger.debug("RotatingFileHandler already exists, skipping duplicate handler")
             
             # Log rotation configuration
             root_logger.info(

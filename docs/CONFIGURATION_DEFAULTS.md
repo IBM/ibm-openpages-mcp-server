@@ -31,6 +31,7 @@ All other settings are optional and have sensible defaults defined in [`src/app/
 # Application settings
 APP_NAME: str = "GRC MCP Server"
 DEBUG: bool = False
+ENVIRONMENT: str = "production"
 SERVER_MODE: str = "remote"
 
 # Server settings
@@ -74,7 +75,7 @@ DEFAULT_CURRENCY: str = "USD"
 OBJECT_TYPES_CONFIG_PATH: str = "src/app/config/object_types.json"
 
 # Token optimization
-SCHEMA_CACHE_MAX_SIZE: int = 20
+SCHEMA_CACHE_MAX_SIZE: int = 200
 SCHEMA_CACHE_TTL: int = 3600
 ENABLE_MINIMAL_SCHEMA_MODE: bool = True
 CACHE_QUERY_EXAMPLES: bool = True

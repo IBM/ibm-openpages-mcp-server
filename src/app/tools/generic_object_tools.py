@@ -178,6 +178,7 @@ class GenericObjectTools(BaseTool):
             arguments: Tool arguments
                 - id: Resource ID for direct lookup (optional)
                 - path: Full path for lookup (optional)
+            auth_override: Optional auth header override for per-request auth
                 - name: Name of the object (required)
                 - operation: "insert", "update", or "auto" (default: "auto")
                 - title: Object title (optional)
@@ -422,7 +423,7 @@ class GenericObjectTools(BaseTool):
 
         return (associations_to_add, associations_to_remove)
 
-    async def _resolve_association_value(self, value: Any, target_type: Optional[str] = None) -> Optional[str]:
+    async def _resolve_association_value(self, value: Any, target_type: Optional[str] = None, auth_override: Optional[str] = None) -> Optional[str]:
         """
         Resolve an association value to a Resource ID
 
@@ -435,6 +436,7 @@ class GenericObjectTools(BaseTool):
         Args:
             value: The value to resolve (string or dict)
             target_type: Optional target object type for name-based lookup
+            auth_override: Optional auth header override for per-request auth
 
         Returns:
             Resource ID as string, or None if resolution fails
@@ -448,7 +450,7 @@ class GenericObjectTools(BaseTool):
                 # Case 2: Full path - resolve using utility function
                 if '/' in value:
                     logger.debug(f"Resolving path to Resource ID: {value}")
-                    resolved_id = await self.resolve_path_to_id(value)
+                    resolved_id = await self.resolve_path_to_id(value, auth_override=auth_override)
                     return resolved_id
 
                 # Case 3: Name only - need target_type to resolve
@@ -456,7 +458,7 @@ class GenericObjectTools(BaseTool):
                     logger.debug(f"Resolving name '{value}' for type {target_type}")
                     try:
                         query = f"SELECT [Resource ID] FROM [{target_type}] WHERE [Name] = '{value}' LIMIT 2"
-                        result = await self.client.query(query)
+                        result = await self.client.query(query, auth_override=auth_override)
                         rows = result.get('rows', [])
 
                         if len(rows) == 0:
@@ -483,7 +485,7 @@ class GenericObjectTools(BaseTool):
 
                     try:
                         query = f"SELECT [Resource ID] FROM [{obj_type}] WHERE [Name] = '{obj_name}' LIMIT 2"
-                        result = await self.client.query(query)
+                        result = await self.client.query(query, auth_override=auth_override)
                         rows = result.get('rows', [])
 
                         if len(rows) == 0:
@@ -501,7 +503,7 @@ class GenericObjectTools(BaseTool):
                 elif 'path' in value:
                     path = value['path']
                     logger.debug(f"Resolving path from dict: {path}")
-                    resolved_id = await self.resolve_path_to_id(path)
+                    resolved_id = await self.resolve_path_to_id(path, auth_override=auth_override)
                     return resolved_id
 
                 # Case 6: Dict with id
@@ -523,6 +525,7 @@ class GenericObjectTools(BaseTool):
         Args:
             name: Name of the object
             arguments: Tool arguments
+            auth_override: Optional auth header override for per-request auth
             
         Returns:
             List of text content with created object information
@@ -539,7 +542,7 @@ class GenericObjectTools(BaseTool):
             logger.info(f"Resolving parent by type '{primaryParentType}' and name '{primaryParentName}'")
             try:
                 query = f"SELECT [Resource ID] FROM [{primaryParentType}] WHERE [Name] = '{primaryParentName}' LIMIT 1"
-                result = await self.client.query(query)
+                result = await self.client.query(query, auth_override=auth_override)
                 
                 if result.get('rows') and len(result['rows']) > 0:
                     primaryParentId = result['rows'][0]['fields'][0]['value']
@@ -653,7 +656,7 @@ class GenericObjectTools(BaseTool):
                                     return [TextContent(type="text", text=f"Error: Invalid value '{val_str}' for field '{technical_field_name}'. Valid values are: {', '.join(valid_values)}")]
                     
                     # Format the value based on field type using base class method
-                    formatted_value = await self.format_field_value(arg_value, field_type, technical_field_name)
+                    formatted_value = await self.format_field_value(arg_value, field_type, technical_field_name, auth_override=auth_override)
                     
                     # Add the field to the content data
                     # Different field types have different payload structures
@@ -718,7 +721,7 @@ class GenericObjectTools(BaseTool):
             if associations_to_add:
                 logger.info(f"Adding {len(associations_to_add)} association(s) to newly created object {resource_id}")
                 try:
-                    await self.client.add_associations(resource_id, associations_to_add)
+                    await self.client.add_associations(resource_id, associations_to_add, auth_override=auth_override)
                     logger.info(f"Successfully added associations to {resource_id}")
                 except Exception as assoc_error:
                     logger.error(f"Error adding associations to {resource_id}: {assoc_error}")
@@ -728,7 +731,7 @@ class GenericObjectTools(BaseTool):
             if associations_to_remove:
                 logger.info(f"Removing {len(associations_to_remove)} association(s) from newly created object {resource_id}")
                 try:
-                    await self.client.remove_associations(resource_id, associations_to_remove)
+                    await self.client.remove_associations(resource_id, associations_to_remove, auth_override=auth_override)
                     logger.info(f"Successfully removed associations from {resource_id}")
                 except Exception as assoc_error:
                     logger.error(f"Error removing associations from {resource_id}: {assoc_error}")
@@ -773,6 +776,7 @@ class GenericObjectTools(BaseTool):
             object_id: Resource ID or path of the object to update
             name: Name of the object
             arguments: Tool arguments
+            auth_override: Optional auth header override for per-request auth
             
         Returns:
             List of text content with updated object information
@@ -896,7 +900,7 @@ class GenericObjectTools(BaseTool):
                                     return [TextContent(type="text", text=f"Error: Invalid value '{val_str}' for field '{technical_field_name}'. Valid values are: {', '.join(valid_values)}")]
                     
                     # Format the value based on field type using base class method
-                    formatted_value = await self.format_field_value(arg_value, field_type, technical_field_name)
+                    formatted_value = await self.format_field_value(arg_value, field_type, technical_field_name, auth_override=auth_override)
                     
                     # Add the field to the content data
                     # Different field types have different payload structures
@@ -965,7 +969,7 @@ class GenericObjectTools(BaseTool):
             if associations_to_add:
                 logger.info(f"Adding {len(associations_to_add)} association(s) to updated object {updated_resource_id}")
                 try:
-                    await self.client.add_associations(updated_resource_id, associations_to_add)
+                    await self.client.add_associations(updated_resource_id, associations_to_add, auth_override=auth_override)
                     logger.info(f"Successfully added associations to {updated_resource_id}")
                 except Exception as assoc_error:
                     logger.error(f"Error adding associations to {updated_resource_id}: {assoc_error}")
@@ -975,7 +979,7 @@ class GenericObjectTools(BaseTool):
             if associations_to_remove:
                 logger.info(f"Removing {len(associations_to_remove)} association(s) from updated object {updated_resource_id}")
                 try:
-                    await self.client.remove_associations(updated_resource_id, associations_to_remove)
+                    await self.client.remove_associations(updated_resource_id, associations_to_remove, auth_override=auth_override)
                     logger.info(f"Successfully removed associations from {updated_resource_id}")
                 except Exception as assoc_error:
                     logger.error(f"Error removing associations from {updated_resource_id}: {assoc_error}")
@@ -1420,13 +1424,13 @@ class GenericObjectTools(BaseTool):
             logger.error(f"Error deleting {self.display_name.lower()}: {e}")
             return [TextContent(type="text", text=f"Error deleting {self.display_name.lower()}: {str(e)}")]
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def associate_objects(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def associate_objects(self, arguments: Dict[str, Any], auth_override: Optional[str] = None) -> List[TextContent]:
         """
         Associate objects with the specified object using parent/child relationships
-        
+
         This tool creates associations between objects. Only Parent and Child relationship
         types are supported by the OpenPages REST API.
-        
+
         Args:
             arguments: Tool arguments
                 - resource_id: Resource ID of the source object
@@ -1438,56 +1442,57 @@ class GenericObjectTools(BaseTool):
                     - target_name: Name of target object (requires target_type)
                     - target_path: Full path to target object
                     - target_type: Type of target object (used with target_name)
-                
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             List of text content with association confirmation
         """
         logger.info(f"Associating objects with {self.display_name}")
-        
+
         # Extract source object identifier
         resource_id = arguments.get('resource_id')
         path = arguments.get('path')
         name = arguments.get('name')
-        
+
         if not resource_id and not path and not name:
             return [TextContent(type="text", text="Error: One of resource_id, path, or name is required")]
-        
+
         # Resolve source object ID
         source_id = None
         if resource_id:
             source_id = resource_id
         elif path:
-            source_id = await self.resolve_path_to_id(path)
+            source_id = await self.resolve_path_to_id(path, auth_override=auth_override)
             if not source_id:
                 return [TextContent(type="text", text=f"Error: Could not resolve path '{path}' to a resource ID")]
         elif name:
             # Query by name
             try:
                 query = f"SELECT [Resource ID] FROM [{self.type_id}] WHERE [Name] = '{name}' LIMIT 2"
-                result = await self.client.query(query)
+                result = await self.client.query(query, auth_override=auth_override)
                 rows = result.get('rows', [])
-                
+
                 if len(rows) == 0:
                     return [TextContent(type="text", text=f"Error: No {self.display_name.lower()} found with name '{name}'")]
                 elif len(rows) > 1:
                     return [TextContent(type="text", text=f"Error: Multiple {self.display_name.lower()} objects found with name '{name}'. Please use resource_id or path instead.")]
-                
+
                 source_id = rows[0]['fields'][0]['value']
             except Exception as e:
                 logger.error(f"Error querying for {self.display_name.lower()} by name '{name}': {e}")
                 return [TextContent(type="text", text=f"Error: Could not find {self.display_name.lower()} with name '{name}': {str(e)}")]
-        
+
         # Extract associations
         associations = arguments.get('associations', [])
         if not associations:
             return [TextContent(type="text", text="Error: 'associations' array is required")]
-        
+
         if not isinstance(associations, list):
             return [TextContent(type="text", text="Error: 'associations' must be an array")]
-        
+
         # Get type definition to validate associations against schema
         try:
-            type_info = await self.get_type_definition(self.type_id)
+            type_info = await self.get_type_definition(self.type_id, auth_override=auth_override)
             type_associations = type_info.get('associations', [])
             
             # If associations is a dict, extract the array
@@ -1550,7 +1555,7 @@ class GenericObjectTools(BaseTool):
                 if valid_associations and target_type:
                     resolved_target_type = target_type
             elif target_path:
-                resolved_target_id = await self.resolve_path_to_id(target_path)
+                resolved_target_id = await self.resolve_path_to_id(target_path, auth_override=auth_override)
                 if not resolved_target_id:
                     return [TextContent(type="text", text=f"Error: Could not resolve target path '{target_path}' to a resource ID")]
                 # If target_type provided, use it for validation
@@ -1565,7 +1570,8 @@ class GenericObjectTools(BaseTool):
                 # Resolve by name and type
                 resolved_target_id = await self._resolve_association_value(
                     {"type": target_type, "name": target_name},
-                    target_type
+                    target_type,
+                    auth_override=auth_override,
                 )
                 if not resolved_target_id:
                     return [TextContent(type="text", text=f"Error: Could not find {target_type} with name '{target_name}'")]
@@ -1592,7 +1598,7 @@ class GenericObjectTools(BaseTool):
         # Add associations
         try:
             logger.info(f"Adding {len(associations_to_add)} association(s) to object {source_id}")
-            await self.client.add_associations(source_id, associations_to_add)
+            await self.client.add_associations(source_id, associations_to_add, auth_override=auth_override)
             
             response_data = {
                 "message": f"Successfully added {len(associations_to_add)} association(s)",
@@ -1609,7 +1615,7 @@ class GenericObjectTools(BaseTool):
             return [TextContent(type="text", text=f"Error adding associations: {str(e)}")]
     
     @log_method_call(log_args=True, level=logging.DEBUG)
-    async def dissociate_objects(self, arguments: Dict[str, Any]) -> List[TextContent]:
+    async def dissociate_objects(self, arguments: Dict[str, Any], auth_override: Optional[str] = None) -> List[TextContent]:
         """
         Dissociate objects from the specified object using parent/child relationships
         
@@ -1627,56 +1633,57 @@ class GenericObjectTools(BaseTool):
                     - target_name: Name of target object (requires target_type)
                     - target_path: Full path to target object
                     - target_type: Type of target object (used with target_name)
-                
+            auth_override: Optional auth header override for per-request auth
+
         Returns:
             List of text content with dissociation confirmation
         """
         logger.info(f"Dissociating objects from {self.display_name}")
-        
+
         # Extract source object identifier
         resource_id = arguments.get('resource_id')
         path = arguments.get('path')
         name = arguments.get('name')
-        
+
         if not resource_id and not path and not name:
             return [TextContent(type="text", text="Error: One of resource_id, path, or name is required")]
-        
+
         # Resolve source object ID
         source_id = None
         if resource_id:
             source_id = resource_id
         elif path:
-            source_id = await self.resolve_path_to_id(path)
+            source_id = await self.resolve_path_to_id(path, auth_override=auth_override)
             if not source_id:
                 return [TextContent(type="text", text=f"Error: Could not resolve path '{path}' to a resource ID")]
         elif name:
             # Query by name
             try:
                 query = f"SELECT [Resource ID] FROM [{self.type_id}] WHERE [Name] = '{name}' LIMIT 2"
-                result = await self.client.query(query)
+                result = await self.client.query(query, auth_override=auth_override)
                 rows = result.get('rows', [])
-                
+
                 if len(rows) == 0:
                     return [TextContent(type="text", text=f"Error: No {self.display_name.lower()} found with name '{name}'")]
                 elif len(rows) > 1:
                     return [TextContent(type="text", text=f"Error: Multiple {self.display_name.lower()} objects found with name '{name}'. Please use resource_id or path instead.")]
-                
+
                 source_id = rows[0]['fields'][0]['value']
             except Exception as e:
                 logger.error(f"Error querying for {self.display_name.lower()} by name '{name}': {e}")
                 return [TextContent(type="text", text=f"Error: Could not find {self.display_name.lower()} with name '{name}': {str(e)}")]
-        
+
         # Extract associations
         associations = arguments.get('associations', [])
         if not associations:
             return [TextContent(type="text", text="Error: 'associations' array is required")]
-        
+
         if not isinstance(associations, list):
             return [TextContent(type="text", text="Error: 'associations' must be an array")]
-        
+
         # Get type definition to validate associations against schema
         try:
-            type_info = await self.get_type_definition(self.type_id)
+            type_info = await self.get_type_definition(self.type_id, auth_override=auth_override)
             type_associations = type_info.get('associations', [])
             
             # If associations is a dict, extract the array
@@ -1739,7 +1746,7 @@ class GenericObjectTools(BaseTool):
                 if valid_associations and target_type:
                     resolved_target_type = target_type
             elif target_path:
-                resolved_target_id = await self.resolve_path_to_id(target_path)
+                resolved_target_id = await self.resolve_path_to_id(target_path, auth_override=auth_override)
                 if not resolved_target_id:
                     return [TextContent(type="text", text=f"Error: Could not resolve target path '{target_path}' to a resource ID")]
                 # If target_type provided, use it for validation
@@ -1754,7 +1761,8 @@ class GenericObjectTools(BaseTool):
                 # Resolve by name and type
                 resolved_target_id = await self._resolve_association_value(
                     {"type": target_type, "name": target_name},
-                    target_type
+                    target_type,
+                    auth_override=auth_override,
                 )
                 if not resolved_target_id:
                     return [TextContent(type="text", text=f"Error: Could not find {target_type} with name '{target_name}'")]
@@ -1781,7 +1789,7 @@ class GenericObjectTools(BaseTool):
         # Remove associations
         try:
             logger.info(f"Removing {len(associations_to_remove)} association(s) from object {source_id}")
-            await self.client.remove_associations(source_id, associations_to_remove)
+            await self.client.remove_associations(source_id, associations_to_remove, auth_override=auth_override)
             
             response_data = {
                 "message": f"Successfully removed {len(associations_to_remove)} association(s)",

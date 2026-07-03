@@ -8,6 +8,7 @@ Supports both remote (HTTP) and local (stdio) modes
 import os
 import argparse
 import sys
+import logging
 
 # Only append /app path when running in Docker
 if os.path.exists('/app'):
@@ -68,6 +69,7 @@ def create_remote_app():
     from src.app.mcp.remote.http_router import router as mcp_router
     from src.app.api.health import health_router
     from src.app.api.metrics import metrics_router
+    from src.app.api.cache_stats import cache_stats_router
     from src.app.observability.tracing import setup_tracing, instrument_fastapi_app
     from src.app.observability.metrics import setup_metrics
     from src.app.observability.middleware import (
@@ -114,10 +116,110 @@ def create_remote_app():
         await initialize_server_async()
         logger.info("MCP Server initialized")
         
+        # Initialize RabbitMQ-based schema synchronization (if enabled)
+        schema_cache_manager = None
+        if settings.RABBITMQ_ENABLED:
+            try:
+                # Validate required RabbitMQ settings
+                if not all([
+                    settings.RABBITMQ_HOST,
+                    settings.RABBITMQ_USER,
+                    settings.RABBITMQ_PASSWORD
+                ]):
+                    logger.warning(
+                        "RabbitMQ is enabled but required configuration is missing. "
+                        "Schema synchronization will not be available. "
+                        "Required: RABBITMQ_HOST, RABBITMQ_USER, RABBITMQ_PASSWORD"
+                    )
+                else:
+                    from src.app.cache.rabbitmq_client import RabbitMQClient
+                    from src.app.cache.schema_cache_manager import SchemaCacheManager
+                    from src.app.mcp.remote.server_instance import get_server
+                    
+                    # Get the schema builder and resource handlers from the MCP server
+                    server = get_server()
+                    if server and hasattr(server, 'schema_builder'):
+                        # Create RabbitMQ client (type assertions safe due to validation above)
+                        # Construct routing key from account and instance IDs
+                        routing_key = settings.get_rabbitmq_routing_key()
+                        
+                        rabbitmq_client = RabbitMQClient(
+                            host=str(settings.RABBITMQ_HOST),
+                            port=settings.RABBITMQ_PORT,
+                            username=str(settings.RABBITMQ_USER),
+                            password=str(settings.RABBITMQ_PASSWORD),
+                            exchange_name=settings.RABBITMQ_METADATA_EXCHANGE,
+                            routing_key=routing_key,
+                            deployment_name=settings.MCP_SERVER_DEPLOYMENT_NAME,
+                            use_ssl=settings.RABBITMQ_USE_SSL,
+                            virtual_host=settings.RABBITMQ_VIRTUAL_HOST
+                        )
+                        
+                        # Get resource_handlers if available (for clearing formatted schema cache)
+                        resource_handlers = getattr(server, 'resource_handlers', None)
+                        
+                        # Create schema cache manager
+                        schema_cache_manager = SchemaCacheManager(
+                            schema_builder=server.schema_builder,
+                            rabbitmq_client=rabbitmq_client,
+                            update_interval=settings.SCHEMA_UPDATE_INTERVAL,
+                            resource_handlers=resource_handlers
+                        )
+                        
+                        # Start the schema cache manager
+                        schema_cache_manager.start()
+                        
+                        # Set the schema cache manager reference for API endpoints
+                        from src.app.api.cache_stats import set_schema_cache_manager
+                        set_schema_cache_manager(schema_cache_manager)
+                        
+                        logger.info("RabbitMQ-based schema synchronization started")
+                    else:
+                        logger.warning("Could not initialize schema synchronization: schema_builder not available")
+                        
+            except Exception as e:
+                logger.error(
+                    "=" * 80,
+                )
+                logger.error(
+                    "CRITICAL: Failed to initialize RabbitMQ schema synchronization!"
+                )
+                logger.error(
+                    f"Error: {e}"
+                )
+                logger.error(
+                    "Server will continue WITHOUT automatic schema updates."
+                )
+                logger.error(
+                    "Schema changes in OpenPages will NOT be reflected until server restart."
+                )
+                logger.error(
+                    "Action required: Check RabbitMQ configuration and connectivity."
+                )
+                logger.error(
+                    "=" * 80,
+                    extra={
+                        "error": str(e),
+                        "rabbitmq_enabled": settings.RABBITMQ_ENABLED,
+                        "rabbitmq_host": settings.RABBITMQ_HOST,
+                        "rabbitmq_port": settings.RABBITMQ_PORT
+                    }
+                )
+        else:
+            logger.info("RabbitMQ schema synchronization is disabled")
+        
         # Start background session cleanup task
         await start_cleanup_task()
 
         yield
+        
+        # Stop schema cache manager if it was started
+        if schema_cache_manager:
+            try:
+                schema_cache_manager.stop()
+                logger.info("Schema cache manager stopped")
+            except Exception as e:
+                logger.error(f"Error stopping schema cache manager: {e}")
         
         # Stop background cleanup task
         await stop_cleanup_task()
@@ -126,7 +228,18 @@ def create_remote_app():
         from src.app.mcp.remote.server_instance import get_server
         server = get_server()
         if server and hasattr(server, 'client') and server.client:
-            await server.client.close()
+            try:
+                await server.client.close()
+            except RuntimeError as e:
+                # Handle "Event loop is closed" error during shutdown
+                # This can occur when the event loop is already closing
+                if "Event loop is closed" in str(e):
+                    logger.warning(
+                        "Event loop already closed during HTTP client cleanup",
+                        extra={"error": str(e)}
+                    )
+                else:
+                    raise
         
         # Clear all sessions on shutdown
         clear_all_sessions()
@@ -177,6 +290,7 @@ def create_remote_app():
     app.include_router(mcp_router)
     app.include_router(health_router)
     app.include_router(metrics_router)
+    app.include_router(cache_stats_router)
 
     @app.get("/")
     async def root():
@@ -257,6 +371,78 @@ if __name__ == "__main__":
             )
             logger.info("Debug mode enabled via command line flag")
         
+        # Configure Uvicorn's loggers based on log format
+        if settings.LOG_FORMAT == "json":
+            from src.app.observability.logger import StructuredFormatter
+            
+            # Create a custom formatter that renames uvicorn loggers for clarity
+            class UvicornFormatter(StructuredFormatter):
+                """Custom formatter that makes uvicorn logger names more user-friendly"""
+                def format(self, record: logging.LogRecord) -> str:
+                    # Rename uvicorn.error to server.lifecycle (it handles startup/shutdown, not just errors)
+                    if record.name == "uvicorn.error":
+                        record.name = "server.lifecycle"
+                    elif record.name == "uvicorn.access":
+                        record.name = "server.access"
+                    return super().format(record)
+            
+            # Configure uvicorn access logger (HTTP requests)
+            uvicorn_access_logger = logging.getLogger("uvicorn.access")
+            uvicorn_access_logger.handlers.clear()
+            access_handler = logging.StreamHandler(sys.stdout)
+            access_handler.setFormatter(UvicornFormatter(service_name=settings.APP_NAME))
+            uvicorn_access_logger.addHandler(access_handler)
+            uvicorn_access_logger.propagate = False
+            
+            # Configure uvicorn error logger (renamed to server.lifecycle for clarity)
+            uvicorn_error_logger = logging.getLogger("uvicorn.error")
+            uvicorn_error_logger.handlers.clear()
+            error_handler = logging.StreamHandler(sys.stdout)
+            error_handler.setFormatter(UvicornFormatter(service_name=settings.APP_NAME))
+            uvicorn_error_logger.addHandler(error_handler)
+            uvicorn_error_logger.propagate = False
+            
+            # Configure uvicorn main logger
+            uvicorn_logger = logging.getLogger("uvicorn")
+            uvicorn_logger.handlers.clear()
+            uvicorn_handler = logging.StreamHandler(sys.stdout)
+            uvicorn_handler.setFormatter(UvicornFormatter(service_name=settings.APP_NAME))
+            uvicorn_logger.addHandler(uvicorn_handler)
+            uvicorn_logger.propagate = False
+        else:
+            # In text mode, use a custom formatter that renames uvicorn loggers
+            # This keeps the structured format but with clearer logger names
+            class TextUvicornFormatter(logging.Formatter):
+                """Custom formatter that renames uvicorn loggers in text mode"""
+                def format(self, record: logging.LogRecord) -> str:
+                    # Rename uvicorn.error to server.lifecycle for clarity
+                    if record.name == "uvicorn.error":
+                        record.name = "server.lifecycle"
+                    elif record.name == "uvicorn.access":
+                        record.name = "server.access"
+                    return super().format(record)
+            
+            # Use the same format as the root logger but with renamed loggers
+            text_formatter = TextUvicornFormatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            
+            # Configure uvicorn.error logger (server lifecycle messages)
+            uvicorn_error_logger = logging.getLogger("uvicorn.error")
+            uvicorn_error_logger.handlers.clear()
+            error_handler = logging.StreamHandler(sys.stdout)
+            error_handler.setFormatter(text_formatter)
+            uvicorn_error_logger.addHandler(error_handler)
+            uvicorn_error_logger.propagate = False
+            
+            # Configure uvicorn.access logger (HTTP access logs)
+            uvicorn_access_logger = logging.getLogger("uvicorn.access")
+            uvicorn_access_logger.handlers.clear()
+            access_handler = logging.StreamHandler(sys.stdout)
+            access_handler.setFormatter(text_formatter)
+            uvicorn_access_logger.addHandler(access_handler)
+            uvicorn_access_logger.propagate = False
+        
         # Create the FastAPI app (or get existing one)
         app = get_app() if app is None else app
         
@@ -266,7 +452,8 @@ if __name__ == "__main__":
             "main:app",
             host=args.host,
             port=args.port,
-            reload=settings.DEBUG
+            reload=settings.DEBUG,
+            log_config=None  # Disable uvicorn's default log config, we configure loggers manually
         )
 
 # Made with Bob

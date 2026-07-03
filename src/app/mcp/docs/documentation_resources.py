@@ -175,20 +175,86 @@ class DocumentationResources:
                 ]
             },
             
+            "mandatory_workflow_for_join_queries": {
+                "description": "Required steps when user asks to find objects 'under' or 'within' another object",
+                "step_1": {
+                    "title": "Check Relationship Type",
+                    "description": "Read openpages://catalog/relationships to determine if relationship is direct (parent/child) or indirect (ancestor)",
+                    "action": "Look for the source type in the 'rels' array. Check if target type exists in 'parent' or 'child' arrays. Format: {\"type\":\"SourceType\",\"parent\":[\"TypeA\"],\"child\":[\"TypeB\"]}",
+                    "decision": "If target type found in 'parent' or 'child' arrays → Use PARENT/CHILD. If not found → Use ANCESTOR"
+                },
+                "step_2_direct": {
+                    "title": "For Direct Parent/Child Relationships",
+                    "description": "When catalog shows direct parent or child relationship",
+                    "substeps": {
+                        "a": "Read schemas for both types: openpages://schema/{ParentType} and openpages://schema/{ChildType}",
+                        "b": "Get exact field names from schemas (case-sensitive, may have prefixes)",
+                        "c": "Execute JOIN query with PARENT() or CHILD() function",
+                        "example_parent": "SELECT [ChildType].[Name], [ParentType].[Name] FROM [ChildType] JOIN [ParentType] ON PARENT([ChildType])",
+                        "example_child": "SELECT [ParentType].[Name], [ChildType].[Name] FROM [ParentType] JOIN [ChildType] ON CHILD([ParentType])"
+                    }
+                },
+                "step_2_indirect": {
+                    "title": "For Indirect (Ancestor) Relationships",
+                    "description": "When no direct parent/child relationship exists in catalog",
+                    "substeps": {
+                        "a": "Get parent object's Resource ID: SELECT [ParentType].[Resource ID] FROM [ParentType] WHERE [ParentType].[Name] = 'parent-name'",
+                        "b": "Read schemas for both types: openpages://schema/{ParentType} and openpages://schema/{ChildType}",
+                        "c": "Execute JOIN query with ANCESTOR() function using numeric Resource ID",
+                        "example": "SELECT [ChildType].[Name] FROM [ParentType] JOIN [ChildType] ON ANCESTOR([ParentType]) WHERE [ParentType].[Resource ID] = 8228",
+                        "critical_note": "Resource ID must be NUMERIC (no quotes) for ANCESTOR queries"
+                    }
+                },
+                "complete_example_direct": {
+                    "scenario": "Find children of ParentType when direct relationship exists",
+                    "step_1": "Check openpages://catalog/relationships - found {\"type\":\"ParentType\",\"child\":[\"ChildType\"]}",
+                    "step_2": "Read openpages://schema/ParentType and openpages://schema/ChildType",
+                    "step_3": "Execute: SELECT [ParentType].[Name], [ChildType].[Name], [ChildType].[Status] FROM [ParentType] JOIN [ChildType] ON PARENT([ParentType]) WHERE [ParentType].[Name] = 'parent-name'"
+                },
+                "complete_example_indirect": {
+                    "scenario": "Find descendants when no direct relationship exists",
+                    "step_1": "Check openpages://catalog/relationships - ChildType NOT in ParentType's 'parent' or 'child' arrays",
+                    "step_2": "Get Resource ID: SELECT [ParentType].[Resource ID] FROM [ParentType] WHERE [ParentType].[Name] = 'parent-name' → Result: 8228",
+                    "step_3": "Read openpages://schema/ParentType and openpages://schema/ChildType",
+                    "step_4": "Execute: SELECT [ChildType].[Name], [ChildType].[Status] FROM [ParentType] JOIN [ChildType] ON ANCESTOR([ParentType]) WHERE [ParentType].[Resource ID] = 8228"
+                },
+                "common_mistakes": [
+                    {
+                        "mistake": "Using Name in ANCESTOR",
+                        "wrong": "WHERE [ObjectTypeA].[Name] = 'RB-01-Risk00189'",
+                        "correct": "WHERE [ObjectTypeA].[Resource ID] = 8228"
+                    },
+                    {
+                        "mistake": "Quotes around Resource ID",
+                        "wrong": "WHERE [ObjectTypeA].[Resource ID] = '8228'",
+                        "correct": "WHERE [ObjectTypeA].[Resource ID] = 8228"
+                    },
+                    {
+                        "mistake": "Assuming field names",
+                        "wrong": "[Status], [Due Date]",
+                        "correct": "Read schema first: [OPSS-AI:Status], [OPSS-AI:Due Date]"
+                    },
+                    {
+                        "mistake": "Claiming relationships exist without checking",
+                        "correct": "Read catalog/schema to verify relationships"
+                    }
+                ]
+            },
+            
             "join_clause": {
                 "description": "Query related objects using hierarchical relationships",
                 "functions": {
                     "PARENT": "Navigate to direct parent (one level up)",
                     "CHILD": "Navigate to direct children (one level down)",
-                    "ANCESTOR": "Navigate to any ancestor (multiple levels up)",
-                    "DESCENDANT": "Navigate to any descendant (multiple levels down)"
+                    "ANCESTOR": "Navigate to any ancestor (multiple levels up)"
                 },
+                "note": "DESCENDANT is NOT supported. Use ANCESTOR instead for multi-level hierarchies.",
                 "syntax": "JOIN [TargetType] ON FUNCTION([SourceType])",
-                "critical_rule": "The argument to PARENT/CHILD/ANCESTOR/DESCENDANT must be the FROM type, never the JOIN target",
+                "critical_rule": "The argument to PARENT/CHILD/ANCESTOR must be the FROM type, never the JOIN target",
                 "examples": [
-                    "FROM [SOXIssue] JOIN [SOXControl] ON PARENT([SOXIssue])",
-                    "FROM [SOXRisk] JOIN [SOXControl] ON CHILD([SOXRisk])",
-                    "FROM [SOXIssue] JOIN [SOXBusEntity] ON ANCESTOR([SOXIssue])"
+                    "FROM [ObjectTypeC] JOIN [ObjectTypeB] ON PARENT([ObjectTypeC])",
+                    "FROM [ObjectTypeA] JOIN [ObjectTypeB] ON CHILD([ObjectTypeA])",
+                    "FROM [ObjectTypeC] JOIN [ObjectTypeA] ON ANCESTOR([ObjectTypeC])"
                 ]
             },
             

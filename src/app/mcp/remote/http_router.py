@@ -27,15 +27,22 @@ import asyncio
 import uuid
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
+import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from src.app.auth.channel_auth import require_channel_auth
+from src.app.auth.context_vars import auth_authorization_var, auth_apikey_var
+from src.app.auth.service import PassthroughAuthError
+from src.app.config.settings import settings as _app_settings
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Create router
-router = APIRouter(prefix="/mcp")
+# Create router. The channel-auth gate runs on every request (incl. initialize)
+# and is a no-op outside production remote mode.
+router = APIRouter(prefix="/mcp", dependencies=[Depends(require_channel_auth)])
 
 # In-memory session store with TTL tracking
 # Key: session_id, Value: (creation_timestamp, last_access_timestamp)
@@ -175,6 +182,69 @@ async def stop_cleanup_task():
         logger.info("Stopped session cleanup background task")
 
 
+async def _verify_openpages_access(
+    mcp_server,
+    authorization: Optional[str],
+    api_key: Optional[str],
+) -> None:
+    """Connect-time access probe (runs only at `initialize`).
+
+    Resolves the transport credential (HTTP Authorization header — type 1, or the
+    API-key header — type 3) into an OpenPages bearer and makes a real
+    GET /api/v2/types. Establishes nothing on its own; on any failure it raises an
+    HTTPException so the caller aborts before a session is created (fail-closed).
+
+    No-op outside user-auth mode (server-credential deployments run on their own
+    creds and the channel gate is already skipped there).
+
+    Types 2 & 4 (op_auth_header / op_auth_ticket) are deliberately NOT consulted:
+    they are body context-var artifacts that don't exist at the HTTP `initialize`
+    boundary, and the Orchestrate ticket flow must remain driven per tool call.
+
+    Raises:
+        HTTPException(401): credential resolution failed or OpenPages rejected it (401/403).
+        HTTPException(502): OpenPages returned a non-auth error status (5xx / other 4xx).
+        HTTPException(503): OpenPages was unreachable (network/timeout).
+    """
+    if not _app_settings.verify_access_on_connect_active():
+        return
+
+    try:
+        result = await mcp_server.auth_service.resolve_for_request(
+            authorization=authorization,  # type 1 — passthrough, no exchange
+            api_key=api_key,              # type 3 — real exchange, caches bearer for later tool calls
+        )
+    except PassthroughAuthError:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except Exception:
+        # Token-exchange / IDP failures — never log credential values.
+        logger.warning("Connect-time credential resolution failed")
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        await mcp_server.client.verify_access(auth_override=result.auth_override)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (401, 403):
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication failed",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # Fail-closed on 5xx / other 4xx — distinct status so clients can tell
+        # "OpenPages is unhealthy" from "you're not allowed".
+        raise HTTPException(status_code=502, detail="Upstream verification failed")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Verification unavailable")
+
+
 # Single JSON-RPC endpoint
 @router.post("")
 async def jsonrpc_endpoint(request: Request):
@@ -216,7 +286,23 @@ async def jsonrpc_endpoint(request: Request):
             _method_preview = _json_module.loads(body_bytes).get("method", "?")
         except Exception:
             _method_preview = "?"
-        logger.info(f"MCP request: {request.method} {request.url.path} method={_method_preview}")
+        
+        # Capture transport-level auth artifacts (types 1 & 3) as request-scoped
+        # ContextVars so they reach the tool handlers without crossing the LLM
+        # argument surface. NOTE: we deliberately do NOT copy these into
+        # op_auth_header (that would collapse types 1/2 and let a channel/header
+        # credential shadow the per-call user artifact).
+        auth_header = request.headers.get("Authorization")
+        # The API key may arrive under any of the configured header names (different
+        # agent deployments use different headers); first present wins.
+        api_key_header = None
+        for _hdr in _app_settings.get_apikey_header_names():
+            api_key_header = request.headers.get(_hdr)
+            if api_key_header:
+                break
+        auth_authorization_var.set(auth_header)
+        auth_apikey_var.set(api_key_header)
+
         logger.debug(f"MCP request body (first 200 bytes): {_preview}")
         
         try:
@@ -242,7 +328,7 @@ async def jsonrpc_endpoint(request: Request):
         _is_sse_transport_client = bool(
             _conn_id_for_enforcement and _conn_id_for_enforcement in _sse_connection_queues
         )
-        if method != "initialize" and _settings.MCP_SESSION_ENFORCEMENT and not _is_sse_transport_client:
+        if method != "initialize" and _settings.session_enforcement_effective() and not _is_sse_transport_client:
             session_id = request.headers.get("mcp-session-id")
             if session_id is None:
                 # If sessions have been established, enforce the header requirement
@@ -263,6 +349,19 @@ async def jsonrpc_endpoint(request: Request):
         # No method name remapping needed here — request_processor handles all variants
         # (e.g. tools/list, list_tools, tools/call, call_tool, resources/list, etc.)
         
+        # Types 1 (Authorization) and 3 (API key) are carried via request-scoped
+        # ContextVars set above — not injected into the tool arguments. Types 2
+        # (op_auth_header) and 4 (op_auth_ticket) arrive as context-var tool args
+        # set by the embedded chat and are handled by mcp/context.py.
+
+        # Connect-time access verification (user-auth mode only): before a session is
+        # minted, resolve the header credential and probe OpenPages GET /api/v2/types.
+        # On failure this raises (fail-closed) and no session is created. Runs only at
+        # `initialize`; tool calls are not re-checked (they rely on the established
+        # session, enforced via session_enforcement_effective()).
+        if method == "initialize":
+            await _verify_openpages_access(mcp_server, auth_header, api_key_header)
+
         # Process request
         response = await mcp_server.run_streamable_http(request_data)
         

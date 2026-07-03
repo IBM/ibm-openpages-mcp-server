@@ -97,10 +97,15 @@ async def test_simple_resource_reading():
             print(f"  Target type: {first_rel.get('target_type')}")
     
     if schema1.get('hierarchical_relationships'):
-        print(f"  Hierarchical relationships: {len(schema1['hierarchical_relationships'])}")
-        if schema1['hierarchical_relationships']:
-            first_hier = schema1['hierarchical_relationships'][0]
-            print(f"  First hierarchical: {first_hier.get('direction')} -> {first_hier.get('type')}")
+        hierarchical_rels = schema1['hierarchical_relationships']
+        total_rels = sum(len(types) for types in hierarchical_rels.values()) if isinstance(hierarchical_rels, dict) else 0
+        print(f"  Hierarchical relationships: {total_rels}")
+        if hierarchical_rels:
+            # Print first relationship from grouped format
+            for direction, types in hierarchical_rels.items():
+                if types:
+                    print(f"  First hierarchical: {direction} -> {types[0]}")
+                    break
     
     # Test 5: Read another type
     print("\nTest 5: Reading SOXControl schema")
