@@ -31,7 +31,6 @@ All other settings are optional and have sensible defaults defined in [`src/app/
 # Application settings
 APP_NAME: str = "GRC MCP Server"
 DEBUG: bool = False
-ENVIRONMENT: str = "production"
 SERVER_MODE: str = "remote"
 
 # Server settings
