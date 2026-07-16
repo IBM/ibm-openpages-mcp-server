@@ -336,10 +336,12 @@ async def exchange_refresh_artifact(
             # Confidential client authenticates via HTTP Basic; API client is the receiver.
             data['receiver_client_ids'] = audience or client_id
             basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+            del client_secret  # clear raw secret from local scope as soon as it is no longer needed
             headers['Authorization'] = f"Basic {basic}"
         else:  # isv
             data['client_id'] = client_id
             data['client_secret'] = client_secret
+            del client_secret  # clear raw secret from local scope as soon as it is no longer needed
             if audience:
                 data['audience'] = audience
 

@@ -190,16 +190,21 @@ async def _verify_openpages_access(
     """Connect-time access probe (runs only at `initialize`).
 
     Resolves the transport credential (HTTP Authorization header — type 1, or the
-    API-key header — type 3) into an OpenPages bearer and makes a real
+    API-key header — type 4) into an OpenPages bearer and makes a real
     GET /api/v2/types. Establishes nothing on its own; on any failure it raises an
     HTTPException so the caller aborts before a session is created (fail-closed).
 
     No-op outside user-auth mode (server-credential deployments run on their own
     creds and the channel gate is already skipped there).
 
-    Types 2 & 4 (op_auth_header / op_auth_ticket) are deliberately NOT consulted:
+    Types 2 & 3 (op_auth_header / op_auth_ticket) are deliberately NOT consulted:
     they are body context-var artifacts that don't exist at the HTTP `initialize`
     boundary, and the Orchestrate ticket flow must remain driven per tool call.
+
+    Ticket-only clients (type 3) send no Authorization or API-key header at
+    `initialize`; they present their ticket per tool call.  When neither header
+    credential is present this probe is skipped so that those clients can
+    establish a session and proceed normally.
 
     Raises:
         HTTPException(401): credential resolution failed or OpenPages rejected it (401/403).
@@ -209,10 +214,17 @@ async def _verify_openpages_access(
     if not _app_settings.verify_access_on_connect_active():
         return
 
+    # Skip the probe for ticket-only clients: they carry no header credential at
+    # initialize and will authenticate per tool call via op_auth_ticket (type 3).
+    # Attempting resolve_for_request with no artifacts would raise PassthroughAuthError
+    # and wrongly reject every initialize from these clients.
+    if not authorization and not api_key:
+        return
+
     try:
         result = await mcp_server.auth_service.resolve_for_request(
             authorization=authorization,  # type 1 — passthrough, no exchange
-            api_key=api_key,              # type 3 — real exchange, caches bearer for later tool calls
+            api_key=api_key,              # type 4 — real exchange, caches bearer for later tool calls
         )
     except PassthroughAuthError:
         raise HTTPException(

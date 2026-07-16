@@ -99,10 +99,6 @@ class ResourceHandlers:
         
         # Cache for configured type IDs (to avoid repeated API calls)
         self._configured_types_cache: Optional[set] = None
-        self._configured_types_cache_lock = asyncio.Lock()
-        
-        # Lock for thread-safe schema cache operations
-        self._schema_cache_lock = asyncio.Lock()
         
         logger.info(f"ResourceHandlers initialized with formatted schema cache (max_size={self._schema_cache_max_size}, ttl={self._schema_cache_ttl}s)")
     
@@ -353,7 +349,6 @@ class ResourceHandlers:
             formatted_text = cached_schema
         else:
             async with self._schema_cache_lock:
-                self._schema_cache_misses += 1
                 hit_rate = self._get_schema_cache_hit_rate()
             logger.debug(f"Cache miss for {cache_key}, building schema (hit rate: {hit_rate:.1f}%)")
             
@@ -1292,9 +1287,11 @@ class ResourceHandlers:
             # If currently rebuilding, return None to force wait/retry
             if cache_key in self._schema_rebuilding:
                 logger.debug(f"Schema {cache_key} is being rebuilt, skipping cache")
+                self._schema_cache_misses += 1
                 return None
             
             if cache_key not in self._schema_cache:
+                self._schema_cache_misses += 1
                 return None
             
             cached_entry = self._schema_cache[cache_key]
@@ -1304,6 +1301,7 @@ class ResourceHandlers:
                 # Expired - remove it
                 self._schema_cache.pop(cache_key, None)
                 logger.debug(f"Schema cache entry expired for {cache_key} (age: {cache_age:.1f}s)")
+                self._schema_cache_misses += 1
                 return None
             
             # Move to end (mark as recently used)

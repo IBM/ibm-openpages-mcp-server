@@ -209,6 +209,10 @@ class Settings(BaseSettings):
     OPENPAGES_QUERY_PAGE_SIZE: int = 500  # Batch size for paginated OpenPages queries (max: 50000)
 
     # Token optimization settings (Phase 2) - with sensible defaults
+    # SCHEMA_CACHE_MAX_SIZE: increased from 20 to 200 in 9.2.1. Each cached schema is
+    # ~100–500 KB, so 200 entries may consume up to ~100 MB. Lower this value in
+    # memory-constrained deployments (e.g. SCHEMA_CACHE_MAX_SIZE=20 to restore the
+    # previous footprint).
     SCHEMA_CACHE_MAX_SIZE: int = 200  # Maximum number of schemas to cache (LRU)
     SCHEMA_CACHE_TTL: int = 3600  # Schema cache TTL in seconds (1 hour)
     ENABLE_MINIMAL_SCHEMA_MODE: bool = True  # Enable minimal schema mode by default
@@ -249,19 +253,6 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore",  # Ignore extra fields from environment
     )
-    
-    @staticmethod
-    def load_vcap_services(data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Load credentials from VCAP_SERVICES file on-demand.
-        
-        Args:
-            data: Dictionary to update with VCAP credentials
-            
-        Returns:
-            Updated dictionary with VCAP credentials (if available)
-        """
-        return data
     
     @staticmethod
     def _read_mounted_secret(file_path: Optional[str], already_set: bool) -> Optional[str]:

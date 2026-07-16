@@ -715,14 +715,14 @@ class OpenPagesClient:
             )
             response_json = response.json()
             
-            # Always log response type and structure for debugging
-            logger.info(f"Query response type: {type(response_json)}")
+            # Log response type and structure at debug level (not info — fires on every query)
+            logger.debug(f"Query response type: {type(response_json)}")
             if isinstance(response_json, dict):
-                logger.info(f"Query response keys: {list(response_json.keys())}")
+                logger.debug(f"Query response keys: {list(response_json.keys())}")
             elif isinstance(response_json, list):
-                logger.info(f"Query response is a list with {len(response_json)} items")
+                logger.debug(f"Query response is a list with {len(response_json)} items")
                 if response_json:
-                    logger.info(f"First item type: {type(response_json[0])}")
+                    logger.debug(f"First item type: {type(response_json[0])}")
 
             # Log the response, but truncate if too large
             if settings.DEBUG:
@@ -776,6 +776,11 @@ class OpenPagesClient:
         api_path = self._get_api_path("/api/v2/token/redeemTicket")
         full_url = f"{self.base_url}{api_path}"
         # Never log the ticket value itself.
+        # OTEL NOTE: This endpoint sends {"ticket": <value>} in the request body.
+        # Do NOT enable request-body capture (e.g. opentelemetry-instrumentation-httpx
+        # body hooks or vendor agents with http.request.body capture) for this URL, as
+        # it would export the ticket to the telemetry backend.  If body capture is
+        # globally enabled, add this URL to the exclusion list of your OTEL SDK config.
         logger.debug(f"Redeeming embedded-chat ticket at {full_url}")
 
         try:

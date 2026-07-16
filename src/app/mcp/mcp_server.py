@@ -1009,13 +1009,22 @@ Accepts optional context variables.""",
     
     async def load_dynamic_schemas(self) -> None:
         """
-        Load dynamic schemas for all configured object types
-        
-        This method fetches type definitions from OpenPages and updates tool schemas
-        with actual field definitions, enum values, and associations.
-        
-        PERFORMANCE: Uses parallel loading (asyncio.gather) to load all schemas concurrently,
-        reducing initialization time from ~4.7s (sequential) to ~1.2s (parallel).
+        Load dynamic schemas for all configured object types.
+
+        Behaviour depends on TOOL_EXPOSURE_MODE:
+
+        * ``type_based`` / ``all`` — eager loading: type definitions are fetched
+          from OpenPages and tool schemas are updated before this method returns.
+          The server does not accept requests until loading is complete.
+
+        * ``ontology_based`` — fast-start path: ``dynamic_schemas_loaded`` is set
+          to ``True`` immediately so the server can begin accepting requests, then
+          :meth:`_background_schema_loader` is spawned as a detached
+          ``asyncio.Task`` (``self._background_loader_task``) to pre-warm the
+          resource schema cache in the background.  Individual resource schemas
+          are still fetched lazily on first access if the background task has not
+          yet reached them.  Call :meth:`cleanup` to cancel or await the task on
+          shutdown.
         """
         if self.dynamic_schemas_loaded:
             logger.debug("Dynamic schemas already loaded, skipping")

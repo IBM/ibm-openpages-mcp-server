@@ -224,9 +224,16 @@ def create_remote_app():
         # Stop background cleanup task
         await stop_cleanup_task()
         
-        # Close the shared httpx client to release connections
+        # Stop background schema loader and wait for graceful completion
         from src.app.mcp.remote.server_instance import get_server
         server = get_server()
+        if server:
+            try:
+                await server.cleanup()
+            except Exception as e:
+                logger.error(f"Error during MCP server cleanup: {e}")
+        
+        # Close the shared httpx client to release connections
         if server and hasattr(server, 'client') and server.client:
             try:
                 await server.client.close()

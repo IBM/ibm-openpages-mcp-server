@@ -15,6 +15,7 @@ The ToolHandlers class supports:
 """
 
 import logging
+import re
 import time
 import json
 import asyncio
@@ -78,6 +79,8 @@ class ToolHandlers:
     
     async def cleanup(self):
         """Cleanup resources."""
+        # TODO: add per-handler teardown logic here if needed in future
+        pass
     
     def _extract_tenant_id(self, base_url: str) -> Optional[str]:
         """Extract tenant_id from OpenPages URL with multiple pattern support.
@@ -94,8 +97,6 @@ class ToolHandlers:
         Returns:
             Extracted tenant_id or None if no pattern matches
         """
-        import re
-        
         if not base_url:
             return None
         
@@ -292,8 +293,8 @@ class ToolHandlers:
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Delete tool context: {context}")
         
-        # Resolve auth override
-        auth_override, auth_result = await self._resolve_auth_override(context)
+        # Resolve user auth (fail-fast) so the deletion is performed as the user.
+        auth_override, auth_result = await self._resolve_auth_and_user(context)
 
         object_type_input = cleaned_args.get("object_type", "")
         resource_id = cleaned_args.get("resource_id")
@@ -1100,8 +1101,8 @@ class ToolHandlers:
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Query tool context: {context}")
         
-        # Resolve auth override
-        auth_override, auth_result = await self._resolve_auth_override(context)
+        # Resolve user auth (fail-fast). The query runs as the authenticated user.
+        auth_override, auth_result = await self._resolve_auth_and_user(context)
         
         if not self.query_tool:
             logger.error("OpenPages query tool not initialized")
@@ -1180,8 +1181,8 @@ class ToolHandlers:
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Generic tool '{tool_name}' context: {context}")
         
-        # Resolve auth override
-        auth_override, auth_result = await self._resolve_auth_override(context)
+        # Resolve user auth (fail-fast) so generic tool calls run as the authenticated user.
+        auth_override, auth_result = await self._resolve_auth_and_user(context)
 
         logger.info(f"Handling generic tool: {tool_name}")
         
@@ -1461,238 +1462,6 @@ class ToolHandlers:
                     {"type": "text", "text": f"Error getting resource: {str(e)}"}
                 ]
             }
-    
-    # TODO: Temporarily disabled - schema tools will be re-enabled later
-    # @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
-    # async def handle_get_schema_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    #     """
-    #     Handle the get_schema tool - retrieves schema for a specific object type
-    #
-    #     Args:
-    #         arguments: Tool arguments containing 'object_type' field
-    #
-    #     Returns:
-    #         Dict containing the schema as JSON text
-    #     """
-    #     if not self.resource_handlers:
-    #         logger.error("Resource handlers not initialized")
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": "Error: Resource handlers not initialized"}
-    #             ]
-    #         }
-    #
-    #     object_type = arguments.get("object_type", "")
-    #     if not object_type:
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": "Error: object_type parameter is required"}
-    #             ]
-    #         }
-    #
-    #     logger.info(f"Getting schema for object type: {object_type}")
-    #     try:
-    #         # Use resource handler to read the schema
-    #         result = await self.resource_handlers.handle_read_resource({
-    #             "uri": f"openpages://schema/{object_type}"
-    #         })
-    #
-    #         # Extract the text content from the resource result
-    #         if "contents" in result and len(result["contents"]) > 0:
-    #             schema_text = result["contents"][0].get("text", "")
-    #             return {
-    #                 "result": [{"type": "text", "text": schema_text}]
-    #             }
-    #         else:
-    #             return {
-    #                 "result": [
-    #                     {"type": "text", "text": f"Error: No schema found for {object_type}"}
-    #                 ]
-    #             }
-    #     except Exception as e:
-    #         logger.error(f"Error getting schema for {object_type}: {e}", exc_info=True)
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": f"Error getting schema: {str(e)}"}
-    #             ]
-    #         }
-    #
-    # @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
-    # async def handle_list_schemas_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    #     """
-    #     Handle the list_schemas tool - lists all available object type schemas
-    #
-    #     Args:
-    #         arguments: Tool arguments (currently unused)
-    #
-    #     Returns:
-    #         Dict containing the list of available schemas
-    #     """
-    #     if not self.resource_handlers:
-    #         logger.error("Resource handlers not initialized")
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": "Error: Resource handlers not initialized"}
-    #             ]
-    #         }
-    #
-    #     logger.info("Listing available schemas")
-    #     try:
-    #         # Use resource handler to list resources
-    #         result = await self.resource_handlers.handle_list_resources({})
-    #
-    #         # Format the resources list as text
-    #         if "resources" in result:
-    #             resources = result["resources"]
-    #             schema_list = []
-    #             for resource in resources:
-    #                 uri = resource.get("uri", "")
-    #                 name = resource.get("name", "")
-    #                 description = resource.get("description", "")
-    #                 if uri.startswith("openpages://schema/"):
-    #                     schema_list.append(f"- {name}: {uri}\n  {description}")
-    #
-    #             if schema_list:
-    #                 text = "Available OpenPages Object Type Schemas:\n\n" + "\n\n".join(schema_list)
-    #             else:
-    #                 text = "No schemas available"
-    #
-    #             return {
-    #                 "result": [{"type": "text", "text": text}]
-    #             }
-    #         else:
-    #             return {
-    #                 "result": [
-    #                     {"type": "text", "text": "Error: No resources found"}
-    #                 ]
-    #             }
-    #     except Exception as e:
-    #         logger.error(f"Error listing schemas: {e}", exc_info=True)
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": f"Error listing schemas: {str(e)}"}
-    #             ]
-    #         }
-            # Resolve authentication and get username
-            auth_override, auth_result = await self._resolve_auth_and_user(context)
-            username = auth_result.username if auth_result else None
-            
-            if context.op_base_url:
-                logger.info(f"Using per-request OpenPages URL: {context.op_base_url}")
-            
-            # Extract parameters with input sanitization
-            object_type = cleaned_args.get("object_type", "").strip()
-            name = cleaned_args.get("name", "").strip()
-            description = cleaned_args.get("description", "").strip()
-            title = cleaned_args.get("title", "").strip() if cleaned_args.get("title") else None
-            primary_parent_id = cleaned_args.get("primary_parent_id", "").strip() if cleaned_args.get("primary_parent_id") else None
-            
-            # Validate required parameters
-            if not object_type:
-                return {
-                    "result": [
-                        {"type": "text", "text": "Error: 'object_type' is required"}
-                    ]
-                }
-            
-            if not name or not description:
-                return {
-                    "result": [
-                        {"type": "text", "text": "Error: Both 'name' and 'description' are required"}
-                    ]
-                }
-            # Resolve user-friendly names to OpenPages type IDs
-            object_type_mapping = {
-                "usecase": "Register",
-                "agent": "AIComponent",
-            }
-            resolved_type = object_type_mapping.get(object_type.strip().lower(), object_type.strip())
-            
-            logger.info(f"Creating {resolved_type}: {name}")
-            schema_builder = getattr(self.mcp_server, 'schema_builder', None)
-            logger.debug(f"Schema builder available: {schema_builder is not None}")
-
-            try:
-                logger.info(f"Fetching {resolved_type} type definition to get type_definition_id")
-                
-                # Use schema_builder if available (cached), otherwise fetch directly
-                if schema_builder:
-                    schema = await schema_builder.get_type_definition(resolved_type, auth_override=auth_override)
-                else:
-                    schema = await self.mcp_server.client.get_type_definition(resolved_type, auth_override=auth_override)
-                
-                if not schema or 'id' not in schema:
-                    raise ValueError(f"{resolved_type} schema does not contain 'id' field")
-                
-                type_def_id = str(schema['id'])
-                logger.info(f"Retrieved {resolved_type} type_definition_id: {type_def_id}")
-
-                # Find owner field by checking if field name contains "owner" keyword
-                owner_field_name = None
-                fields = schema.get("field_definitions", [])
-                for field in fields:
-                    field_name = field.get("name", "")
-                    if "owner" in field_name.lower():
-                        owner_field_name = field_name
-                        logger.debug(f"Found owner field: {owner_field_name}")
-                        break
-            
-            except Exception as e:
-               logger.error(f"Failed to fetch {resolved_type} schema: {e}")
-               raise
-
-            logger.debug(f"Using {resolved_type} type_definition_id: {type_def_id}")
-            object_payload = {
-                "name": name,
-                "description": description,
-                "type_definition_id": type_def_id,
-                "fields": []
-            }
-            
-            if title:
-                object_payload["title"] = title
-            
-            # Set primary_parent_id: use provided value or query for default "Use Case Library"
-            if not primary_parent_id:
-                primary_parent_id = await self._get_default_parent_id(object_type=resolved_type, auth_override=auth_override)
-            
-            if primary_parent_id:
-                object_payload["primary_parent_id"] = primary_parent_id
-            
-            # Add username to owner field if both are available
-            if username and owner_field_name:
-                object_payload["fields"].append({
-                    "name": owner_field_name,
-                    "value": username
-                })
-                logger.debug(f"Added username '{username}' to owner field '{owner_field_name}'")
-
-            object_result = await self.mcp_server.client.create_content(
-                object_payload,
-                auth_override=auth_override,
-            )
-            
-            # Extract resource_id - OpenPages API returns "id" not "resource_id"
-            resource_id = object_result.get("id")
-            
-            base_url = self.settings.OP_EXT_HOST.rstrip('/')
-            response = {
-                "object_type": object_type,
-                "resource_id": resource_id,
-                "name": object_result.get("name", name),
-                "description": object_result.get("description", description),
-                "task_view_path": (
-                    f"{base_url}/app/jspview/react/grc/task-view/{resource_id}"
-                    if resource_id else ""
-                ),
-                "raw_response": object_result,
-            }
-            return {
-                "result": [
-                    {"type": "text", "text": json.dumps(response, indent=2)}
-                ]
-            }
-        
     
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_call_tool(self, params: Dict[str, Any]) -> Dict[str, Any]:

@@ -138,9 +138,9 @@ class AuthService:
             authorization: Type 1 — raw HTTP ``Authorization`` header value.
             op_auth_header: Type 2 — ``op_auth_header`` context var value.
             has_op_auth_header: Whether the ``op_auth_header`` key was present.
-            api_key: Type 3 — raw API key from the configured header.
-            op_auth_ticket: Type 4 — ``op_auth_ticket`` context var value.
+            op_auth_ticket: Type 3 — ``op_auth_ticket`` context var value (redeem + IAM/ISV exchange).
             has_op_auth_ticket: Whether the ``op_auth_ticket`` key was present.
+            api_key: Type 4 — raw API key from the configured header (same-IDP exchange).
             context_token / has_context_token_key: Legacy aliases for type 2.
 
         Returns:
