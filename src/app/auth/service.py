@@ -101,7 +101,7 @@ class AuthService:
         self.client = client
         self._token_validator = PassthroughTokenValidator()
 
-        # Shared per-process token cache for types 3 & 4 (constructed once). Type 4
+        # Shared per-process token cache for types 3 & 4 (constructed once). Type 3
         # ticket sessions live entirely in this per-pod cache — no shared store.
         self._token_cache = TokenCache(
             default_ttl=getattr(settings, "AUTH_TOKEN_CACHE_TTL", 3600),

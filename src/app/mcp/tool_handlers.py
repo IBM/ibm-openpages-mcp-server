@@ -146,8 +146,8 @@ class ToolHandlers:
         if not self.auth_service:
             return None, None
 
-        # Types 1 & 3 arrive as request-scoped ContextVars set by the HTTP ingress
-        # (remote mode); types 2 & 4 arrive as context-var tool args. In local/stdio
+        # Types 1 & 4 arrive as request-scoped ContextVars set by the HTTP ingress
+        # (remote mode); types 2 & 3 arrive as context-var tool args. In local/stdio
         # mode the ContextVars are simply None.
         from src.app.auth.context_vars import auth_authorization_var, auth_apikey_var
 

@@ -747,7 +747,7 @@ class OpenPagesClient:
 
     async def redeem_ticket(self, ticket: str) -> Dict[str, Any]:
         """
-        Redeem an embedded-chat auth ticket against OpenPages (auth type 4, internal).
+        Redeem an embedded-chat auth ticket against OpenPages (auth type 3, internal).
 
         This is the ONE sanctioned use of the MCP server's own OpenPages server
         credentials for an outbound call: it is an internal MCP→OP call, not a user

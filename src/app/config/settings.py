@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     OPENPAGES_INSTANCE_NAME: str = ""  # For CP4D deployments
 
     # Cloud provider the server is provisioned on.
-    # When set to "aws" the user-presented API key (auth type 3) must be exchanged
+    # When set to "aws" the user-presented API key (auth type 4) must be exchanged
     # at an INSTANCE-specific MCSP token endpoint rather than OPENPAGES_AUTHENTICATION_URL
     # (which on AWS Marketplace only accepts service-level keys). See
     # resolve_user_apikey_auth_url(). Empty/anything-else preserves the existing flow.
@@ -116,12 +116,12 @@ class Settings(BaseSettings):
     #     Cloud Pak agent / local / dev.
     OPENPAGES_AUTH_MODE: str = "user"
 
-    # ── Embedded-chat ticket auth (type 4) + shared 4-type framework ─────────
-    # Type-3 API-key header name(s) — a comma-separated list (default "X-Api-Key").
+    # ── Embedded-chat ticket auth (type 3) + shared 4-type framework ─────────
+    # Type-4 API-key header name(s) — a comma-separated list (default "X-Api-Key").
     # Lets different agent deployments carry the key under different headers
     # (first present wins).
     SUPPORTED_APIKEY_AUTH_HEADER_NAMES: str = "X-Api-Key"
-    # The op_auth_ticket (type 3) redeem+exchange flow has no enable/disable toggle: it is
+    # The op_auth_ticket (type 4) redeem+exchange flow has no enable/disable toggle: it is
     # deployment-driven (a ticket is only ever present when OpenPages issued one — SaaS / Cloud Pak).
     # The internal redeemTicket call targets the OpenPages REST API
     # (OPENPAGES_BASE_URL + "/opgrc/api/v2/token/redeemTicket"), authenticated with server credentials.
@@ -140,7 +140,7 @@ class Settings(BaseSettings):
     # IBM Cloud case). The grant flow (IBM Cloud IAM delegated-refresh vs RFC 8693
     # refresh_token) is derived from the resolved URL's type, not from the redeem mode.
     OPENPAGES_USER_IDP_TOKEN_URL: str = ""
-    # Token cache / refresh tuning (types 3 & 4). Ticket sessions are held in a
+    # Token cache / refresh tuning (types 3 & 4, in priority order: ticket=3, api-key=4). Ticket sessions are held in a
     # per-pod in-process cache (no shared store), so each pod redeems independently.
     AUTH_TOKEN_EXP_SKEW_SECONDS: int = 60   # treat tokens as expired this early
     AUTH_TOKEN_CACHE_TTL: int = 3600        # default local cache TTL
@@ -299,7 +299,7 @@ class Settings(BaseSettings):
         return names or ["X-Api-Key"]
 
     def resolve_user_apikey_auth_url(self) -> str:
-        """Token endpoint for exchanging a *user-presented* API key (auth type 3).
+        """Token endpoint for exchanging a *user-presented* API key (auth type 4).
 
         On AWS Marketplace (``CLOUD_PROVIDER=aws``) the shared
         ``OPENPAGES_AUTHENTICATION_URL`` only accepts service-level keys, so a user's

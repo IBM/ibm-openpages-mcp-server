@@ -27,7 +27,7 @@ from src.app.auth.token_utils import decode_jwt_token
 
 logger = logging.getLogger(__name__)
 
-# IDP grant types for the refresh-artifact exchange (auth type 4).
+# IDP grant types for the refresh-artifact exchange (auth type 3).
 _IAM_GRANT_TYPE = "urn:ibm:params:oauth:grant-type:delegated-refresh-token"
 _ISV_GRANT_TYPE = "refresh_token"
 
@@ -85,7 +85,7 @@ class AuthorizationHeaderProvider(PassthroughTokenProvider):
 
 class ApiKeyTokenProvider(AuthProvider):
     """
-    Type 3 (Same IDP) flow: exchange an API key for a token, with caching.
+    Type 4 (Same IDP) flow: exchange an API key for a token, with caching.
 
     Checks the shared TokenCache first; on miss, exchanges the API key at the same
     IDP and caches the resulting bearer. ``refresh()`` evicts and re-exchanges.
@@ -128,7 +128,7 @@ class ApiKeyTokenProvider(AuthProvider):
 
 class TicketTokenProvider(AuthProvider):
     """
-    Type 4 (embedded-chat ticket) flow — per-pod local session cache, no shared store.
+    Type 3 (embedded-chat ticket) flow — per-pod local session cache, no shared store.
 
     Each pod maintains its own session entirely in the in-process ``TokenCache``,
     keyed by ``sha256(ticket)``. The OpenPages ``redeemTicket`` endpoint is

@@ -218,6 +218,11 @@ async def _verify_openpages_access(
     # initialize and will authenticate per tool call via op_auth_ticket (type 3).
     # Attempting resolve_for_request with no artifacts would raise PassthroughAuthError
     # and wrongly reject every initialize from these clients.
+    # Server-credential deployments are already handled by verify_access_on_connect_active()
+    # above, so reaching here in user-auth mode with no credentials means the client is
+    # either ticket-only (legitimate) or entirely unauthenticated.  Both are allowed to
+    # proceed to initialize; the per-tool-call auth check will reject the latter when it
+    # attempts to invoke a tool without any artifact.
     if not authorization and not api_key:
         return
 
@@ -299,7 +304,7 @@ async def jsonrpc_endpoint(request: Request):
         except Exception:
             _method_preview = "?"
         
-        # Capture transport-level auth artifacts (types 1 & 3) as request-scoped
+        # Capture transport-level auth artifacts (types 1 & 4) as request-scoped
         # ContextVars so they reach the tool handlers without crossing the LLM
         # argument surface. NOTE: we deliberately do NOT copy these into
         # op_auth_header (that would collapse types 1/2 and let a channel/header

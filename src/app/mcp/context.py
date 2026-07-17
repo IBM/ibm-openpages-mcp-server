@@ -200,7 +200,7 @@ class ContextVariables:
 
     @property
     def op_auth_ticket(self) -> Optional[str]:
-        """Get the opaque embedded-chat auth ticket (type 4)."""
+        """Get the opaque embedded-chat auth ticket (type 3)."""
         return self._data.get("op_auth_ticket")
 
     @property

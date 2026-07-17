@@ -4,7 +4,7 @@ Token Cache Module
 TTL-based in-memory cache for authentication tokens.
 Thread-safe for single-threaded asyncio (Python dicts are safe).
 
-Used per-process by both ApiKeyTokenProvider (type 3) and TicketTokenProvider's
+Used per-process by both TicketTokenProvider (type 3) and ApiKeyTokenProvider's
 hot-path layer (type 4). A single shared instance is owned by AuthService so that
 repeated tool calls within a token's lifetime never touch the IDP or Redis.
 """

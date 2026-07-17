@@ -21,7 +21,6 @@ import threading
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 from collections import defaultdict
-from urllib.parse import quote
 
 import aio_pika
 from aio_pika import connect_robust, ExchangeType, DeliveryMode
@@ -154,17 +153,14 @@ class RabbitMQClient:
                     logger.info(f"Loading client certificate: {client_cert}")
                     ssl_context.load_cert_chain(client_cert, client_key)
             
-            # URL-encode username and password to handle special characters
-            # (e.g., @, :, /, ?, #, %) that would break URL parsing
-            encoded_username = quote(self.username, safe='')
-            encoded_password = quote(self.password, safe='')
-            
-            # Build connection URL with encoded credentials
+            # Credentials passed as kwargs so they are never embedded in the URL string.
             protocol = "amqps" if self.use_ssl else "amqp"
-            url = f"{protocol}://{encoded_username}:{encoded_password}@{self.host}:{self.port}/{self.virtual_host}" #pragma: allowlist secret
-            
+            url = f"{protocol}://{self.host}:{self.port}/{self.virtual_host}"
+
             self.connection = await connect_robust(
                 url,
+                login=self.username,
+                password=self.password,
                 timeout=30,
                 reconnect_interval=5.0,  # Production-grade: retry every 5 seconds
                 fail_fast=False,

@@ -250,7 +250,7 @@ async def fetch_cp4d_token(username: str, password: str, auth_url: str, ssl_veri
 
 async def exchange_api_key(api_key: str, auth_url: str, ssl_verify: bool = True) -> str:
     """
-    High-level API key exchange (auth type 3): detect IDP type and fetch a token.
+    High-level API key exchange (auth type 4): detect IDP type and fetch a token.
 
     Used by ApiKeyTokenProvider to exchange a same-IDP API key (presented in the
     configured custom header, default ``X-Api-Key``) for an OpenPages-usable token.
@@ -290,7 +290,7 @@ async def exchange_refresh_artifact(
     ssl_verify: bool = True,
 ) -> Tuple[str, int]:
     """
-    Exchange a pre-minted IDP refresh artifact for a user-scoped access token (auth type 4).
+    Exchange a pre-minted IDP refresh artifact for a user-scoped access token (auth type 3).
 
     The ``grant_style`` selects the wire protocol — it is derived by the caller from the
     IDP URL type (``detect_auth_type``), not from the redeem response:

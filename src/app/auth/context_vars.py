@@ -8,10 +8,10 @@ on the agent/LLM tool-argument surface.
 Set by the HTTP ingress (`http_router`), read by `tool_handlers` during request
 processing:
 - `auth_authorization_var`  — type 1: raw HTTP `Authorization` header value.
-- `auth_apikey_var`         — type 3: raw value of the configured API-key header
+- `auth_apikey_var`         — type 4: raw value of the configured API-key header
                               (default `X-Api-Key`).
 
-The `op_auth_header` (type 2) and `op_auth_ticket` (type 4) artifacts arrive as
+The `op_auth_header` (type 2) and `op_auth_ticket` (type 3) artifacts arrive as
 context-var tool arguments instead and are handled via `mcp/context.py`.
 """
 
@@ -23,7 +23,7 @@ auth_authorization_var: ContextVar[Optional[str]] = ContextVar(
     "auth_authorization", default=None
 )
 
-# Type 3 — raw API key captured from the configured custom header at ingress.
+# Type 4 — raw API key captured from the configured custom header at ingress.
 auth_apikey_var: ContextVar[Optional[str]] = ContextVar(
     "auth_apikey", default=None
 )

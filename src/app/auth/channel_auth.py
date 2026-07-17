@@ -10,7 +10,7 @@ a session. The rule is deliberately simple:
     credentials, so the gate is **skipped** — no header is required.
   * **Everywhere else** (production-remote SaaS) a request is allowed iff a
     credential is present in a request **header**: the ``Authorization`` header
-    (type 1) or any configured API-key header (type 3, ``get_apikey_header_names()``).
+    (type 1) or any configured API-key header (type 4, ``get_apikey_header_names()``).
     Otherwise the connection is rejected with 401.
 
 This is the **channel** layer (is the caller allowed to connect?), distinct from
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 def _has_user_header(request: Request) -> bool:
-    """Whether a user credential header is present (type 1 Authorization or type 3 API key)."""
+    """Whether a user credential header is present (type 1 Authorization or type 4 API key)."""
     if request.headers.get("Authorization"):
         return True
     for header_name in settings.get_apikey_header_names():

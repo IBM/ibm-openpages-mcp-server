@@ -771,9 +771,13 @@ class ResourceHandlers:
         """
         relationships = []
         
-        # Get set of configured type IDs for filtering
+        # Get set of configured type IDs for filtering.
+        # _configured_types_cache is intentionally set without a lock: two concurrent
+        # callers may both see None and both call _get_configured_type_ids(), but the
+        # result is idempotent (same data) so the only cost is a redundant API call.
+        # Using a lock here would require an async lock across an await, adding latency
+        # for no correctness gain — the double-fetch is safe and self-correcting.
         if configured_types is None:
-            # Use cached configured types if available, otherwise fetch and cache
             if self._configured_types_cache is None:
                 self._configured_types_cache = await self._get_configured_type_ids()
                 logger.debug(f"Cached {len(self._configured_types_cache)} configured type IDs for relationship filtering")
@@ -1284,10 +1288,11 @@ class ResourceHandlers:
             Cached formatted schema string or None if not found/expired
         """
         async with self._schema_cache_lock:
-            # If currently rebuilding, return None to force wait/retry
+            # If currently rebuilding, return None so the caller falls through to
+            # rebuild.  This is not a cache miss — the schema exists, it is just
+            # temporarily unavailable — so we do NOT increment the miss counter here.
             if cache_key in self._schema_rebuilding:
                 logger.debug(f"Schema {cache_key} is being rebuilt, skipping cache")
-                self._schema_cache_misses += 1
                 return None
             
             if cache_key not in self._schema_cache:
