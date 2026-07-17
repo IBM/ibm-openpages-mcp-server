@@ -14,21 +14,10 @@ if os.path.exists('/app'):
     sys.path.append('/app')
 
 from src.app.config.settings import settings
-from src.app.observability.logger import setup_logging, get_logger
 
-# Setup structured logging for remote mode (default)
-# This will be reconfigured in local mode to use stderr
-setup_logging(
-    level=settings.LOG_LEVEL,
-    service_name=settings.APP_NAME,
-    json_format=(settings.LOG_FORMAT == "json"),
-    log_file=settings.LOG_FILE,
-    use_stderr=False,  # Remote mode uses stdout
-    log_max_bytes=settings.LOG_MAX_BYTES,
-    log_backup_count=settings.LOG_BACKUP_COUNT,
-)
-
-logger = get_logger(__name__)
+# Delay logger setup until mode is determined
+# This prevents logging to stdout before we know if we're in local mode
+logger = None
 
 def parse_arguments():
     """Parse command line arguments"""
@@ -74,6 +63,10 @@ def create_remote_app():
         RateLimitMiddleware,
         ObservabilityMiddleware,
     )
+    from src.app.observability.logger import get_logger
+    
+    # Get logger for remote mode
+    remote_logger = get_logger(__name__)
     
     # Setup tracing BEFORE creating the app
     if settings.OBSERVABILITY_ENABLED and settings.TRACING_ENABLED:
@@ -83,7 +76,7 @@ def create_remote_app():
             console_export=settings.CONSOLE_TRACING,
             enabled=True,
         )
-        logger.info("Tracing setup completed")
+        remote_logger.info("Tracing setup completed")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -95,7 +88,7 @@ def create_remote_app():
             clear_all_sessions
         )
         
-        logger.info("Starting GRC MCP Server")
+        remote_logger.info("Starting GRC MCP Server")
         
         # Clear any stale session data from previous runs
         clear_all_sessions()
@@ -107,12 +100,12 @@ def create_remote_app():
                 service_name=settings.APP_NAME,
                 service_version="1.0.0",
             )
-            logger.info("Metrics collection enabled")
+            remote_logger.info("Metrics collection enabled")
         
         # Initialize the MCP server using the singleton pattern (async version)
         from src.app.mcp.remote.server_instance import initialize_server_async
         await initialize_server_async()
-        logger.info("MCP Server initialized")
+        remote_logger.info("MCP Server initialized")
         
         # Start background session cleanup task
         await start_cleanup_task()
@@ -131,7 +124,7 @@ def create_remote_app():
         # Clear all sessions on shutdown
         clear_all_sessions()
 
-        logger.info("Shutting down GRC MCP Server")
+        remote_logger.info("Shutting down GRC MCP Server")
 
     # Create FastAPI application
     app = FastAPI(
@@ -144,7 +137,7 @@ def create_remote_app():
     # Instrument FastAPI app AFTER creation but BEFORE adding middleware
     if settings.OBSERVABILITY_ENABLED and settings.TRACING_ENABLED:
         instrument_fastapi_app(app)
-        logger.info("FastAPI instrumentation completed")
+        remote_logger.info("FastAPI instrumentation completed")
 
     # Add observability middleware (order matters - add in reverse order of execution)
     if settings.OBSERVABILITY_ENABLED:
@@ -159,7 +152,7 @@ def create_remote_app():
                 burst_size=settings.RATE_LIMIT_BURST_SIZE,
                 enabled=True,
             )
-            logger.info(
+            remote_logger.info(
                 f"Rate limiting enabled: {settings.RATE_LIMIT_REQUESTS_PER_MINUTE} req/min, "
                 f"burst={settings.RATE_LIMIT_BURST_SIZE}"
             )
@@ -204,16 +197,24 @@ app = None
 def get_app():
     """Lazy app creation - only create when actually needed"""
     global app
-    if app is None and os.getenv("SERVER_MODE", settings.SERVER_MODE) != "local":
+    if app is None:
         app = create_remote_app()
     return app
 
 # For uvicorn to import: uvicorn main:app
-# This will trigger lazy creation on first access
-if os.getenv("SERVER_MODE", settings.SERVER_MODE) != "local":
-    app = get_app()
+# Only create app if explicitly running in remote mode via environment
+# This prevents FastAPI imports when checking --mode flag
+if __name__ != "__main__":
+    # Module is being imported (e.g., by uvicorn)
+    # Only create app if SERVER_MODE is explicitly set to remote or not set
+    mode = os.getenv("SERVER_MODE", settings.SERVER_MODE)
+    if mode != "local":
+        app = get_app()
 
 if __name__ == "__main__":
+    # Import logging functions now that we're in main
+    from src.app.observability.logger import setup_logging, get_logger
+    
     # Parse command line arguments
     args = parse_arguments()
     
@@ -228,7 +229,7 @@ if __name__ == "__main__":
         # Import local runner only when needed
         from src.app.mcp.local.runner import run_local_server
         
-        # Reconfigure logging for local mode to use stderr (CRITICAL for stdio protocol)
+        # Configure logging for local mode to use stderr (CRITICAL for stdio protocol)
         setup_logging(
             level="DEBUG" if args.debug else settings.LOG_LEVEL,
             service_name=settings.APP_NAME,
@@ -241,21 +242,25 @@ if __name__ == "__main__":
         # Run local MCP server with stdio transport
         run_local_server(debug_mode=args.debug)
     else:
+        # Configure logging for remote mode
+        setup_logging(
+            level="DEBUG" if args.debug else settings.LOG_LEVEL,
+            service_name=settings.APP_NAME,
+            json_format=(settings.LOG_FORMAT == "json"),
+            log_file=settings.LOG_FILE,
+            use_stderr=False,  # Remote mode uses stdout
+            log_max_bytes=settings.LOG_MAX_BYTES,
+            log_backup_count=settings.LOG_BACKUP_COUNT,
+        )
+        
+        # Get logger after setup
+        logger = get_logger(__name__)
+        
+        if args.debug:
+            logger.info("Debug mode enabled via command line flag")
+        
         # Import uvicorn only when needed for remote mode
         import uvicorn
-        
-        # Reconfigure logging for remote mode if --debug flag is set
-        if args.debug:
-            setup_logging(
-                level="DEBUG",
-                service_name=settings.APP_NAME,
-                json_format=(settings.LOG_FORMAT == "json"),
-                log_file=settings.LOG_FILE,
-                use_stderr=False,  # Remote mode uses stdout
-                log_max_bytes=settings.LOG_MAX_BYTES,
-                log_backup_count=settings.LOG_BACKUP_COUNT,
-            )
-            logger.info("Debug mode enabled via command line flag")
         
         # Create the FastAPI app (or get existing one)
         app = get_app() if app is None else app
