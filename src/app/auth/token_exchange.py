@@ -119,17 +119,16 @@ async def fetch_ibm_cloud_token(api_key: str, auth_url: str) -> str:
     Raises:
         RuntimeError: If token exchange fails
     """
-    async def _fetch():
-        headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json'
-        }
-        data = {
-            'grant_type': 'urn:ibm:params:oauth:grant-type:apikey',
-            'apikey': api_key
-        }
-
-        async with httpx.AsyncClient(verify=True) as client:
+    async with httpx.AsyncClient(verify=True) as client:
+        async def _fetch():
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json'
+            }
+            data = {
+                'grant_type': 'urn:ibm:params:oauth:grant-type:apikey',
+                'apikey': api_key
+            }
             logger.debug(f"Fetching IBM Cloud token from {auth_url}")
             response = await client.post(auth_url, headers=headers, data=data, timeout=30.0)
             response.raise_for_status()
@@ -141,14 +140,14 @@ async def fetch_ibm_cloud_token(api_key: str, auth_url: str) -> str:
             else:
                 raise RuntimeError("'access_token' not found in IBM Cloud response")
 
-    try:
-        return await _retry_with_backoff(_fetch)
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Error fetching IBM Cloud token: {e}")
-        raise RuntimeError(f"IBM Cloud token exchange failed ({e.response.status_code}): {e.response.text}") from e
-    except httpx.RequestError as e:
-        logger.error(f"Request error fetching IBM Cloud token: {e}")
-        raise RuntimeError(f"Network error during IBM Cloud token exchange: {e}") from e
+        try:
+            return await _retry_with_backoff(_fetch)
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Error fetching IBM Cloud token: {e}")
+            raise RuntimeError(f"IBM Cloud token exchange failed ({e.response.status_code}): {e.response.text}") from e
+        except httpx.RequestError as e:
+            logger.error(f"Request error fetching IBM Cloud token: {e}")
+            raise RuntimeError(f"Network error during IBM Cloud token exchange: {e}") from e
 
 
 async def fetch_mcsp_token(api_key: str, auth_url: str) -> str:
@@ -166,16 +165,15 @@ async def fetch_mcsp_token(api_key: str, auth_url: str) -> str:
     Raises:
         RuntimeError: If token exchange fails
     """
-    async def _fetch():
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
-        json_data = {
-            'apikey': api_key
-        }
-
-        async with httpx.AsyncClient(verify=True) as client:
+    async with httpx.AsyncClient(verify=True) as client:
+        async def _fetch():
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+            json_data = {
+                'apikey': api_key
+            }
             logger.debug(f"Fetching MCSP token from {auth_url}")
             response = await client.post(auth_url, headers=headers, json=json_data, timeout=30.0)
             response.raise_for_status()
@@ -187,14 +185,14 @@ async def fetch_mcsp_token(api_key: str, auth_url: str) -> str:
             else:
                 raise RuntimeError("'token' not found in MCSP response")
 
-    try:
-        return await _retry_with_backoff(_fetch)
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Error fetching MCSP token: {e}")
-        raise RuntimeError(f"MCSP token exchange failed ({e.response.status_code}): {e.response.text}") from e
-    except httpx.RequestError as e:
-        logger.error(f"Request error fetching MCSP token: {e}")
-        raise RuntimeError(f"Network error during MCSP token exchange: {e}") from e
+        try:
+            return await _retry_with_backoff(_fetch)
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Error fetching MCSP token: {e}")
+            raise RuntimeError(f"MCSP token exchange failed ({e.response.status_code}): {e.response.text}") from e
+        except httpx.RequestError as e:
+            logger.error(f"Request error fetching MCSP token: {e}")
+            raise RuntimeError(f"Network error during MCSP token exchange: {e}") from e
 
 
 async def fetch_cp4d_token(username: str, password: str, auth_url: str, ssl_verify: bool = True) -> str:
@@ -214,20 +212,19 @@ async def fetch_cp4d_token(username: str, password: str, auth_url: str, ssl_veri
     Raises:
         RuntimeError: If token exchange fails
     """
-    async def _fetch():
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
-        json_data = {
-            'username': username,
-            'password': password
-        }
-
-        async with httpx.AsyncClient(verify=ssl_verify) as client:
+    if not ssl_verify:
+        logger.warning("SSL verification is disabled for CP4D authentication")
+    async with httpx.AsyncClient(verify=ssl_verify) as client:
+        async def _fetch():
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+            json_data = {
+                'username': username,
+                'password': password
+            }
             logger.debug(f"Fetching CP4D token from {auth_url}")
-            if not ssl_verify:
-                logger.warning("SSL verification is disabled for CP4D authentication")
             response = await client.post(auth_url, headers=headers, json=json_data, timeout=30.0)
             response.raise_for_status()
             token_data = response.json()
@@ -238,14 +235,14 @@ async def fetch_cp4d_token(username: str, password: str, auth_url: str, ssl_veri
             else:
                 raise RuntimeError("'token' not found in CP4D response")
 
-    try:
-        return await _retry_with_backoff(_fetch)
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Error fetching CP4D token: {e}")
-        raise RuntimeError(f"CP4D token exchange failed ({e.response.status_code}): {e.response.text}") from e
-    except httpx.RequestError as e:
-        logger.error(f"Request error fetching CP4D token: {e}")
-        raise RuntimeError(f"Network error during CP4D token exchange: {e}") from e
+        try:
+            return await _retry_with_backoff(_fetch)
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Error fetching CP4D token: {e}")
+            raise RuntimeError(f"CP4D token exchange failed ({e.response.status_code}): {e.response.text}") from e
+        except httpx.RequestError as e:
+            logger.error(f"Request error fetching CP4D token: {e}")
+            raise RuntimeError(f"Network error during CP4D token exchange: {e}") from e
 
 
 async def exchange_api_key(api_key: str, auth_url: str, ssl_verify: bool = True) -> str:
@@ -322,32 +319,35 @@ async def exchange_refresh_artifact(
     if normalized_style not in ("iam", "isv"):
         raise ValueError(f"Unsupported refresh-artifact exchange grant_style: {grant_style!r}")
 
-    async def _fetch() -> Tuple[str, int]:
-        headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json',
-        }
-        data = {
-            'grant_type': grant_type,
-            'refresh_token': refresh_artifact,
-        }
+    # Build request headers and body once — fixed for all retry attempts.
+    # client_secret is consumed here and deleted immediately so it does not
+    # linger in memory across the retry loop or the network call.
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+    }
+    data: dict = {
+        'grant_type': grant_type,
+        'refresh_token': refresh_artifact,
+    }
 
-        if normalized_style == "iam":
-            # Confidential client authenticates via HTTP Basic; API client is the receiver.
-            data['receiver_client_ids'] = audience or client_id
-            basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-            del client_secret  # clear raw secret from local scope as soon as it is no longer needed
-            headers['Authorization'] = f"Basic {basic}"
-        else:  # isv
-            data['client_id'] = client_id
-            data['client_secret'] = client_secret
-            del client_secret  # clear raw secret from local scope as soon as it is no longer needed
-            if audience:
-                data['audience'] = audience
+    if normalized_style == "iam":
+        # Confidential client authenticates via HTTP Basic; API client is the receiver.
+        data['receiver_client_ids'] = audience or client_id
+        basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        del client_secret  # clear raw secret as soon as it is encoded
+        headers['Authorization'] = f"Basic {basic}"
+    else:  # isv
+        data['client_id'] = client_id
+        data['client_secret'] = client_secret
+        del client_secret  # clear raw secret as soon as it is copied into form data
+        if audience:
+            data['audience'] = audience
 
-        async with httpx.AsyncClient(verify=ssl_verify) as client:
+    async with httpx.AsyncClient(verify=ssl_verify) as http_client:
+        async def _fetch() -> Tuple[str, int]:
             logger.debug(f"Exchanging refresh artifact at {idp_token_endpoint} (grant_style={normalized_style})")
-            response = await client.post(idp_token_endpoint, headers=headers, data=data, timeout=30.0)
+            response = await http_client.post(idp_token_endpoint, headers=headers, data=data, timeout=30.0)
             response.raise_for_status()
             token_data = response.json()
 
@@ -367,13 +367,13 @@ async def exchange_refresh_artifact(
             logger.debug("Successfully exchanged refresh artifact for access token")
             return access_token, expires_in
 
-    try:
-        return await _retry_with_backoff(_fetch)
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Error exchanging refresh artifact: {e}")
-        raise RuntimeError(
-            f"Refresh-artifact exchange failed ({e.response.status_code}): {e.response.text}"
-        ) from e
-    except httpx.RequestError as e:
-        logger.error(f"Request error exchanging refresh artifact: {e}")
-        raise RuntimeError(f"Network error during refresh-artifact exchange: {e}") from e
+        try:
+            return await _retry_with_backoff(_fetch)
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Error exchanging refresh artifact: {e}")
+            raise RuntimeError(
+                f"Refresh-artifact exchange failed ({e.response.status_code}): {e.response.text}"
+            ) from e
+        except httpx.RequestError as e:
+            logger.error(f"Request error exchanging refresh artifact: {e}")
+            raise RuntimeError(f"Network error during refresh-artifact exchange: {e}") from e

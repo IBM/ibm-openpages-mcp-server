@@ -99,6 +99,7 @@ class ResourceHandlers:
         
         # Cache for configured type IDs (to avoid repeated API calls)
         self._configured_types_cache: Optional[set] = None
+        self._configured_types_cache_lock = asyncio.Lock()
         
         logger.info(f"ResourceHandlers initialized with formatted schema cache (max_size={self._schema_cache_max_size}, ttl={self._schema_cache_ttl}s)")
     
@@ -771,16 +772,14 @@ class ResourceHandlers:
         """
         relationships = []
         
-        # Get set of configured type IDs for filtering.
-        # _configured_types_cache is intentionally set without a lock: two concurrent
-        # callers may both see None and both call _get_configured_type_ids(), but the
-        # result is idempotent (same data) so the only cost is a redundant API call.
-        # Using a lock here would require an async lock across an await, adding latency
-        # for no correctness gain — the double-fetch is safe and self-correcting.
+        # Get set of configured type IDs for filtering, populating the cache on
+        # first call.  The lock ensures only one coroutine calls the OpenPages API
+        # even when multiple requests arrive concurrently before the cache is warm.
         if configured_types is None:
-            if self._configured_types_cache is None:
-                self._configured_types_cache = await self._get_configured_type_ids()
-                logger.debug(f"Cached {len(self._configured_types_cache)} configured type IDs for relationship filtering")
+            async with self._configured_types_cache_lock:
+                if self._configured_types_cache is None:
+                    self._configured_types_cache = await self._get_configured_type_ids()
+                    logger.debug(f"Cached {len(self._configured_types_cache)} configured type IDs for relationship filtering")
             configured_types = self._configured_types_cache
         
         # Get associations from type definition (it's a flat array)

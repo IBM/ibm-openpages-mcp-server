@@ -465,12 +465,7 @@ class Settings(BaseSettings):
                 
                 return content
         except Exception as e:
-            # Use print to stderr to avoid polluting stdout in stdio mode
-            import sys
-            print(
-                f"Warning: Failed to read secret file {file_path}: {type(e).__name__}: {e}",
-                file=sys.stderr
-            )
+            logger.warning("Failed to read secret file %s: %s: %s", file_path, type(e).__name__, e)
         return None
     
     def _load_rabbitmq_credentials(self) -> None:
@@ -487,15 +482,13 @@ class Settings(BaseSettings):
         Note: Pydantic BaseSettings automatically loads environment variables into fields,
         but we need to explicitly check and load from files for SaaS deployments.
         """
-        import sys
-        
         # Check if environment variables are already loaded by Pydantic
         # If not set, try reading from secret files (SaaS mode)
         if not self.RABBITMQ_HOST:
             host = self._read_secret_file("RABBITMQ_HOST")
             if host:
                 self.RABBITMQ_HOST = host
-                print("Loaded RABBITMQ_HOST from secret file", file=sys.stderr)
+                logger.debug("Loaded RABBITMQ_HOST from secret file")
         
         # For port, check if it's still the default value and no env var was set
         if self.RABBITMQ_PORT == 5671 and not os.getenv("RABBITMQ_PORT"):
@@ -503,21 +496,21 @@ class Settings(BaseSettings):
             if port_str:
                 try:
                     self.RABBITMQ_PORT = int(port_str)
-                    print("Loaded RABBITMQ_PORT from secret file", file=sys.stderr)
+                    logger.debug("Loaded RABBITMQ_PORT from secret file")
                 except ValueError:
-                    print(f"Warning: Invalid port value in secret file: {port_str}", file=sys.stderr)
+                    logger.warning("Invalid port value in RABBITMQ_PORT secret file: %s", port_str)
         
         if not self.RABBITMQ_USER:
             user = self._read_secret_file("RABBITMQ_USER")
             if user:
                 self.RABBITMQ_USER = user
-                print("Loaded RABBITMQ_USER from secret file", file=sys.stderr)
+                logger.debug("Loaded RABBITMQ_USER from secret file")
         
         if not self.RABBITMQ_PASSWORD:
             password = self._read_secret_file("RABBITMQ_PASSWORD")
             if password:
                 self.RABBITMQ_PASSWORD = password
-                print("Loaded RABBITMQ_PASSWORD from secret file", file=sys.stderr)
+                logger.debug("Loaded RABBITMQ_PASSWORD from secret file")
     
     def get_rabbitmq_routing_key(self) -> str:
         """
@@ -556,8 +549,6 @@ class Settings(BaseSettings):
         Raises:
             ValueError: If mandatory settings are missing or invalid
         """
-        import sys
-        
         errors = []
         
         # Validate OpenPages base URL (mandatory)
@@ -621,97 +612,84 @@ class Settings(BaseSettings):
         # Validate log level
         valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         if self.LOG_LEVEL.upper() not in valid_log_levels:
-            print(
-                f"Warning: LOG_LEVEL '{self.LOG_LEVEL}' is not valid. "
-                f"Valid options are: {', '.join(valid_log_levels)}. "
-                f"Defaulting to INFO.",
-                file=sys.stderr
+            logger.warning(
+                "LOG_LEVEL '%s' is not valid. Valid options are: %s. Defaulting to INFO.",
+                self.LOG_LEVEL, ", ".join(valid_log_levels)
             )
             self.LOG_LEVEL = "INFO"
         
         # Validate log format
         if self.LOG_FORMAT not in ["json", "text"]:
-            print(
-                f"Warning: LOG_FORMAT '{self.LOG_FORMAT}' is not valid. "
-                f"Valid options are: json, text. Defaulting to json.",
-                file=sys.stderr
+            logger.warning(
+                "LOG_FORMAT '%s' is not valid. Valid options are: json, text. Defaulting to json.",
+                self.LOG_FORMAT
             )
             self.LOG_FORMAT = "json"
         
         # Validate server mode
         if self.SERVER_MODE not in ["remote", "local"]:
-            print(
-                f"Warning: SERVER_MODE '{self.SERVER_MODE}' is not valid. "
-                f"Valid options are: remote, local. Defaulting to remote.",
-                file=sys.stderr
+            logger.warning(
+                "SERVER_MODE '%s' is not valid. Valid options are: remote, local. Defaulting to remote.",
+                self.SERVER_MODE
             )
             self.SERVER_MODE = "remote"
         
         # Validate tool exposure mode
         valid_exposure_modes = ["all", "ontology_based", "type_based"]
         if self.TOOL_EXPOSURE_MODE not in valid_exposure_modes:
-            print(
-                f"Warning: TOOL_EXPOSURE_MODE '{self.TOOL_EXPOSURE_MODE}' is not valid. "
-                f"Valid options are: {', '.join(valid_exposure_modes)}. "
-                f"Defaulting to ontology_based.",
-                file=sys.stderr
+            logger.warning(
+                "TOOL_EXPOSURE_MODE '%s' is not valid. Valid options are: %s. Defaulting to ontology_based.",
+                self.TOOL_EXPOSURE_MODE, ", ".join(valid_exposure_modes)
             )
             self.TOOL_EXPOSURE_MODE = "ontology_based"
         
         # Validate numeric settings have reasonable values
         if self.RATE_LIMIT_REQUESTS_PER_MINUTE < 1:
-            print(
-                f"Warning: RATE_LIMIT_REQUESTS_PER_MINUTE must be at least 1, got {self.RATE_LIMIT_REQUESTS_PER_MINUTE}. "
-                f"Defaulting to 60.",
-                file=sys.stderr
+            logger.warning(
+                "RATE_LIMIT_REQUESTS_PER_MINUTE must be at least 1, got %d. Defaulting to 60.",
+                self.RATE_LIMIT_REQUESTS_PER_MINUTE
             )
             self.RATE_LIMIT_REQUESTS_PER_MINUTE = 60
         
         if self.RATE_LIMIT_BURST_SIZE < 1:
-            print(
-                f"Warning: RATE_LIMIT_BURST_SIZE must be at least 1, got {self.RATE_LIMIT_BURST_SIZE}. "
-                f"Defaulting to 10.",
-                file=sys.stderr
+            logger.warning(
+                "RATE_LIMIT_BURST_SIZE must be at least 1, got %d. Defaulting to 10.",
+                self.RATE_LIMIT_BURST_SIZE
             )
             self.RATE_LIMIT_BURST_SIZE = 10
         
         if self.SCHEMA_CACHE_MAX_SIZE < 1:
-            print(
-                f"Warning: SCHEMA_CACHE_MAX_SIZE must be at least 1, got {self.SCHEMA_CACHE_MAX_SIZE}. "
-                f"Defaulting to 200.",
-                file=sys.stderr
+            logger.warning(
+                "SCHEMA_CACHE_MAX_SIZE must be at least 1, got %d. Defaulting to 200.",
+                self.SCHEMA_CACHE_MAX_SIZE
             )
             self.SCHEMA_CACHE_MAX_SIZE = 200
         
         if self.SCHEMA_CACHE_TTL < 0:
-            print(
-                f"Warning: SCHEMA_CACHE_TTL must be non-negative, got {self.SCHEMA_CACHE_TTL}. "
-                f"Defaulting to 3600.",
-                file=sys.stderr
+            logger.warning(
+                "SCHEMA_CACHE_TTL must be non-negative, got %d. Defaulting to 3600.",
+                self.SCHEMA_CACHE_TTL
             )
             self.SCHEMA_CACHE_TTL = 3600
         
         if self.MCP_SESSION_TTL < 1:
-            print(
-                f"Warning: MCP_SESSION_TTL must be at least 1, got {self.MCP_SESSION_TTL}. "
-                f"Defaulting to 3600.",
-                file=sys.stderr
+            logger.warning(
+                "MCP_SESSION_TTL must be at least 1, got %d. Defaulting to 3600.",
+                self.MCP_SESSION_TTL
             )
             self.MCP_SESSION_TTL = 3600
         
         if self.MCP_SESSION_MAX_COUNT < 1:
-            print(
-                f"Warning: MCP_SESSION_MAX_COUNT must be at least 1, got {self.MCP_SESSION_MAX_COUNT}. "
-                f"Defaulting to 1000.",
-                file=sys.stderr
+            logger.warning(
+                "MCP_SESSION_MAX_COUNT must be at least 1, got %d. Defaulting to 1000.",
+                self.MCP_SESSION_MAX_COUNT
             )
             self.MCP_SESSION_MAX_COUNT = 1000
         
         if self.MCP_SESSION_CLEANUP_INTERVAL < 1:
-            print(
-                f"Warning: MCP_SESSION_CLEANUP_INTERVAL must be at least 1, got {self.MCP_SESSION_CLEANUP_INTERVAL}. "
-                f"Defaulting to 300.",
-                file=sys.stderr
+            logger.warning(
+                "MCP_SESSION_CLEANUP_INTERVAL must be at least 1, got %d. Defaulting to 300.",
+                self.MCP_SESSION_CLEANUP_INTERVAL
             )
             self.MCP_SESSION_CLEANUP_INTERVAL = 300
         
@@ -728,25 +706,20 @@ class Settings(BaseSettings):
             error_message += "See .env.example for a complete configuration template.\n"
             error_message += "=" * 80 + "\n"
             
-            # Print to stderr for visibility
-            print(error_message, file=sys.stderr)
+            logger.error(error_message)
             raise ValueError("Configuration validation failed. See error messages above.")
     
     def _load_object_types(self) -> None:
         """
         Load object types from JSON configuration file
-        
+
         Reads the object_types.json file and populates the OPENPAGES_OBJECT_TYPES
         list with configured object type definitions. Also loads global settings
         like output format.
-        
+
         This method is designed to be non-blocking - if the configuration file
         is missing or invalid, the server will still start with default settings.
-        
-        Note: Uses sys.stderr for output to avoid polluting stdout in stdio mode.
         """
-        import sys
-        
         try:
             # Get the path to the object_types.json file
             config_path = pathlib.Path(self.OBJECT_TYPES_CONFIG_PATH)
@@ -767,19 +740,18 @@ class Settings(BaseSettings):
                         break
                 
                 if not config_path:
-                    # Use stderr to avoid polluting stdout in stdio mode
-                    print(
-                        f"WARNING: Object types configuration not found at {self.OBJECT_TYPES_CONFIG_PATH}. "
-                        f"Server will start with limited functionality (query tool only).",
-                        file=sys.stderr
+                    logger.warning(
+                        "Object types configuration not found at %s. "
+                        "Server will start with limited functionality (query tool only).",
+                        self.OBJECT_TYPES_CONFIG_PATH
                     )
                     return
                     
             if not config_path.exists():
-                print(
-                    f"WARNING: Object types configuration not found at {config_path}. "
-                    f"Server will start with limited functionality (query tool only).",
-                    file=sys.stderr
+                logger.warning(
+                    "Object types configuration not found at %s. "
+                    "Server will start with limited functionality (query tool only).",
+                    config_path
                 )
                 return
                 
@@ -790,10 +762,10 @@ class Settings(BaseSettings):
                     
                     # Validate that config_data is a dictionary
                     if not isinstance(config_data, dict):
-                        print(
-                            f"Warning: Object types configuration file must contain a JSON object, got {type(config_data).__name__}. "
-                            f"Using default settings.",
-                            file=sys.stderr
+                        logger.warning(
+                            "Object types configuration file must contain a JSON object, got %s. "
+                            "Using default settings.",
+                            type(config_data).__name__
                         )
                         return
                     
@@ -801,12 +773,11 @@ class Settings(BaseSettings):
                     object_types = config_data.get('object_types', [])
                     if isinstance(object_types, list):
                         self.OPENPAGES_OBJECT_TYPES = object_types
-                        print(f"Loaded {len(self.OPENPAGES_OBJECT_TYPES)} object types from {config_path}", file=sys.stderr)
+                        logger.debug("Loaded %d object types from %s", len(self.OPENPAGES_OBJECT_TYPES), config_path)
                     else:
-                        print(
-                            f"Warning: 'object_types' in configuration file must be a list, got {type(object_types).__name__}. "
-                            f"Using empty list.",
-                            file=sys.stderr
+                        logger.warning(
+                            "'object_types' in configuration file must be a list, got %s. Using empty list.",
+                            type(object_types).__name__
                         )
                         self.OPENPAGES_OBJECT_TYPES = []
                     
@@ -814,10 +785,10 @@ class Settings(BaseSettings):
                     global_settings = config_data.get('global_settings', {})
                     
                     if not isinstance(global_settings, dict):
-                        print(
-                            f"Warning: 'global_settings' in configuration file must be an object, got {type(global_settings).__name__}. "
-                            f"Using default global settings.",
-                            file=sys.stderr
+                        logger.warning(
+                            "'global_settings' in configuration file must be an object, got %s. "
+                            "Using default global settings.",
+                            type(global_settings).__name__
                         )
                         global_settings = {}
                     
@@ -825,12 +796,12 @@ class Settings(BaseSettings):
                     output_format = global_settings.get('output_format', 'json')
                     if output_format in ['json', 'text']:
                         self.OUTPUT_FORMAT = output_format
-                        print(f"Loaded global output format: {self.OUTPUT_FORMAT}", file=sys.stderr)
+                        logger.debug("Loaded global output format: %s", self.OUTPUT_FORMAT)
                     else:
-                        print(
-                            f"Warning: Invalid output_format '{output_format}' in configuration file. "
-                            f"Valid options are: json, text. Using default: json",
-                            file=sys.stderr
+                        logger.warning(
+                            "Invalid output_format '%s' in configuration file. "
+                            "Valid options are: json, text. Using default: json",
+                            output_format
                         )
                         self.OUTPUT_FORMAT = 'json'
                     
@@ -839,12 +810,12 @@ class Settings(BaseSettings):
                         namespace = global_settings['namespace']
                         if isinstance(namespace, str):
                             self.NAMESPACE = namespace
-                            print(f"Loaded global namespace: {self.NAMESPACE}", file=sys.stderr)
+                            logger.debug("Loaded global namespace: %s", self.NAMESPACE)
                         else:
-                            print(
-                                f"Warning: 'namespace' in configuration file must be a string, got {type(namespace).__name__}. "
-                                f"Using empty namespace.",
-                                file=sys.stderr
+                            logger.warning(
+                                "'namespace' in configuration file must be a string, got %s. "
+                                "Using empty namespace.",
+                                type(namespace).__name__
                             )
                     
                     # Load tool exposure mode if present
@@ -853,12 +824,12 @@ class Settings(BaseSettings):
                         valid_modes = ['all', 'ontology_based', 'type_based']
                         if tool_mode in valid_modes:
                             self.TOOL_EXPOSURE_MODE = tool_mode
-                            print(f"Loaded tool exposure mode: {self.TOOL_EXPOSURE_MODE}", file=sys.stderr)
+                            logger.debug("Loaded tool exposure mode: %s", self.TOOL_EXPOSURE_MODE)
                         else:
-                            print(
-                                f"Warning: Invalid tool_exposure_mode '{tool_mode}' in configuration file. "
-                                f"Valid options are: {', '.join(valid_modes)}. Using default: ontology_based",
-                                file=sys.stderr
+                            logger.warning(
+                                "Invalid tool_exposure_mode '%s' in configuration file. "
+                                "Valid options are: %s. Using default: ontology_based",
+                                tool_mode, ", ".join(valid_modes)
                             )
                     
                     # Load include_all_object_types if present
@@ -866,32 +837,32 @@ class Settings(BaseSettings):
                         include_all = global_settings['include_all_object_types']
                         if isinstance(include_all, bool):
                             self.INCLUDE_ALL_OBJECT_TYPES = include_all
-                            print(f"Loaded include_all_object_types: {self.INCLUDE_ALL_OBJECT_TYPES}", file=sys.stderr)
+                            logger.debug("Loaded include_all_object_types: %s", self.INCLUDE_ALL_OBJECT_TYPES)
                         else:
-                            print(
-                                f"Warning: 'include_all_object_types' in configuration file must be a boolean, got {type(include_all).__name__}. "
-                                f"Using default: False",
-                                file=sys.stderr
+                            logger.warning(
+                                "'include_all_object_types' in configuration file must be a boolean, got %s. "
+                                "Using default: False",
+                                type(include_all).__name__
                             )
                     
                 except json.JSONDecodeError as e:
-                    print(
-                        f"Error: Failed to parse object types configuration file as JSON: {e}. "
-                        f"Server will start with default settings. "
-                        f"Please check the file syntax at: {config_path}",
-                        file=sys.stderr
+                    logger.error(
+                        "Failed to parse object types configuration file as JSON: %s. "
+                        "Server will start with default settings. "
+                        "Please check the file syntax at: %s",
+                        e, config_path
                     )
                 except Exception as e:
-                    print(
-                        f"Error: Unexpected error while reading configuration file: {e}. "
-                        f"Server will start with default settings.",
-                        file=sys.stderr
+                    logger.error(
+                        "Unexpected error while reading configuration file: %s. "
+                        "Server will start with default settings.",
+                        e
                     )
         except Exception as e:
-            print(
-                f"Error: Failed to load object types configuration: {e}. "
-                f"Server will start with default settings.",
-                file=sys.stderr
+            logger.error(
+                "Failed to load object types configuration: %s. "
+                "Server will start with default settings.",
+                e
             )
 
 # Create settings instance with default .env file

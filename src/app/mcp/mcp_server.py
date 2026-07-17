@@ -185,7 +185,7 @@ class MCPServer:
 
 DOCUMENTATION: Read openpages://docs/query_syntax for complete syntax, examples, and best practices.
 
-⚠️ MANDATORY WORKFLOW FOR JOIN QUERIES:
+[WARNING] MANDATORY WORKFLOW FOR JOIN QUERIES:
 
 When user asks to find objects "under" or "within" another object (e.g., "action items under risk RB-01-Risk00189"):
 
@@ -211,7 +211,7 @@ When user asks to find objects "under" or "within" another object (e.g., "action
 - Resource ID must be NUMERIC (no quotes): WHERE [SOXRisk].[Resource ID] = 8228
 - Use exact field names from schema: [OPSS-AI:Status], not [Status]
 
-💡 **RECOMMENDED: Use ANCESTOR for multi-level hierarchies**
+[TIP] **RECOMMENDED: Use ANCESTOR for multi-level hierarchies**
 - Simpler: No need to know intermediate object types
 - Single query: Gets all descendants regardless of depth
 - Example: Risk→Task works even if path is Risk→Control→Task
@@ -229,15 +229,15 @@ Result: Fields are [OPSS-AI:Status], [OPSS-AI:Due Date], [OPSS-AI:Assignee]
 Step 3: Execute ANCESTOR query with numeric Resource ID
 Query: SELECT [SOXTask].[Resource ID], [SOXTask].[Name], [SOXTask].[OPSS-AI:Status] FROM [SOXRisk] JOIN [SOXTask] ON ANCESTOR([SOXRisk]) WHERE [SOXRisk].[Resource ID] = 8228
 
-⚠️ COMMON MISTAKES TO AVOID:
-1. ❌ Using Name in ANCESTOR: WHERE [SOXRisk].[Name] = 'RB-01-Risk00189'
-   ✅ Use Resource ID: WHERE [SOXRisk].[Resource ID] = 8228
-2. ❌ Quotes around Resource ID: WHERE [SOXRisk].[Resource ID] = '8228'
-   ✅ No quotes (numeric): WHERE [SOXRisk].[Resource ID] = 8228
-3. ❌ Assuming field names: [Status], [Due Date]
-   ✅ Read schema first: [OPSS-AI:Status], [OPSS-AI:Due Date]
-4. ❌ Claiming relationships exist without checking
-   ✅ Read catalog/schema to verify relationships
+[WARNING] COMMON MISTAKES TO AVOID:
+1. [NO]  Using Name in ANCESTOR: WHERE [SOXRisk].[Name] = 'RB-01-Risk00189'
+   [YES] Use Resource ID: WHERE [SOXRisk].[Resource ID] = 8228
+2. [NO]  Quotes around Resource ID: WHERE [SOXRisk].[Resource ID] = '8228'
+   [YES] No quotes (numeric): WHERE [SOXRisk].[Resource ID] = 8228
+3. [NO]  Assuming field names: [Status], [Due Date]
+   [YES] Read schema first: [OPSS-AI:Status], [OPSS-AI:Due Date]
+4. [NO]  Claiming relationships exist without checking
+   [YES] Read catalog/schema to verify relationships
 
 SCHEMA WORKFLOW: Read openpages://catalog/object_types to discover available types (format: {{"types":[{{"name":"SOXTask","label":"Action Item"}}]}}). For relationships between types, read openpages://catalog/relationships (format: {{"rels":[{{"type":"SOXTask","parent":["SOXIssue"],"child":["SOXDocument"]}}]}}). For detailed field information, read openpages://schema/{{ObjectType}}. Cache for the session.
 
@@ -278,11 +278,11 @@ FROM [ObjectType]
 GROUP BY [ObjectType].[Status]
 ORDER BY COUNT(*) DESC
 
-⚠️ COUNT Limitation: Cannot be used with JOIN operations (see RESTRICTIONS)
+[WARNING] COUNT Limitation: Cannot be used with JOIN operations (see RESTRICTIONS)
 
 ## HIERARCHICAL JOINS
 
-⚠️ CRITICAL: Read openpages://catalog/relationships or openpages://schema/{{ObjectType}} BEFORE constructing JOIN queries!
+[CRITICAL] Read openpages://catalog/relationships or openpages://schema/{{ObjectType}} BEFORE constructing JOIN queries!
 
 The relationships catalog shows minimal relationship info: {{"direction": "parent|child", "type": "TargetType"}}
 
@@ -297,12 +297,12 @@ DECISION LOGIC - When to use PARENT vs ANCESTOR:
    - **PREFER ANCESTOR** - Simpler, no need to know intermediate types
    - Alternative: Chain multiple PARENT joins (complex, requires knowing all intermediate types)
 
-💡 ANCESTOR Benefits:
+[TIP] ANCESTOR Benefits:
 - Works without knowing intermediate object types
 - Single query for all descendants at any depth
 - Simpler to construct and maintain
 
-⚠️ NOTE: DESCENDANT is NOT supported. Use ANCESTOR instead for multi-level hierarchies.
+[NOTE] DESCENDANT is NOT supported. Use ANCESTOR instead for multi-level hierarchies.
 
 SYNTAX PATTERNS:
 
@@ -319,7 +319,7 @@ FROM [ParentType] JOIN [ChildType] ON ANCESTOR([ParentType]) WHERE [ParentType].
 Example: FROM [ObjectTypeA] JOIN [ObjectTypeC] ON ANCESTOR([ObjectTypeA]) WHERE [ObjectTypeA].[Resource ID] = 12345
 Gets all ObjectTypeC under ObjectTypeA, regardless of intermediate levels (ObjectTypeB, etc.)
 
-⚠️ ANCESTOR RESTRICTIONS:
+[WARNING] ANCESTOR RESTRICTIONS:
   - MUST filter by Resource ID: WHERE [ParentType].[Resource ID] = numeric_id (NO quotes, NO Name field)
   - Resource ID must be NUMERIC without quotes (e.g., 8228, not '8228')
   - Cannot use Name field: WHERE [ParentType].[Name] = 'xyz' will FAIL
@@ -334,7 +334,7 @@ Direct child: FROM [ObjectTypeA] JOIN [ObjectTypeB] ON PARENT([ObjectTypeA])
 Indirect children: FROM [ObjectTypeA] JOIN [ObjectTypeC] ON ANCESTOR([ObjectTypeA]) WHERE [ObjectTypeA].[Resource ID] = 1234
 With filters: FROM [ObjectTypeA] JOIN [ObjectTypeB] ON PARENT([ObjectTypeA]) WHERE [ObjectTypeA].[Status] = 'Active'
 
-⚠️ CRITICAL REMINDERS:
+[CRITICAL] REMINDERS:
 - ANCESTOR requires Resource ID (numeric, no quotes): WHERE [Type].[Resource ID] = 8228
 - PARENT/CHILD can use Name: WHERE [Type].[Name] = 'name-value'
 - Always read schema BEFORE constructing queries to get exact field names
@@ -405,7 +405,7 @@ NOT Supported:
             },
             {
                 "name": "get_resource",
-                "description": "Get a resource by its URI. Resources include object type schemas (openpages://schema/{ObjectType}), the object types catalog (openpages://catalog/object_types), and the object relationships catalog (openpages://catalog/relationships). ⚠️ CRITICAL: You MUST call this tool to get exact field names BEFORE constructing ANY query. Field names vary by instance and may include field group prefixes (e.g., [OPSS-Iss:Status]). DO NOT assume field names - always verify against the schema. This tool provides the same information as the resources/read endpoint for MCP clients that cannot use that endpoint. 💡 PERFORMANCE TIP: Start with mode='compact' for 5-10x faster response. Automatically switch to mode='full' if user asks about fields not in compact schema or needs enum values.",
+                "description": "Get a resource by its URI. Resources include object type schemas (openpages://schema/{ObjectType}), the object types catalog (openpages://catalog/object_types), and the object relationships catalog (openpages://catalog/relationships). [CRITICAL] You MUST call this tool to get exact field names BEFORE constructing ANY query. Field names vary by instance and may include field group prefixes (e.g., [OPSS-Iss:Status]). DO NOT assume field names - always verify against the schema. This tool provides the same information as the resources/read endpoint for MCP clients that cannot use that endpoint. [TIP] PERFORMANCE TIP: Start with mode='compact' for 5-10x faster response. Automatically switch to mode='full' if user asks about fields not in compact schema or needs enum values.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -436,7 +436,7 @@ NOT Supported:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "OpenPages query language statement. ⚠️ CRITICAL: NEVER use aliases or AS keyword - they are NOT supported. ✅ ALWAYS use full object type names: [ObjectType].[FieldName] everywhere in the query. ⚠️ You MUST call get_resource tool BEFORE constructing this query to get exact field names. Field names are case-sensitive and may include field group prefixes. MUST enclose all entity names in square brackets. WRONG: FROM [ObjectTypeA] AS [c] | CORRECT: FROM [ObjectTypeA]. Example: SELECT [ObjectType].[Resource ID], [ObjectType].[Name] FROM [ObjectType] JOIN [OtherType] ON PARENT([ObjectType]) WHERE [ObjectType].[Group-Name:Field-Name]= 'Active'"
+                            "description": "OpenPages query language statement. [CRITICAL] NEVER use aliases or AS keyword - they are NOT supported. [YES]  ALWAYS use full object type names: [ObjectType].[FieldName] everywhere in the query. [WARNING] You MUST call get_resource tool BEFORE constructing this query to get exact field names. Field names are case-sensitive and may include field group prefixes. MUST enclose all entity names in square brackets. WRONG: FROM [ObjectTypeA] AS [c] | CORRECT: FROM [ObjectTypeA]. Example: SELECT [ObjectType].[Resource ID], [ObjectType].[Name] FROM [ObjectType] JOIN [OtherType] ON PARENT([ObjectType]) WHERE [ObjectType].[Group-Name:Field-Name]= 'Active'"
                         },
                         "offset": {
                             "type": "integer",
@@ -652,15 +652,15 @@ Accepts optional context variables.""",
                     },
                     "primaryParentId": {
                         "type": "string",
-                        "description": "🔴 REQUIRED FOR NEW OBJECTS (unless using copy_from): The main hierarchical parent (typically for folder location). Supports: Resource ID (e.g., '10101'), full path (e.g., '/_op_sox/Project/Default/Folder'), or use primaryParentType+primaryParentName instead. For ADDITIONAL/SECONDARY parents, use associateParent_* fields. When creating a new object, you MUST provide either this field OR both primaryParentType+primaryParentName OR use copy_from parameter."
+                        "description": "[REQUIRED] FOR NEW OBJECTS (unless using copy_from): The main hierarchical parent (typically for folder location). Supports: Resource ID (e.g., '10101'), full path (e.g., '/_op_sox/Project/Default/Folder'), or use primaryParentType+primaryParentName instead. For ADDITIONAL/SECONDARY parents, use associateParent_* fields. When creating a new object, you MUST provide either this field OR both primaryParentType+primaryParentName OR use copy_from parameter."
                     },
                     "primaryParentType": {
                         "type": "string",
-                        "description": "🔴 REQUIRED FOR NEW OBJECTS (with primaryParentName): Type of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentName if not using primaryParentId. For additional parents, use associateParent_* fields. Example: 'SOXBusEntity', 'SOXProcess'"
+                        "description": "[REQUIRED] FOR NEW OBJECTS (with primaryParentName): Type of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentName if not using primaryParentId. For additional parents, use associateParent_* fields. Example: 'SOXBusEntity', 'SOXProcess'"
                     },
                     "primaryParentName": {
                         "type": "string",
-                        "description": "🔴 REQUIRED FOR NEW OBJECTS (with primaryParentType): Name of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentType if not using primaryParentId. For additional parents, use associateParent_* fields."
+                        "description": "[REQUIRED] FOR NEW OBJECTS (with primaryParentType): Name of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentType if not using primaryParentId. For additional parents, use associateParent_* fields."
                     },
                     "title": {
                         "type": "string",
@@ -672,7 +672,7 @@ Accepts optional context variables.""",
                     },
                     "fields": {
                         "type": "object",
-                        "description": "🔴 SCHEMA-BASED FIELDS ONLY: Dynamic field values as key-value pairs. ALL field names and values MUST come from the object type's schema (retrieved via get_resource). Field names must match exactly as defined in the schema (including any prefixes). For ENUM_TYPE fields, use exact 'name' values from the schema's enum_values array. Example: {'FieldGroup:FieldName1': 'StringValue', 'FieldGroup:FieldName2': 'EnumValue', 'FieldGroup:FieldName3': 'user@example.com'}",
+                        "description": "[REQUIRED] SCHEMA-BASED FIELDS ONLY: Dynamic field values as key-value pairs. ALL field names and values MUST come from the object type's schema (retrieved via get_resource). Field names must match exactly as defined in the schema (including any prefixes). For ENUM_TYPE fields, use exact 'name' values from the schema's enum_values array. Example: {'FieldGroup:FieldName1': 'StringValue', 'FieldGroup:FieldName2': 'EnumValue', 'FieldGroup:FieldName3': 'user@example.com'}",
                         "additionalProperties": True
                     },
                     **context_properties
@@ -717,7 +717,7 @@ Accepts optional context variables.""",
         # Add associate tool
         self.tools.append({
             "name": associate_tool_name,
-            "description": f"Associate objects in OpenPages using parent/child relationships. ⚠️ CRITICAL: You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
+            "description": f"Associate objects in OpenPages using parent/child relationships. [CRITICAL] You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -779,7 +779,7 @@ Accepts optional context variables.""",
         # Add dissociate tool
         self.tools.append({
             "name": dissociate_tool_name,
-            "description": f"Dissociate objects in OpenPages using parent/child relationships. ⚠️ CRITICAL: You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
+            "description": f"Dissociate objects in OpenPages using parent/child relationships. [CRITICAL] You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
