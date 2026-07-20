@@ -153,18 +153,23 @@ class RabbitMQClient:
                     logger.info(f"Loading client certificate: {client_cert}")
                     ssl_context.load_cert_chain(client_cert, client_key)
             
-            # Credentials passed as kwargs so they are never embedded in the URL string.
-            protocol = "amqps" if self.use_ssl else "amqp"
-            url = f"{protocol}://{self.host}:{self.port}/{self.virtual_host}"
-
+            # url=None forces make_url() to use URL.build() with the kwargs below.
+            # Passing a url string causes make_url() to discard login/password entirely.
+            # URL.build() also percent-encodes credentials internally — no quote() needed.
+            # reconnect_interval/fail_fast are ConnectionParameter values parsed from the
+            # URL query string, so they must be passed as strings, not Python bools/floats.
             self.connection = await connect_robust(
-                url,
+                url=None,
+                host=self.host,
+                port=self.port,
                 login=self.username,
                 password=self.password,
+                virtualhost=self.virtual_host,
+                ssl=self.use_ssl,
+                ssl_context=ssl_context,
                 timeout=30,
-                reconnect_interval=5.0,  # Production-grade: retry every 5 seconds
-                fail_fast=False,
-                ssl_context=ssl_context
+                reconnect_interval="5",
+                fail_fast="0",
             )
             
             # Add connection state callbacks for visibility
