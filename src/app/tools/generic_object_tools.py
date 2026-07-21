@@ -5,7 +5,9 @@ Provides tools for working with any object type in OpenPages
 
 import logging
 import json
+import re
 import urllib.parse
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from mcp.types import TextContent  # type: ignore
@@ -16,6 +18,30 @@ from src.app.observability.logger import get_logger, log_method_call
 
 # Configure logging
 logger = get_logger(__name__)
+
+
+def _validate_date_param(value: str, param_name: str) -> str:
+    """Validate a date parameter before interpolating it into an OQL query.
+
+    Accepts any value that Python's datetime.fromisoformat() can parse
+    (YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, etc.).  A valid ISO date string
+    contains only digits, dashes, colons, 'T', 'Z', and '+' — none of
+    which can escape an OQL string literal — so no additional escaping is
+    needed after this check passes.
+
+    Raises:
+        ValueError: If the value does not parse as a valid ISO date/datetime.
+    """
+    try:
+        datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        raise ValueError(
+            f"Invalid date value for '{param_name}': {value!r}. "
+            "Expected an ISO 8601 date (e.g. '2024-01-31') or "
+            "datetime (e.g. '2024-01-31T00:00:00')."
+        )
+    return value
+
 
 class GenericObjectTools(BaseTool):
     """
@@ -1186,20 +1212,24 @@ class GenericObjectTools(BaseTool):
             query += f" AND [Created By] = '{created_by_escaped}'"
         
         if creation_date_from:
-            query += f" AND [Creation Date] >= '{creation_date_from}'"
+            safe_creation_date_from = _validate_date_param(creation_date_from, "creation_date_from")
+            query += f" AND [Creation Date] >= '{safe_creation_date_from}'"
         
         if creation_date_to:
-            query += f" AND [Creation Date] <= '{creation_date_to}'"
+            safe_creation_date_to = _validate_date_param(creation_date_to, "creation_date_to")
+            query += f" AND [Creation Date] <= '{safe_creation_date_to}'"
         
         if last_modified_by_filter:
             last_modified_by_escaped = last_modified_by_filter.replace("'", "''")
             query += f" AND [Last Modified By] = '{last_modified_by_escaped}'"
         
         if last_modification_date_from:
-            query += f" AND [Last Modification Date] >= '{last_modification_date_from}'"
+            safe_last_modification_date_from = _validate_date_param(last_modification_date_from, "last_modification_date_from")
+            query += f" AND [Last Modification Date] >= '{safe_last_modification_date_from}'"
         
         if last_modification_date_to:
-            query += f" AND [Last Modification Date] <= '{last_modification_date_to}'"
+            safe_last_modification_date_to = _validate_date_param(last_modification_date_to, "last_modification_date_to")
+            query += f" AND [Last Modification Date] <= '{safe_last_modification_date_to}'"
         
         if location_filter:
             location_escaped = location_filter.replace('*', '%').replace("'", "''")
@@ -1301,21 +1331,32 @@ class GenericObjectTools(BaseTool):
         for sort_item in sort_fields:
             field = sort_item['field']
             order = sort_item['order']
-            
+
+            # Allowlist: order must be exactly ASC or DESC (case-insensitive)
+            order_upper = str(order).strip().upper()
+            if order_upper not in ("ASC", "DESC"):
+                raise ValueError(
+                    f"Invalid sort order '{order}': must be 'ASC' or 'DESC'"
+                )
+
+            # Sanitize field: strip any bracket characters to prevent injection
+            # into the [field] wrapper added below.
+            field = re.sub(r"[\[\]]", "", str(field))
+
             # Handle field names with group information in brackets
-            if isinstance(field, str) and '[' in field and field.endswith(']'):
-                field_name = field.split('[')[0].strip()
-                group_name = field[field.find('[')+1:field.find(']')]
+            if '[' in sort_item['field'] and sort_item['field'].endswith(']'):
+                field_name = sort_item['field'].split('[')[0].strip()
+                group_name = sort_item['field'][sort_item['field'].find('[')+1:sort_item['field'].find(']')]
                 full_field_name = f"{group_name}:{field_name}"
-                
+
                 # Check if this field exists in field_mapping
                 if full_field_name in field_mapping:
-                    sort_clauses.append(f"{field_mapping[full_field_name]} {order}")
+                    sort_clauses.append(f"{field_mapping[full_field_name]} {order_upper}")
                 else:
                     # Use the full field name with group prefix
-                    sort_clauses.append(f"[{full_field_name}] {order}")
+                    sort_clauses.append(f"[{full_field_name}] {order_upper}")
             else:
-                sort_clauses.append(f"[{field}] {order}")
+                sort_clauses.append(f"[{field}] {order_upper}")
                 
         query += f" ORDER BY {', '.join(sort_clauses)}" if sort_clauses else ""
         
