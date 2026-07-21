@@ -57,7 +57,7 @@ class BaseTool:
             # Use schema_builder cache if available, otherwise fetch directly
             if self.schema_builder:
                 logger.debug(f"Using schema_builder to get type definition for: {object_type}")
-                type_info = await self.schema_builder.get_type_definition(object_type)
+                type_info = await self.schema_builder.get_type_definition(object_type, auth_override=auth_override)
             else:
                 logger.info(f"Fetching type definition directly for: {object_type}")
                 type_info = await self.client.get_type_definition(object_type, auth_override=auth_override)
@@ -115,16 +115,18 @@ class BaseTool:
         field_name_lower = field_name.lower()
         return any(pattern in field_name_lower for pattern in user_patterns)
     
-    async def resolve_user_field(self, field_value: Any) -> Any:
+    async def resolve_user_field(self, field_value: Any, auth_override: Optional[str] = None) -> Any:
         """
         Resolve user field value from email to username using SCIM API
-        
+
         OpenPages content API accepts username directly. If email is provided,
         we resolve it to username using the SCIM Users API.
-        
+
         Args:
             field_value: Email address or username
-            
+            auth_override: Per-request user token so the SCIM lookup runs as the
+                requesting user (not the server account)
+
         Returns:
             Username (resolved from email if needed), or original value if resolution fails
         """
@@ -135,7 +137,7 @@ class BaseTool:
             # If it's an email address, resolve to username using SCIM API
             if "@" in field_value:
                 logger.debug(f"Resolving email to username: {field_value}")
-                username = await self.client.get_username_by_email(field_value)
+                username = await self.client.get_username_by_email(field_value, auth_override=auth_override)
                 
                 if username:
                     logger.info(f"Resolved email {field_value} to username: {username}")
@@ -152,7 +154,7 @@ class BaseTool:
             logger.error(f"Error resolving user field: {e}. Using original value.")
             return field_value
     
-    async def format_field_value(self, field_value: Any, field_type: str = "STRING_TYPE", field_name: str = "") -> Any:
+    async def format_field_value(self, field_value: Any, field_type: str = "STRING_TYPE", field_name: str = "", auth_override: Optional[str] = None) -> Any:
         """
         Format a field value based on its type with enhanced datatype support
         
@@ -173,7 +175,7 @@ class BaseTool:
         # Detect by field name patterns (Owner, User, Assignee, etc.)
         if field_type == "STRING_TYPE" and self.is_user_field(field_name):
             logger.debug(f"Detected user field: {field_name}")
-            return await self.resolve_user_field(field_value)
+            return await self.resolve_user_field(field_value, auth_override=auth_override)
             
         # Handle enum types (need to be objects with name property)
         if field_type == "ENUM_TYPE":

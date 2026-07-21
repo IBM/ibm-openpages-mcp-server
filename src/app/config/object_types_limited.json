@@ -1,0 +1,823 @@
+{
+  "_comment": "Field Group Support: You can now use '@GroupPrefix' to include all fields from a field group. For example, '@OPSS-Ctl' will include all fields with the OPSS-Ctl: prefix. Mix individual fields and groups as needed.",
+  "global_settings": {
+    "output_format": "json",
+    "output_format_description": "Global output format for upsert/delete/query_* tool responses. Options: 'text' (human-readable) or 'json' (structured, machine-readable for agents). Note: execute_openpages_query tool has its own 'format' parameter (table/json/list) for query-specific formatting.",
+    "namespace": "openpages",
+    "namespace_description": "Global namespace prefix for generic tools (e.g., delete_object becomes openpages_delete_object)",
+    "tool_exposure_mode": "ontology_based",
+    "tool_exposure_mode_description": "Controls which tools are exposed. Options: 'all' (both ontology_based and type_based), 'ontology_based' (only ontology based generic tools like upsert_object), 'type_based' (only type-specific tools like upsert_control)",
+    "include_all_object_types": false,
+    "include_all_object_types_description": "When true, includes ALL object types from OpenPages in schemas and resources, not just those configured in the object_types array. When false (default), only configured object types are included."
+  },
+  "object_types": [
+    {
+      "type_id": "SOXBusEntity",
+      "tool_prefix": "business_entity",
+      "display_name": "Business Entity",
+      "path_prefix": "Business Entities",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Business Entity in OpenPages. Business entities are abstract representations of your business structure.",
+        "query": "Search and retrieve Business Entities from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "SOXControl",
+      "tool_prefix": "control",
+      "display_name": "Control",
+      "path_prefix": "Controls",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a SOX control in OpenPages. Automatically determines whether to insert a new control or update an existing one based on provided identifiers (id, path, or name).",
+        "query": "Search and retrieve SOX controls from OpenPages. Supports filtering by name, owner, and custom field filters. Returns control details including ID, name, description, and selected fields."
+      },
+      "resource_fields": {
+        "include_all_fields": true,
+        "fields": [
+          "@OPSS-Ctl"
+        ]
+      },
+      "type_based_query_filters": {
+        "fields": [
+          "OPSS-Ctl:Status",
+          "OPSS-Ctl:Control Type",
+          "OPSS-Ctl:Frequency",
+          "OPSS-Ctl:Owner"
+        ]
+      }
+    },
+    {
+      "type_id": "SOXIssue",
+      "tool_prefix": "issue",
+      "display_name": "Issue",
+      "path_prefix": "Issue",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an issue in OpenPages. Automatically determines whether to insert a new issue or update an existing one based on provided identifiers (id, path, or name).",
+        "query": "Search and retrieve issues from OpenPages. Supports filtering by name, owner, and custom field filters. Returns issue details including ID, name, description, and selected fields."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": [
+          "@OPSS-Iss"
+        ]
+      },
+      "type_based_query_filters": {
+        "fields": [
+          "@OPSS-Iss"
+        ]
+      }
+    },
+    {
+      "type_id": "SOXRisk",
+      "tool_prefix": "risk",
+      "display_name": "Risk",
+      "path_prefix": "Risk",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a risk in OpenPages. Automatically determines whether to insert a new risk or update an existing one based on provided identifiers (id, path, or name).",
+        "query": "Search and retrieve risks from OpenPages. Supports filtering by name, owner, and custom field filters. Returns risk details including ID, name, description, and selected fields."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": [
+          "OPSS-Rsk:Status",
+          "OPSS-Rsk:RiskLevel",
+          "OPSS-Rsk:Owner"
+        ]
+      },
+      "type_based_query_filters": {
+        "fields": [
+          "OPSS-Rsk:Status",
+          "OPSS-Rsk:RiskLevel",
+          "OPSS-Rsk:Owner"
+        ]
+      }
+    },
+    {
+      "type_id": "SOXProcess",
+      "tool_prefix": "process",
+      "display_name": "Process",
+      "path_prefix": "Processes",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Process in OpenPages. Processes represent the major end-to-end business activities within a business entity that are subject to risk.",
+        "query": "Search and retrieve Processes from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "SOXSubprocess",
+      "tool_prefix": "subprocess",
+      "display_name": "Sub-Process",
+      "path_prefix": "Sub-Processes",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Sub-Process in OpenPages. A Sub-Process is a component of a Process used to divide Processes into smaller units for assessment purposes.",
+        "query": "Search and retrieve Sub-Processes from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Register",
+      "tool_prefix": "usecase",
+      "display_name": "Use Case",
+      "path_prefix": "Registers",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a usecase in OpenPages. Automatically determines whether to insert a new usecase or update an existing one based on provided identifiers (id, path, or name).",
+        "query": "Search and retrieve usecase from OpenPages. Supports filtering by name, owner, and custom field filters. Returns usecase details including ID, name, description, and selected fields."
+      },
+      "resource_fields": {
+        "include_all_fields": false
+      },
+      "type_based_query_filters": {}
+    },
+    {
+      "type_id": "LossEvent",
+      "tool_prefix": "loss_event",
+      "display_name": "Loss Event",
+      "path_prefix": "Loss Events",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Loss Event in OpenPages. Loss Events are used to track operational losses that occur in any part of an organization.",
+        "query": "Search and retrieve Loss Events from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "RiskAssessment",
+      "tool_prefix": "risk_assessment",
+      "display_name": "Risk Assessment",
+      "path_prefix": "Risk Assessments",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Risk Assessment in OpenPages. Risk assessments give you the ability to evaluate and report potential liabilities for a set of business entities or processes.",
+        "query": "Search and retrieve Risk Assessments from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Mandate",
+      "tool_prefix": "mandate",
+      "display_name": "Mandate",
+      "path_prefix": "Mandates",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Mandate in OpenPages. Mandates represent external items with which organizations need to comply, such as laws, regulations, and standards.",
+        "query": "Search and retrieve Mandates from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Requirement",
+      "tool_prefix": "requirement",
+      "display_name": "Requirement",
+      "path_prefix": "Requirements",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Requirement in OpenPages. The Requirement object details specific requirements found in the related Mandate or Sub-Mandate object.",
+        "query": "Search and retrieve Requirements from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Policy",
+      "tool_prefix": "policy",
+      "display_name": "Policy",
+      "path_prefix": "Policies",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Policy in OpenPages. A policy is a formally stated, authoritative guideline that directs decisions and behavior within an organization.",
+        "query": "Search and retrieve Policies from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Vendor",
+      "tool_prefix": "vendor",
+      "display_name": "Vendor",
+      "path_prefix": "Vendors",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Vendor in OpenPages. A Vendor represents a third-party company from which a firm procures goods or services.",
+        "query": "Search and retrieve Vendors from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Engagement",
+      "tool_prefix": "engagement",
+      "display_name": "Engagement",
+      "path_prefix": "Engagements",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an Engagement in OpenPages. An Engagement represents a single service that is provided by a Vendor.",
+        "query": "Search and retrieve Engagements from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Incident",
+      "tool_prefix": "incident",
+      "display_name": "Incident",
+      "path_prefix": "Incidents",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an Incident in OpenPages. An object that records an IT occurrence that has an actual or potentially adverse effect on your enterprise.",
+        "query": "Search and retrieve Incidents from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "KeyRiskIndicator",
+      "tool_prefix": "kri",
+      "display_name": "KRI",
+      "path_prefix": "KRIs",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a KRI in OpenPages. KRIs are components of the risk monitoring process and are used to provide leading or lagging indicators for potential risk conditions.",
+        "query": "Search and retrieve KRIs from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "KeyPerfIndicator",
+      "tool_prefix": "kpi",
+      "display_name": "KPI",
+      "path_prefix": "KPIs",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a KPI in OpenPages. KPIs (Key Performance Indicators) are components of the risk monitoring process.",
+        "query": "Search and retrieve KPIs from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "ScenarioAnalysis",
+      "tool_prefix": "scenario_analysis",
+      "display_name": "Scenario Analysis",
+      "path_prefix": "Scenario Analyses",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Scenario Analysis in OpenPages. Scenario Analysis is an assessment technique used to identify and measure the potential occurrence of operational risk events.",
+        "query": "Search and retrieve Scenario Analyses from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Resource",
+      "tool_prefix": "asset",
+      "display_name": "Asset",
+      "path_prefix": "Assets",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an Asset in OpenPages. The Asset object type is used to represent categories of personnel, applications, infrastructure, processes, facilities, and functions.",
+        "query": "Search and retrieve Assets from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "RiskEntity",
+      "tool_prefix": "system",
+      "display_name": "System",
+      "path_prefix": "Systems",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a System in OpenPages. System is a self-contained object type that groups multiple Baselines to represent elements in the operating environment.",
+        "query": "Search and retrieve Systems from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Vulnerability",
+      "tool_prefix": "vulnerability",
+      "display_name": "Vulnerability",
+      "path_prefix": "Vulnerabilities",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Vulnerability in OpenPages. Vulnerabilities give you the ability to track and assess security weaknesses.",
+        "query": "Search and retrieve Vulnerabilities from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Threat",
+      "tool_prefix": "threat",
+      "display_name": "Threat",
+      "path_prefix": "Threats",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Threat in OpenPages. A Threat is any circumstance or event with the potential to adversely impact organizational operations and assets.",
+        "query": "Search and retrieve Threats from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "AuditableEntity",
+      "tool_prefix": "auditable_entity",
+      "display_name": "Auditable Entity",
+      "path_prefix": "Auditable Entities",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an Auditable Entity in OpenPages. An Auditable Entity represents a single element of the Audit Universe.",
+        "query": "Search and retrieve Auditable Entities from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Model",
+      "tool_prefix": "model",
+      "display_name": "Model",
+      "path_prefix": "Models",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Model in OpenPages. Models represent analytical or computational models used in the organization.",
+        "query": "Search and retrieve Models from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "AIComponent",
+      "tool_prefix": "agent",
+      "display_name": "Agent",
+      "path_prefix": "Agents",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an Agent in OpenPages. The Agent object provides representation of the Agents within an organization.",
+        "query": "Search and retrieve Agents from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Obligation",
+      "tool_prefix": "obligation",
+      "display_name": "Obligation",
+      "path_prefix": "Obligations",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an Obligation in OpenPages.",
+        "query": "Search and retrieve Obligations from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Objective",
+      "tool_prefix": "objective",
+      "display_name": "Objective",
+      "path_prefix": "Objectives",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an Objective in OpenPages.",
+        "query": "Search and retrieve Objectives from OpenPages. Supports filtering by name, owner, and custom field filters."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "RICat",
+      "tool_prefix": "ri_component",
+      "display_name": "RI Component",
+      "path_prefix": "RI Components",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an RI Component in OpenPages.",
+        "query": "Search and retrieve RI Components from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "RIReq",
+      "tool_prefix": "ri_sub_component",
+      "display_name": "RI Sub-Component",
+      "path_prefix": "RI Sub-Components",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update an RI Sub-Component in OpenPages.",
+        "query": "Search and retrieve RI Sub-Components from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "ScenarioResult",
+      "tool_prefix": "scenario_result",
+      "display_name": "Scenario Result",
+      "path_prefix": "Scenario Results",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Scenario Result in OpenPages.",
+        "query": "Search and retrieve Scenario Results from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "SectionTemplate",
+      "tool_prefix": "section_template",
+      "display_name": "Section Template",
+      "path_prefix": "Section Templates",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Section Template in OpenPages.",
+        "query": "Search and retrieve Section Templates from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "SOXSignature",
+      "tool_prefix": "signature",
+      "display_name": "Signature",
+      "path_prefix": "Signatures",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Signature in OpenPages.",
+        "query": "Search and retrieve Signatures from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "StrategicObjective",
+      "tool_prefix": "strategic_objective",
+      "display_name": "Strategic Objective",
+      "path_prefix": "Strategic Objectives",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Strategic Objective in OpenPages. Used to represent an organization's ESG objectives.",
+        "query": "Search and retrieve Strategic Objectives from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "SOXSubaccount",
+      "tool_prefix": "sub_account",
+      "display_name": "Sub-Account",
+      "path_prefix": "Sub-Accounts",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Sub-Account in OpenPages. Represents a smaller, more targeted line item that is part of a larger parent Account.",
+        "query": "Search and retrieve Sub-Accounts from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Subcontractor",
+      "tool_prefix": "subcontractor",
+      "display_name": "Subcontractor",
+      "path_prefix": "Subcontractors",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Subcontractor in OpenPages. Represents a portion of a service that is provided by a Vendor.",
+        "query": "Search and retrieve Subcontractors from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Submandate",
+      "tool_prefix": "sub_mandate",
+      "display_name": "Sub-Mandate",
+      "path_prefix": "Sub-Mandates",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Sub-Mandate in OpenPages. Defines an individual provision or section within a broader mandate.",
+        "query": "Search and retrieve Sub-Mandates from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "SubSectionTemplate",
+      "tool_prefix": "subsection_template",
+      "display_name": "SubSection Template",
+      "path_prefix": "SubSection Templates",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a SubSection Template in OpenPages.",
+        "query": "Search and retrieve SubSection Templates from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "SummaryAuditPlan",
+      "tool_prefix": "summary_audit_plan",
+      "display_name": "Summary Audit Plan",
+      "path_prefix": "Summary Audit Plans",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Summary Audit Plan in OpenPages. Enables a program office to plan audits of Auditable Entities.",
+        "query": "Search and retrieve Summary Audit Plans from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "SOXTest",
+      "tool_prefix": "test_plan",
+      "display_name": "Test Plan",
+      "path_prefix": "Test Plans",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Test Plan in OpenPages. A container for tests that can be associated with parent Control objects.",
+        "query": "Search and retrieve Test Plans from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "SOXTestResult",
+      "tool_prefix": "test_result",
+      "display_name": "Test Result",
+      "path_prefix": "Test Results",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Test Result in OpenPages. The information obtained from running a test plan.",
+        "query": "Search and retrieve Test Results from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Treatment",
+      "tool_prefix": "treatment",
+      "display_name": "Treatment",
+      "path_prefix": "Treatments",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Treatment in OpenPages.",
+        "query": "Search and retrieve Treatments from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "VendorSubsidiary",
+      "tool_prefix": "vendor_subsidiary",
+      "display_name": "Vendor Subsidiary",
+      "path_prefix": "Vendor Subsidiaries",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Vendor Subsidiary in OpenPages. Represents a subsidiary of a Vendor from which a firm procures goods or services.",
+        "query": "Search and retrieve Vendor Subsidiaries from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Waiver",
+      "tool_prefix": "waiver",
+      "display_name": "Waiver",
+      "path_prefix": "Waivers",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Waiver in OpenPages. Gives you the ability to document, process and manage the lifecycle of exceptions to Policies, Requirements, or Controls.",
+        "query": "Search and retrieve Waivers from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    },
+    {
+      "type_id": "Workpaper",
+      "tool_prefix": "workpaper",
+      "display_name": "Workpaper",
+      "path_prefix": "Workpapers",
+      "namespace": "openpages",
+      "tool_descriptions": {
+        "upsert": "Create or update a Workpaper in OpenPages. Any audit artifact or deliverable tracked within the scope of an audit.",
+        "query": "Search and retrieve Workpapers from OpenPages."
+      },
+      "resource_fields": {
+        "include_all_fields": false,
+        "fields": []
+      },
+      "type_based_query_filters": {
+        "fields": []
+      }
+    }
+  ]
+}

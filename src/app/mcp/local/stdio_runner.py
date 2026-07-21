@@ -146,6 +146,11 @@ async def run_stdio_server(custom_settings: Optional[Settings] = None) -> None:
     finally:
         # CRITICAL: Always cleanup httpx client connection pool to prevent resource leaks
         # This executes regardless of how we exit (normal shutdown, KeyboardInterrupt, or exception)
+        if server:
+            try:
+                await server.cleanup()
+            except Exception as cleanup_error:
+                logger.error(f"Error during MCP server cleanup: {cleanup_error}")
         if server and hasattr(server, 'client') and server.client:
             try:
                 await server.client.close()

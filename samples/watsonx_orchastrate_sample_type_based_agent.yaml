@@ -4,18 +4,18 @@ display_name: GRC Agent - Orchestrate  - Type_based - Sample
 description: An agent that can use tools to make updates to OpenPages and answer GRC questions based on OpenPages content.
 context_access_enabled: true
 context_variables:
-- op_username
-- op_user_profile_id
-- op_user_locale
-- op_user_profile_name
-- op_base_url
-- op_view_type
-- op_view_name
-- op_object_type_name
-- op_object_id
-- op_object_name
-- op_workflow_stage
-- op_auth_header
+  - op_username
+  - op_user_profile_id
+  - op_user_locale
+  - op_user_profile_name
+  - op_base_url
+  - op_view_type
+  - op_view_name
+  - op_object_type_name
+  - op_object_id
+  - op_object_name
+  - op_workflow_stage
+  - op_auth_ticket
 restrictions: editable
 supported_apps: []
 llm: groq/openai/gpt-oss-120b
@@ -108,36 +108,38 @@ instructions: |-
   op_object_id - {op_object_id}
   op_object_name - {op_object_name}
   op_workflow_stage - {op_workflow_stage}
-  op_auth_header - {op_auth_header}
+  op_auth_ticket - {op_auth_ticket}
+
+  You MUST pass in the content of all context variables in to the tools as is, character-by-character, without truncation
 guidelines:
-- display_name: Use Typed Tools
-  condition: when creating or updating objects
-  action: |-
-    Use the specific typed tools for each object type (openpages_upsert_issue, openpages_upsert_control, etc.)
-    Provide all fields in a single tool call
-    Use field names exactly as they appear in the tool schema
-  tool: ''
-- display_name: Query Efficiently
-  condition: when querying objects
-  action: |-
-    Use system field filters without prefix (name, description, creation_date_from, etc.)
-    Use filter_ prefix only for custom fields (filter_Status, filter_Priority, etc.)
-    Always use YYYY-MM-DD format for dates
-    Never set fetch_all_properties to true
-  tool: ''
+  - display_name: Use Typed Tools
+    condition: when creating or updating objects
+    action: |-
+      Use the specific typed tools for each object type (openpages_upsert_issue, openpages_upsert_control, etc.)
+      Provide all fields in a single tool call
+      Use field names exactly as they appear in the tool schema
+    tool: ""
+  - display_name: Query Efficiently
+    condition: when querying objects
+    action: |-
+      Use system field filters without prefix (name, description, creation_date_from, etc.)
+      Use filter_ prefix only for custom fields (filter_Status, filter_Priority, etc.)
+      Always use YYYY-MM-DD format for dates
+      Never set fetch_all_properties to true
+    tool: ""
 collaborators: []
 tools:
-- grc-mcp-server:openpages_upsert_issue
-- grc-mcp-server:openpages_query_issue
-- grc-mcp-server:openpages_upsert_control
-- grc-mcp-server:openpages_query_control
-- grc-mcp-server:openpages_upsert_risk
-- grc-mcp-server:openpages_query_risk
-- grc-mcp-server:openpages_upsert_usecase
-- grc-mcp-server:openpages_query_usecase
-- grc-mcp-server:openpages_delete_object
-- grc-mcp-server:openpages_associate_objects
-- grc-mcp-server:openpages_dissociate_objects
+  - grc-mcp-server:openpages_upsert_issue
+  - grc-mcp-server:openpages_query_issue
+  - grc-mcp-server:openpages_upsert_control
+  - grc-mcp-server:openpages_query_control
+  - grc-mcp-server:openpages_upsert_risk
+  - grc-mcp-server:openpages_query_risk
+  - grc-mcp-server:openpages_upsert_usecase
+  - grc-mcp-server:openpages_query_usecase
+  - grc-mcp-server:openpages_delete_object
+  - grc-mcp-server:openpages_associate_objects
+  - grc-mcp-server:openpages_dissociate_objects
 toolkits: []
 plugins:
   agent_pre_invoke: []
@@ -152,12 +154,14 @@ chat_with_docs:
     limit: 10
     extraction_strategy: express
   generation:
-    prompt_instruction: ''
+    prompt_instruction: ""
     max_docs_passed_to_llm: 5
     generated_response_length: Moderate
-    display_text_no_results_found: I searched my knowledge base, but did not find
+    display_text_no_results_found:
+      I searched my knowledge base, but did not find
       anything related to your query
-    display_text_connectivity_issue: I might have information related to your query
+    display_text_connectivity_issue:
+      I might have information related to your query
       to share, but am unable to connect to my knowledge base at the moment
     idk_message: I'm afraid I don't understand. Please rephrase your question.
     enabled: false

@@ -15,8 +15,11 @@ The ToolHandlers class supports:
 """
 
 import logging
+import re
 import time
-from typing import Dict, Any
+import json
+import asyncio
+from typing import Dict, Any, Optional, List, TypedDict
 
 from src.app.observability.logger import get_logger, log_method_call, set_request_context
 from src.app.observability.tracing import start_async_span, set_span_ok, set_span_error, is_tracing_enabled
@@ -27,6 +30,17 @@ from src.app.auth.service import PassthroughAuthError
 from src.app.auth.token_validator import TokenValidationError
 
 logger = get_logger(__name__)
+
+
+class MCPContentItem(TypedDict):
+    """Single content item in MCP tool response."""
+    type: str  # "text", "image", "resource", etc.
+    text: str  # Content text
+
+
+class MCPToolResponse(TypedDict):
+    """Standard MCP tool response format."""
+    result: List[MCPContentItem]
 
 
 class ToolHandlers:
@@ -63,6 +77,60 @@ class ToolHandlers:
         self.generic_dissociate_tool_name = build_tool_name("dissociate_objects", namespace)
         self.generic_upsert_tool_name = f"{namespace}_upsert_object" if namespace else "upsert_object"
     
+    async def cleanup(self):
+        """Cleanup resources."""
+        # TODO: add per-handler teardown logic here if needed in future
+        pass
+    
+    def _extract_tenant_id(self, base_url: str) -> Optional[str]:
+        """Extract tenant_id from OpenPages URL with multiple pattern support.
+        
+        Supports various deployment patterns:
+        - AWS with UUID: https://20260520-0632-1805-005a-a3cc6cbb5879.us-east-1.aws.dev.governance.ibm.com/
+        - AWS GovCloud: https://tenant123.region.gc.aws.stg.governance.ibm.com
+        - IBM Cloud: https://tenant123.openpages.ibm.com
+        - Alternative: https://openpages.tenant123.com
+        
+        Args:
+            base_url: The OpenPages base URL
+            
+        Returns:
+            Extracted tenant_id or None if no pattern matches
+        """
+        if not base_url:
+            return None
+        
+        # Pattern priority: most specific first
+        patterns = [
+            # AWS pattern with UUID tenant (e.g., 20260520-0632-1805-005a-a3cc6cbb5879.us-east-1.aws.dev.governance.ibm.com)
+            (r'https?://([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.[^/]+\.aws\.[^/]+\.governance\.ibm\.com', 'AWS UUID'),
+            # AWS GovCloud pattern (e.g., tenant123.region.gc.aws.stg.governance.ibm.com)
+            (r'https?://([^.]+)\.region\.gc\.aws', 'AWS GovCloud'),
+            # AWS standard pattern (e.g., tenant123.us-east-1.aws.dev.governance.ibm.com)
+            (r'https?://([^.]+)\.[^/]+\.aws\.[^/]+\.governance\.ibm\.com', 'AWS Standard'),
+            # IBM Cloud pattern (e.g., tenant123.openpages.ibm.com)
+            (r'https?://([^.]+)\.openpages\.ibm\.com', 'IBM Cloud'),
+            # Alternative pattern (e.g., openpages.tenant123.com)
+            (r'https?://openpages\.([^.]+)\.com', 'Alternative'),
+        ]
+        
+        for pattern, pattern_name in patterns:
+            match = re.search(pattern, base_url)
+            if match:
+                tenant_id = match.group(1)
+                logger.info(f"Extracted tenant_id '{tenant_id}' from URL using {pattern_name} pattern")
+                return tenant_id
+        
+        # Fallback: try to extract first subdomain (original behavior)
+        match = re.match(r'https?://([^.]+)\.', base_url)
+        if match:
+            tenant_id = match.group(1)
+            logger.warning(f"Extracted tenant_id '{tenant_id}' using fallback pattern (first subdomain)")
+            return tenant_id
+        
+        logger.warning(f"Could not extract tenant_id from URL: {base_url}")
+        return None
+    
     async def _resolve_auth_and_user(self, context) -> tuple:
         """
         Resolve auth override for API authentication.
@@ -78,12 +146,34 @@ class ToolHandlers:
         if not self.auth_service:
             return None, None
 
-        # Resolve authentication for API calls
-        auth_result = await self.auth_service.resolve_for_request(
-            context_token=context.op_auth_header,
-            has_context_token_key=context.has_op_auth_header,
+        # Types 1 & 4 arrive as request-scoped ContextVars set by the HTTP ingress
+        # (remote mode); types 2 & 3 arrive as context-var tool args. In local/stdio
+        # mode the ContextVars are simply None.
+        from src.app.auth.context_vars import auth_authorization_var, auth_apikey_var
+
+        authorization = auth_authorization_var.get()
+        api_key = auth_apikey_var.get()
+
+        logger.debug(
+            "Resolving auth in tool handler",
+            extra_fields={
+                "has_authorization_header": bool(authorization),
+                "has_api_key_header": bool(api_key),
+                "has_op_auth_header": context.has_op_auth_header,
+                "has_op_auth_ticket": context.has_op_auth_ticket,
+            },
         )
-        
+
+        # Resolve authentication for API calls (fixed precedence 1>2>3>4, fail-fast)
+        auth_result = await self.auth_service.resolve_for_request(
+            authorization=authorization,
+            op_auth_header=context.op_auth_header,
+            has_op_auth_header=context.has_op_auth_header,
+            api_key=api_key,
+            op_auth_ticket=context.op_auth_ticket,
+            has_op_auth_ticket=context.has_op_auth_ticket,
+        )
+
         return auth_result.auth_override, auth_result
     
     # Keep old method name for backward compatibility
@@ -98,6 +188,53 @@ class ToolHandlers:
             Tuple of (auth_override_string_or_None, AuthResult_or_None)
         """
         return await self._resolve_auth_and_user(context)
+    
+    async def _get_default_parent_id(self, object_type: str, auth_override: Optional[str] = None) -> Optional[str]:
+        """
+        Query for the default parent entity based on object type.
+        
+        Currently supports "Register" object type, which queries for the
+        "Use Case Library" SOXBusEntity as the default parent.
+        
+        Args:
+            object_type: The type of object to get the default parent for (e.g., "Register")
+            auth_override: Optional auth token override for per-request authentication
+            
+        Returns:
+            Resource ID of the default parent entity, or None if not found or unsupported object type
+        """
+        try:
+            logger.info("Fetching default primary parent entity based on object type")
+
+            if object_type == "Register":
+                logger.info("Querying for default parent 'Use Case Library'")
+                result = await self.mcp_server.client.query(
+                    statement="SELECT [Resource ID] FROM [SOXBusEntity] WHERE [Name] = 'Use Case Library'",
+                    limit=1,
+                    auth_override=auth_override
+                )
+                
+                # Extract Resource ID from query result
+                if result and result.get("rows") and len(result["rows"]) > 0:
+                    # OpenPages API returns 'fields' not 'cells'
+                    fields = result["rows"][0].get("fields", [])
+                    
+                    if fields and len(fields) > 0:
+                        # Find the Resource ID field
+                        for field in fields:
+                            if field.get("name") == "Resource ID":
+                                parent_id = field.get("value")
+                                if parent_id:
+                                    logger.info(f"Found default parent 'Use Case Library': {parent_id}")
+                                    return parent_id
+                
+                logger.warning("Default parent 'Use Case Library' not found")
+                return None
+            
+        except Exception as e:
+            logger.warning(f"Failed to query for default parent: {e}")
+            return None
+
 
     async def _execute_tool(self, tool_method, **kwargs):
         """
@@ -156,8 +293,8 @@ class ToolHandlers:
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Delete tool context: {context}")
         
-        # Resolve auth override
-        auth_override, auth_result = await self._resolve_auth_override(context)
+        # Resolve user auth (fail-fast) so the deletion is performed as the user.
+        auth_override, auth_result = await self._resolve_auth_and_user(context)
 
         object_type_input = cleaned_args.get("object_type", "")
         resource_id = cleaned_args.get("resource_id")
@@ -356,7 +493,11 @@ class ToolHandlers:
         # Extract context variables from arguments
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Upsert tool context: {context}")
-        
+
+        # Resolve user auth (fail-fast). Threaded into every OpenPages call below so the
+        # write is performed as the user, never silently on server credentials.
+        auth_override, auth_result = await self._resolve_auth_and_user(context)
+
         object_type_input = cleaned_args.get("object_type", "")
         name = cleaned_args.get("name")
         fields = cleaned_args.get("fields", {})
@@ -461,7 +602,7 @@ class ToolHandlers:
                     
                     try:
                         # Get the schema to identify read-only fields
-                        type_info = await tool.get_type_definition(type_id)
+                        type_info = await tool.get_type_definition(type_id, auth_override=auth_override)
                         field_definitions = type_info.get('field_definitions', [])
                         
                         # Build a set of read-only field names for filtering later
@@ -479,7 +620,7 @@ class ToolHandlers:
                         if copy_from.isdigit():
                             logger.debug(f"Attempting to copy from Resource ID: {copy_from}")
                             source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Resource ID] = '{copy_from}' LIMIT 1"
-                            source_result = await tool.client.query(source_query)
+                            source_result = await tool.client.query(source_query, auth_override=auth_override)
                             source_rows = source_result.get('rows', [])
                             if source_rows:
                                 source_object_data = source_rows[0]
@@ -498,14 +639,14 @@ class ToolHandlers:
                                 encoded_path = urllib.parse.quote(full_path, safe='')
                                 
                                 # Get object by path using the client's get_content method
-                                obj_data = await tool.client.get_content(encoded_path)
-                                
+                                obj_data = await tool.client.get_content(encoded_path, auth_override=auth_override)
+
                                 if obj_data:
                                     # Now query to get all fields in the same format as query results
                                     resource_id = obj_data.get('id')
                                     if resource_id:
                                         source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Resource ID] = '{resource_id}' LIMIT 1"
-                                        source_result = await tool.client.query(source_query)
+                                        source_result = await tool.client.query(source_query, auth_override=auth_override)
                                         source_rows = source_result.get('rows', [])
                                         if source_rows:
                                             source_object_data = source_rows[0]
@@ -517,7 +658,7 @@ class ToolHandlers:
                         if not source_object_data:
                             logger.debug(f"Attempting to copy from Name: {copy_from}")
                             source_query = f"SELECT * FROM [{type_id}] WHERE [{type_id}].[Name] = '{copy_from}' LIMIT 2"
-                            source_result = await tool.client.query(source_query)
+                            source_result = await tool.client.query(source_query, auth_override=auth_override)
                             source_rows = source_result.get('rows', [])
                             
                             if len(source_rows) == 0:
@@ -600,7 +741,7 @@ class ToolHandlers:
                                 if parent_path and parent_path != '/':
                                     # Resolve parent path to Resource ID
                                     try:
-                                        parent_id = await tool.resolve_path_to_id(parent_path)
+                                        parent_id = await tool.resolve_path_to_id(parent_path, auth_override=auth_override)
                                         # Only set if we got a valid numeric ID back (not the path itself)
                                         if parent_id and parent_id.isdigit() and parent_id != parent_path:
                                             source_fields['primaryParentId'] = parent_id
@@ -633,7 +774,7 @@ class ToolHandlers:
                         }
                 
                 # Now perform the upsert operation with merged arguments
-                result = await tool.upsert_object(merged_args)
+                result = await tool.upsert_object(merged_args, auth_override=auth_override)
                 
                 # Format the response
                 duration_ms = (time.monotonic() - t_start) * 1000
@@ -697,9 +838,12 @@ class ToolHandlers:
         # Extract context variables from arguments
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Associate tool context: {context}")
-        
+
+        # Resolve user auth (fail-fast) so the association is performed as the user.
+        auth_override, auth_result = await self._resolve_auth_and_user(context)
+
         object_type_input = cleaned_args.get("object_type", "")
-        
+
         if not object_type_input:
             logger.error("object_type not provided in associate_objects request")
             return {
@@ -762,7 +906,7 @@ class ToolHandlers:
         async with start_async_span("mcp.tool.associate_objects", attributes=span_attrs) as span:
             try:
                 # Perform the associate operation
-                result = await tool.associate_objects(cleaned_args)
+                result = await tool.associate_objects(cleaned_args, auth_override=auth_override)
                 
                 # Format the response
                 duration_ms = (time.monotonic() - t_start) * 1000
@@ -826,9 +970,12 @@ class ToolHandlers:
         # Extract context variables from arguments
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Dissociate tool context: {context}")
-        
+
+        # Resolve user auth (fail-fast) so the dissociation is performed as the user.
+        auth_override, auth_result = await self._resolve_auth_and_user(context)
+
         object_type_input = cleaned_args.get("object_type", "")
-        
+
         if not object_type_input:
             logger.error("object_type not provided in dissociate_objects request")
             return {
@@ -891,7 +1038,7 @@ class ToolHandlers:
         async with start_async_span("mcp.tool.dissociate_objects", attributes=span_attrs) as span:
             try:
                 # Perform the dissociate operation
-                result = await tool.dissociate_objects(cleaned_args)
+                result = await tool.dissociate_objects(cleaned_args, auth_override=auth_override)
                 
                 # Format the response
                 duration_ms = (time.monotonic() - t_start) * 1000
@@ -954,9 +1101,9 @@ class ToolHandlers:
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Query tool context: {context}")
         
-        # Resolve auth override
-        auth_override, auth_result = await self._resolve_auth_override(context)
-
+        # Resolve user auth (fail-fast). The query runs as the authenticated user.
+        auth_override, auth_result = await self._resolve_auth_and_user(context)
+        
         if not self.query_tool:
             logger.error("OpenPages query tool not initialized")
             return {
@@ -1034,8 +1181,8 @@ class ToolHandlers:
         cleaned_args, context = extract_context_from_arguments(arguments)
         logger.debug(f"Generic tool '{tool_name}' context: {context}")
         
-        # Resolve auth override
-        auth_override, auth_result = await self._resolve_auth_override(context)
+        # Resolve user auth (fail-fast) so generic tool calls run as the authenticated user.
+        auth_override, auth_result = await self._resolve_auth_and_user(context)
 
         logger.info(f"Handling generic tool: {tool_name}")
         
@@ -1316,118 +1463,6 @@ class ToolHandlers:
                 ]
             }
     
-    # TODO: Temporarily disabled - schema tools will be re-enabled later
-    # @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
-    # async def handle_get_schema_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    #     """
-    #     Handle the get_schema tool - retrieves schema for a specific object type
-    #
-    #     Args:
-    #         arguments: Tool arguments containing 'object_type' field
-    #
-    #     Returns:
-    #         Dict containing the schema as JSON text
-    #     """
-    #     if not self.resource_handlers:
-    #         logger.error("Resource handlers not initialized")
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": "Error: Resource handlers not initialized"}
-    #             ]
-    #         }
-    #
-    #     object_type = arguments.get("object_type", "")
-    #     if not object_type:
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": "Error: object_type parameter is required"}
-    #             ]
-    #         }
-    #
-    #     logger.info(f"Getting schema for object type: {object_type}")
-    #     try:
-    #         # Use resource handler to read the schema
-    #         result = await self.resource_handlers.handle_read_resource({
-    #             "uri": f"openpages://schema/{object_type}"
-    #         })
-    #
-    #         # Extract the text content from the resource result
-    #         if "contents" in result and len(result["contents"]) > 0:
-    #             schema_text = result["contents"][0].get("text", "")
-    #             return {
-    #                 "result": [{"type": "text", "text": schema_text}]
-    #             }
-    #         else:
-    #             return {
-    #                 "result": [
-    #                     {"type": "text", "text": f"Error: No schema found for {object_type}"}
-    #                 ]
-    #             }
-    #     except Exception as e:
-    #         logger.error(f"Error getting schema for {object_type}: {e}", exc_info=True)
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": f"Error getting schema: {str(e)}"}
-    #             ]
-    #         }
-    #
-    # @log_method_call(log_args=True, log_result=True, level=logging.DEBUG)
-    # async def handle_list_schemas_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    #     """
-    #     Handle the list_schemas tool - lists all available object type schemas
-    #
-    #     Args:
-    #         arguments: Tool arguments (currently unused)
-    #
-    #     Returns:
-    #         Dict containing the list of available schemas
-    #     """
-    #     if not self.resource_handlers:
-    #         logger.error("Resource handlers not initialized")
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": "Error: Resource handlers not initialized"}
-    #             ]
-    #         }
-    #
-    #     logger.info("Listing available schemas")
-    #     try:
-    #         # Use resource handler to list resources
-    #         result = await self.resource_handlers.handle_list_resources({})
-    #
-    #         # Format the resources list as text
-    #         if "resources" in result:
-    #             resources = result["resources"]
-    #             schema_list = []
-    #             for resource in resources:
-    #                 uri = resource.get("uri", "")
-    #                 name = resource.get("name", "")
-    #                 description = resource.get("description", "")
-    #                 if uri.startswith("openpages://schema/"):
-    #                     schema_list.append(f"- {name}: {uri}\n  {description}")
-    #
-    #             if schema_list:
-    #                 text = "Available OpenPages Object Type Schemas:\n\n" + "\n\n".join(schema_list)
-    #             else:
-    #                 text = "No schemas available"
-    #
-    #             return {
-    #                 "result": [{"type": "text", "text": text}]
-    #             }
-    #         else:
-    #             return {
-    #                 "result": [
-    #                     {"type": "text", "text": "Error: No resources found"}
-    #                 ]
-    #             }
-    #     except Exception as e:
-    #         logger.error(f"Error listing schemas: {e}", exc_info=True)
-    #         return {
-    #             "result": [
-    #                 {"type": "text", "text": f"Error listing schemas: {str(e)}"}
-    #             ]
-    #         }
-    
     @log_method_call(log_args=True, level=logging.DEBUG)
     async def handle_call_tool(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1465,7 +1500,7 @@ class ToolHandlers:
             # 1. HIGHEST PRIORITY: Extract from op_auth_header if provided
             op_auth_header = arguments.get("op_auth_header")
             if op_auth_header:
-                user_id = extract_user_id_from_token(op_auth_header)
+                user_id = await extract_user_id_from_token(op_auth_header)
                 if user_id:
                     logger.debug(f"Extracted user ID from op_auth_header token: {user_id}")
                 else:
@@ -1483,7 +1518,7 @@ class ToolHandlers:
                 
                 if client.auth_type == "bearer" and 'Authorization' in client.headers:
                     token = client.headers['Authorization']
-                    user_id = extract_user_id_from_token(token)
+                    user_id = await extract_user_id_from_token(token)
                     if user_id:
                         logger.debug(f"Extracted user ID from server bearer token: {user_id}")
                     else:
@@ -1541,7 +1576,7 @@ class ToolHandlers:
                     "list_resources": self.handle_list_resources_tool,
                     "get_resource": self.handle_get_resource_tool,
                 }
-
+                
                 # Check if this is a special tool
                 if name in special_tool_handlers:
                     logger.debug(f"Routing to special tool handler: {name}")

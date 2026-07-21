@@ -23,12 +23,20 @@ def mock_settings():
             "display_name": "Issue",
             "path_prefix": "Issue",
             "namespace": "openpages",
+            "resource_fields": {
+                "include_all_fields": True,
+                "fields": []
+            }
         },
         {
             "type_id": "SOXControl",
             "display_name": "Control",
             "path_prefix": "Controls",
             "namespace": "openpages",
+            "resource_fields": {
+                "include_all_fields": True,
+                "fields": []
+            }
         }
     ]
     settings.NAMESPACE = ""  # Add missing NAMESPACE attribute
@@ -44,6 +52,65 @@ def mock_schema_builder():
     
     # Mock get_type_definition to return test data
     async def mock_get_type_def(type_id):
+        if type_id == "SOXIssue":
+            return {
+                "localizedLabel": "Issue",
+                "description": "Description for SOXIssue",
+                "field_definitions": [
+                    {
+                        "name": "Resource ID",
+                        "localized_label": "Resource ID",
+                        "data_type": "ID_TYPE",
+                        "required": True,
+                        "read_only": True
+                    },
+                    {
+                        "name": "Name",
+                        "localized_label": "Name",
+                        "data_type": "STRING_TYPE",
+                        "required": True,
+                        "read_only": False
+                    },
+                    {
+                        "name": "Assoc Control",
+                        "localized_label": "Associated Control",
+                        "data_type": "ID_TYPE",
+                        "required": False,
+                        "read_only": False,
+                        "target_type": "SOXControl"
+                    }
+                ],
+                "associations": []
+            }
+        if type_id == "SOXControl":
+            return {
+                "localizedLabel": "Control",
+                "description": "Description for SOXControl",
+                "field_definitions": [
+                    {
+                        "name": "Resource ID",
+                        "localized_label": "Resource ID",
+                        "data_type": "ID_TYPE",
+                        "required": True,
+                        "read_only": True
+                    },
+                    {
+                        "name": "Name",
+                        "localized_label": "Name",
+                        "data_type": "STRING_TYPE",
+                        "required": True,
+                        "read_only": False
+                    }
+                ],
+                "associations": [
+                    {
+                        "name": "SOXIssue",
+                        "relationship": "Child",
+                        "enabled": True,
+                        "localizedLabel": "Issues"
+                    }
+                ]
+            }
         return {
             "localizedLabel": f"{type_id} Label",
             "description": f"Description for {type_id}",
@@ -96,13 +163,12 @@ async def test_list_resources_tool(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify result structure
-    assert "content" in result
-    assert result["isError"] is False
-    assert len(result["content"]) > 0
-    assert result["content"][0]["type"] == "text"
+    assert "result" in result
+    assert len(result["result"]) > 0
+    assert result["result"][0]["type"] == "text"
     
     # Get the text content (now a formatted summary, not JSON)
-    text_content = result["content"][0]["text"]
+    text_content = result["result"][0]["text"]
     
     # Verify it's a summary format, not JSON
     assert "Available OpenPages Resources" in text_content
@@ -131,13 +197,12 @@ async def test_get_resource_tool_object_types_catalog(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify result structure
-    assert "content" in result
-    assert result["isError"] is False
-    assert len(result["content"]) > 0
-    assert result["content"][0]["type"] == "text"
+    assert "result" in result
+    assert len(result["result"]) > 0
+    assert result["result"][0]["type"] == "text"
     
     # Parse the JSON response
-    text_content = result["content"][0]["text"]
+    text_content = result["result"][0]["text"]
     catalog_data = json.loads(text_content)
     
     # Verify catalog structure
@@ -148,15 +213,22 @@ async def test_get_resource_tool_object_types_catalog(tool_handlers):
     object_types = catalog_data["object_types"]
     assert len(object_types) == 2
     
-    # Verify SOXIssue is in catalog
-    issue_found = False
-    for obj_type in object_types:
-        if obj_type["id"] == "SOXIssue":
-            issue_found = True
-            assert obj_type["schema_uri"] == "openpages://schema/SOXIssue"
-            assert "name" in obj_type
-            break
-    assert issue_found, "SOXIssue not found in catalog"
+    issue_entry = next(obj for obj in object_types if obj["id"] == "SOXIssue")
+    assert issue_entry["schema_uri"] == "openpages://schema/SOXIssue"
+    assert "name" in issue_entry
+    assert "relationships" in issue_entry
+    assert len(issue_entry["relationships"]) == 1
+    assert issue_entry["relationships"][0]["name"] == "Assoc Control"
+    assert issue_entry["relationships"][0]["kind"] == "field"
+    assert issue_entry["relationships"][0]["cardinality"] == "single"
+    assert issue_entry["relationships"][0]["target_type"] == "SOXControl"
+    
+    control_entry = next(obj for obj in object_types if obj["id"] == "SOXControl")
+    assert "relationships" in control_entry
+    assert len(control_entry["relationships"]) == 1
+    assert control_entry["relationships"][0]["kind"] == "hierarchical"
+    assert control_entry["relationships"][0]["direction"] == "child"
+    assert control_entry["relationships"][0]["target_type"] == "SOXIssue"
 
 
 @pytest.mark.asyncio
@@ -172,13 +244,12 @@ async def test_get_resource_tool_object_schema(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify result structure
-    assert "content" in result
-    assert result["isError"] is False
-    assert len(result["content"]) > 0
-    assert result["content"][0]["type"] == "text"
+    assert "result" in result
+    assert len(result["result"]) > 0
+    assert result["result"][0]["type"] == "text"
     
     # Parse the JSON response
-    text_content = result["content"][0]["text"]
+    text_content = result["result"][0]["text"]
     schema_data = json.loads(text_content)
     
     # Verify schema structure
@@ -203,10 +274,9 @@ async def test_get_resource_tool_missing_uri(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify error is returned
-    assert "content" in result
-    assert result["isError"] is True
-    assert len(result["content"]) > 0
-    text_content = result["content"][0]["text"]
+    assert "result" in result
+    assert len(result["result"]) > 0
+    text_content = result["result"][0]["text"]
     assert "Error" in text_content
     assert "uri" in text_content.lower()
 
@@ -224,10 +294,9 @@ async def test_get_resource_tool_invalid_uri(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify error is returned
-    assert "content" in result
-    assert result["isError"] is True
-    assert len(result["content"]) > 0
-    text_content = result["content"][0]["text"]
+    assert "result" in result
+    assert len(result["result"]) > 0
+    text_content = result["result"][0]["text"]
     assert "Error" in text_content
 
 
@@ -244,10 +313,9 @@ async def test_get_resource_tool_nonexistent_type(tool_handlers):
     result = await tool_handlers.handle_call_tool(params)
     
     # Verify error is returned
-    assert "content" in result
-    assert result["isError"] is True
-    assert len(result["content"]) > 0
-    text_content = result["content"][0]["text"]
+    assert "result" in result
+    assert len(result["result"]) > 0
+    text_content = result["result"][0]["text"]
     assert "Error" in text_content
 
 # Made with Bob

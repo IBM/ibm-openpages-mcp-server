@@ -13,6 +13,7 @@ import json
 import logging
 import pathlib
 import asyncio
+import time
 from typing import Dict, Any, List, Literal, Optional, Tuple, Union
 
 from src.app.tools.generic_object_tools import GenericObjectTools
@@ -57,6 +58,9 @@ class MCPServer:
         
         # Use provided settings or fall back to global settings
         self.settings = custom_settings if custom_settings else settings
+        
+        # Track background tasks for graceful shutdown
+        self._background_loader_task: Optional[asyncio.Task] = None
         
         # Create OpenPages client
         base_url = self.settings.OPENPAGES_BASE_URL
@@ -113,14 +117,14 @@ class MCPServer:
         
         # Initialize auth service
         from src.app.auth.service import AuthService
-        self.auth_service = AuthService(self.settings)
+        self.auth_service = AuthService(self.settings, self.client)
 
         # Initialize remaining modular components
         # Pass self reference to ToolHandlers for schema loading capability
         self.resource_handlers = ResourceHandlers(self.schema_builder, self.settings)
         self.prompt_handlers = PromptHandlers(self.settings)
 
-        # Pass resource_handlers, self, and auth_service to tool_handlers
+        # Pass resource_handlers and self reference to tool handlers
         self.tool_handlers = ToolHandlers(
             self.object_tools, self.settings, self.query_tool,
             self.resource_handlers, mcp_server=self,
@@ -181,7 +185,61 @@ class MCPServer:
 
 DOCUMENTATION: Read openpages://docs/query_syntax for complete syntax, examples, and best practices.
 
-SCHEMA WORKFLOW: Read openpages://catalog/object_types to discover available types, then read openpages://schema/{{ObjectType}} for each type you need. Cache schemas for the session.
+[WARNING] MANDATORY WORKFLOW FOR JOIN QUERIES:
+
+When user asks to find objects "under" or "within" another object (e.g., "action items under risk RB-01-Risk00189"):
+
+**STEP 1: Get Parent Object's Resource ID FIRST**
+- Query parent by Name to get Resource ID: SELECT [ParentType].[Resource ID] FROM [ParentType] WHERE [ParentType].[Name] = 'parent-name'
+- CRITICAL: ANCESTOR queries REQUIRE numeric Resource ID, NOT Name
+- Example: SELECT [SOXRisk].[Resource ID] FROM [SOXRisk] WHERE [SOXRisk].[Name] = 'RB-01-Risk00189'
+
+**STEP 2: Read Schema for Field Names**
+- get_resource tool with openpages://schema/{{ChildType}} to get EXACT field names
+- Field names are case-sensitive and may have prefixes (e.g., [OPSS-AI:Status])
+- DO NOT assume field names - they vary by instance
+
+**STEP 3: Check Relationships (Optional - for PARENT/CHILD only)**
+- Read openpages://catalog/relationships OR openpages://schema/{{ParentType}}
+- Catalog format: {{"type":"ParentType","parent":["TypeA"],"child":["TypeB"]}}
+- Look for ChildType in the "parent" or "child" arrays
+- If ChildType NOT in arrays → Use ANCESTOR (recommended for multi-level)
+
+**STEP 4: Execute JOIN Query**
+- Use ANCESTOR for multi-level hierarchies (simpler, no intermediate types needed)
+- ANCESTOR syntax: FROM [ParentType] JOIN [ChildType] ON ANCESTOR([ParentType]) WHERE [ParentType].[Resource ID] = numeric_id
+- Resource ID must be NUMERIC (no quotes): WHERE [SOXRisk].[Resource ID] = 8228
+- Use exact field names from schema: [OPSS-AI:Status], not [Status]
+
+[TIP] **RECOMMENDED: Use ANCESTOR for multi-level hierarchies**
+- Simpler: No need to know intermediate object types
+- Single query: Gets all descendants regardless of depth
+- Example: Risk→Task works even if path is Risk→Control→Task
+
+**Complete Example: "Find action items under risk RB-01-Risk00189"**
+
+Step 1: Get Resource ID
+Query: SELECT [SOXRisk].[Resource ID] FROM [SOXRisk] WHERE [SOXRisk].[Name] = 'RB-01-Risk00189'
+Result: Resource ID = 8228
+
+Step 2: Read schema for exact field names
+get_resource: openpages://schema/SOXTask
+Result: Fields are [OPSS-AI:Status], [OPSS-AI:Due Date], [OPSS-AI:Assignee]
+
+Step 3: Execute ANCESTOR query with numeric Resource ID
+Query: SELECT [SOXTask].[Resource ID], [SOXTask].[Name], [SOXTask].[OPSS-AI:Status] FROM [SOXRisk] JOIN [SOXTask] ON ANCESTOR([SOXRisk]) WHERE [SOXRisk].[Resource ID] = 8228
+
+[WARNING] COMMON MISTAKES TO AVOID:
+1. [NO]  Using Name in ANCESTOR: WHERE [SOXRisk].[Name] = 'RB-01-Risk00189'
+   [YES] Use Resource ID: WHERE [SOXRisk].[Resource ID] = 8228
+2. [NO]  Quotes around Resource ID: WHERE [SOXRisk].[Resource ID] = '8228'
+   [YES] No quotes (numeric): WHERE [SOXRisk].[Resource ID] = 8228
+3. [NO]  Assuming field names: [Status], [Due Date]
+   [YES] Read schema first: [OPSS-AI:Status], [OPSS-AI:Due Date]
+4. [NO]  Claiming relationships exist without checking
+   [YES] Read catalog/schema to verify relationships
+
+SCHEMA WORKFLOW: Read openpages://catalog/object_types to discover available types (format: {{"types":[{{"name":"SOXTask","label":"Action Item"}}]}}). For relationships between types, read openpages://catalog/relationships (format: {{"rels":[{{"type":"SOXTask","parent":["SOXIssue"],"child":["SOXDocument"]}}]}}). For detailed field information, read openpages://schema/{{ObjectType}}. Cache for the session.
 
 {object_types_section}
 
@@ -220,33 +278,67 @@ FROM [ObjectType]
 GROUP BY [ObjectType].[Status]
 ORDER BY COUNT(*) DESC
 
-⚠️ COUNT Limitation: Cannot be used with JOIN operations (see RESTRICTIONS)
+[WARNING] COUNT Limitation: Cannot be used with JOIN operations (see RESTRICTIONS)
 
 ## HIERARCHICAL JOINS
 
-The schema provides ready-to-use join syntax - just copy it directly:
+[CRITICAL] Read openpages://catalog/relationships or openpages://schema/{{ObjectType}} BEFORE constructing JOIN queries!
 
-Schema Response:
-{{
-  "direction": "parent",
-  "type": "TargetType",
-  "join_syntax": "FROM [FromType] JOIN [TargetType] ON CHILD([FromType])"
-}}
+The relationships catalog shows minimal relationship info: {{"direction": "parent|child", "type": "TargetType"}}
 
-Usage: Copy the join_syntax value directly into your query.
+DECISION LOGIC - When to use PARENT vs ANCESTOR:
 
-Manual Construction (if needed):
-• Schema shows "direction": "parent" → Use CHILD([FromType])
-• Schema shows "direction": "child" → Use PARENT([FromType])
-• Argument is ALWAYS the FROM type, never the JOIN target
+1. Check openpages://catalog/relationships or schema for direct relationship:
+   - Catalog format: {{"type":"SourceType","parent":["TypeA"],"child":["TypeB"]}}
+   - If TargetType in "child" array → Use PARENT (one level only)
+   - If TargetType in "parent" array → Use CHILD (one level only)
 
-Multi-Level Traversal:
-• ANCESTOR([FromType]) - traverse up multiple levels
-• DESCENDANT([FromType]) - traverse down multiple levels
+2. If NO direct relationship found:
+   - **PREFER ANCESTOR** - Simpler, no need to know intermediate types
+   - Alternative: Chain multiple PARENT joins (complex, requires knowing all intermediate types)
 
-Example:
+[TIP] ANCESTOR Benefits:
+- Works without knowing intermediate object types
+- Single query for all descendants at any depth
+- Simpler to construct and maintain
+
+[NOTE] DESCENDANT is NOT supported. Use ANCESTOR instead for multi-level hierarchies.
+
+SYNTAX PATTERNS:
+
+Direct Parent (navigate UP one level):
 FROM [ChildType] JOIN [ParentType] ON CHILD([ChildType])
-FROM [TypeA] LEFT OUTER JOIN [TypeB] ON PARENT([TypeA])
+Example: FROM [ObjectTypeB] JOIN [ObjectTypeA] ON CHILD([ObjectTypeB])
+
+Direct Children (navigate DOWN one level):
+FROM [ParentType] JOIN [ChildType] ON PARENT([ParentType])
+Example: FROM [ObjectTypeA] JOIN [ObjectTypeB] ON PARENT([ObjectTypeA])
+
+Indirect Children (RECOMMENDED - ALL descendants at any level):
+FROM [ParentType] JOIN [ChildType] ON ANCESTOR([ParentType]) WHERE [ParentType].[Resource ID] = numeric_id
+Example: FROM [ObjectTypeA] JOIN [ObjectTypeC] ON ANCESTOR([ObjectTypeA]) WHERE [ObjectTypeA].[Resource ID] = 12345
+Gets all ObjectTypeC under ObjectTypeA, regardless of intermediate levels (ObjectTypeB, etc.)
+
+[WARNING] ANCESTOR RESTRICTIONS:
+  - MUST filter by Resource ID: WHERE [ParentType].[Resource ID] = numeric_id (NO quotes, NO Name field)
+  - Resource ID must be NUMERIC without quotes (e.g., 8228, not '8228')
+  - Cannot use Name field: WHERE [ParentType].[Name] = 'xyz' will FAIL
+  - Only ONE JOIN allowed
+  - Cannot use OUTER JOIN
+  - Cannot SELECT/filter on [ParentType] (except Resource ID)
+  - Slower than PARENT - use only when needed
+
+Examples:
+Direct parent: FROM [ObjectTypeC] JOIN [ObjectTypeB] ON CHILD([ObjectTypeC])
+Direct child: FROM [ObjectTypeA] JOIN [ObjectTypeB] ON PARENT([ObjectTypeA])
+Indirect children: FROM [ObjectTypeA] JOIN [ObjectTypeC] ON ANCESTOR([ObjectTypeA]) WHERE [ObjectTypeA].[Resource ID] = 1234
+With filters: FROM [ObjectTypeA] JOIN [ObjectTypeB] ON PARENT([ObjectTypeA]) WHERE [ObjectTypeA].[Status] = 'Active'
+
+[CRITICAL] REMINDERS:
+- ANCESTOR requires Resource ID (numeric, no quotes): WHERE [Type].[Resource ID] = 8228
+- PARENT/CHILD can use Name: WHERE [Type].[Name] = 'name-value'
+- Always read schema BEFORE constructing queries to get exact field names
+- Field names are case-sensitive and may include prefixes
 
 ## RESTRICTIONS
 
@@ -313,13 +405,13 @@ NOT Supported:
             },
             {
                 "name": "get_resource",
-                "description": "Get a resource by its URI. Resources include object type schemas (openpages://schema/{ObjectType}) and the object types catalog (openpages://catalog/object_types). ⚠️ CRITICAL: You MUST call this tool to get exact field names BEFORE constructing ANY query. Field names vary by instance and may include field group prefixes (e.g., [OPSS-Iss:Status]). DO NOT assume field names - always verify against the schema. This tool provides the same information as the resources/read endpoint for MCP clients that cannot use that endpoint. 💡 PERFORMANCE TIP: Start with mode='compact' for 5-10x faster response. Automatically switch to mode='full' if user asks about fields not in compact schema or needs enum values.",
+                "description": "Get a resource by its URI. Resources include object type schemas (openpages://schema/{ObjectType}), the object types catalog (openpages://catalog/object_types), and the object relationships catalog (openpages://catalog/relationships). [CRITICAL] You MUST call this tool to get exact field names BEFORE constructing ANY query. Field names vary by instance and may include field group prefixes (e.g., [OPSS-Iss:Status]). DO NOT assume field names - always verify against the schema. This tool provides the same information as the resources/read endpoint for MCP clients that cannot use that endpoint. [TIP] PERFORMANCE TIP: Start with mode='compact' for 5-10x faster response. Automatically switch to mode='full' if user asks about fields not in compact schema or needs enum values.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "uri": {
                             "type": "string",
-                            "description": "The resource URI to retrieve. Examples: 'openpages://schema/ObjectTypeA', 'openpages://catalog/object_types'. Use list_resources to see available URIs."
+                            "description": "The resource URI to retrieve. Examples: 'openpages://schema/ObjectTypeA', 'openpages://catalog/object_types', 'openpages://catalog/relationships'. Use list_resources to see available URIs."
                         },
                         "mode": {
                             "type": "string",
@@ -344,7 +436,7 @@ NOT Supported:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "OpenPages query language statement. ⚠️ CRITICAL: NEVER use aliases or AS keyword - they are NOT supported. ✅ ALWAYS use full object type names: [ObjectType].[FieldName] everywhere in the query. ⚠️ You MUST call get_resource tool BEFORE constructing this query to get exact field names. Field names are case-sensitive and may include field group prefixes. MUST enclose all entity names in square brackets. WRONG: FROM [ObjectTypeA] AS [c] | CORRECT: FROM [ObjectTypeA]. Example: SELECT [ObjectType].[Resource ID], [ObjectType].[Name] FROM [ObjectType] JOIN [OtherType] ON PARENT([ObjectType]) WHERE [ObjectType].[Status] = 'Active'"
+                            "description": "OpenPages query language statement. [CRITICAL] NEVER use aliases or AS keyword - they are NOT supported. [YES]  ALWAYS use full object type names: [ObjectType].[FieldName] everywhere in the query. [WARNING] You MUST call get_resource tool BEFORE constructing this query to get exact field names. Field names are case-sensitive and may include field group prefixes. MUST enclose all entity names in square brackets. WRONG: FROM [ObjectTypeA] AS [c] | CORRECT: FROM [ObjectTypeA]. Example: SELECT [ObjectType].[Resource ID], [ObjectType].[Name] FROM [ObjectType] JOIN [OtherType] ON PARENT([ObjectType]) WHERE [ObjectType].[Group-Name:Field-Name]= 'Active'"
                         },
                         "offset": {
                             "type": "integer",
@@ -379,6 +471,7 @@ NOT Supported:
             logger.info("Adding generic upsert, associate, and dissociate tools")
             self._add_generic_associate_dissociate_tools()
             self._add_generic_upsert_tool()
+            
         else:
             logger.info("Skipping generic upsert/associate/dissociate tools (exposure mode: type_based)")
 
@@ -559,15 +652,15 @@ Accepts optional context variables.""",
                     },
                     "primaryParentId": {
                         "type": "string",
-                        "description": "🔴 REQUIRED FOR NEW OBJECTS (unless using copy_from): The main hierarchical parent (typically for folder location). Supports: Resource ID (e.g., '10101'), full path (e.g., '/_op_sox/Project/Default/Folder'), or use primaryParentType+primaryParentName instead. For ADDITIONAL/SECONDARY parents, use associateParent_* fields. When creating a new object, you MUST provide either this field OR both primaryParentType+primaryParentName OR use copy_from parameter."
+                        "description": "[REQUIRED] FOR NEW OBJECTS (unless using copy_from): The main hierarchical parent (typically for folder location). Supports: Resource ID (e.g., '10101'), full path (e.g., '/_op_sox/Project/Default/Folder'), or use primaryParentType+primaryParentName instead. For ADDITIONAL/SECONDARY parents, use associateParent_* fields. When creating a new object, you MUST provide either this field OR both primaryParentType+primaryParentName OR use copy_from parameter."
                     },
                     "primaryParentType": {
                         "type": "string",
-                        "description": "🔴 REQUIRED FOR NEW OBJECTS (with primaryParentName): Type of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentName if not using primaryParentId. For additional parents, use associateParent_* fields. Example: 'SOXBusEntity', 'SOXProcess'"
+                        "description": "[REQUIRED] FOR NEW OBJECTS (with primaryParentName): Type of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentName if not using primaryParentId. For additional parents, use associateParent_* fields. Example: 'SOXBusEntity', 'SOXProcess'"
                     },
                     "primaryParentName": {
                         "type": "string",
-                        "description": "🔴 REQUIRED FOR NEW OBJECTS (with primaryParentType): Name of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentType if not using primaryParentId. For additional parents, use associateParent_* fields."
+                        "description": "[REQUIRED] FOR NEW OBJECTS (with primaryParentType): Name of the main parent object. Alternative to primaryParentId. When creating a new object, you MUST provide this field along with primaryParentType if not using primaryParentId. For additional parents, use associateParent_* fields."
                     },
                     "title": {
                         "type": "string",
@@ -579,7 +672,7 @@ Accepts optional context variables.""",
                     },
                     "fields": {
                         "type": "object",
-                        "description": "🔴 SCHEMA-BASED FIELDS ONLY: Dynamic field values as key-value pairs. ALL field names and values MUST come from the object type's schema (retrieved via get_resource). Field names must match exactly as defined in the schema (including any prefixes). For ENUM_TYPE fields, use exact 'name' values from the schema's enum_values array. Example: {'FieldGroup:FieldName1': 'StringValue', 'FieldGroup:FieldName2': 'EnumValue', 'FieldGroup:FieldName3': 'user@example.com'}",
+                        "description": "[REQUIRED] SCHEMA-BASED FIELDS ONLY: Dynamic field values as key-value pairs. ALL field names and values MUST come from the object type's schema (retrieved via get_resource). Field names must match exactly as defined in the schema (including any prefixes). For ENUM_TYPE fields, use exact 'name' values from the schema's enum_values array. Example: {'FieldGroup:FieldName1': 'StringValue', 'FieldGroup:FieldName2': 'EnumValue', 'FieldGroup:FieldName3': 'user@example.com'}",
                         "additionalProperties": True
                     },
                     **context_properties
@@ -624,7 +717,7 @@ Accepts optional context variables.""",
         # Add associate tool
         self.tools.append({
             "name": associate_tool_name,
-            "description": f"Associate objects in OpenPages using parent/child relationships. ⚠️ CRITICAL: You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
+            "description": f"Associate objects in OpenPages using parent/child relationships. [CRITICAL] You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -686,7 +779,7 @@ Accepts optional context variables.""",
         # Add dissociate tool
         self.tools.append({
             "name": dissociate_tool_name,
-            "description": f"Dissociate objects in OpenPages using parent/child relationships. ⚠️ CRITICAL: You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
+            "description": f"Dissociate objects in OpenPages using parent/child relationships. [CRITICAL] You MUST read the resource schema (openpages://schema/{{ObjectType}}) BEFORE using this tool to discover available associations. The schema shows the exact OpenPages type IDs (e.g., 'SOXRisk', 'SOXControl') and which relationship types are valid. Use the type IDs from the schema, NOT the tool_prefix values. Only Parent and Child relationship types are supported by the OpenPages REST API. Supported object types: {types_list}. Accepts optional context variables.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -745,6 +838,7 @@ Accepts optional context variables.""",
         })
         logger.info(f"Added generic {dissociate_tool_name} tool")
         
+
     def _add_dynamic_tools_to_schema(self) -> None:
         """
         Dynamically add tools to the schema based on configured object types
@@ -845,20 +939,282 @@ Accepts optional context variables.""",
             logger.error(f"Failed to initialize OpenPages client authentication: {e}")
             raise RuntimeError(f"Authentication failed: {e}")
     
+    async def cleanup(self) -> None:
+        """
+        Cleanup resources and wait for background tasks to complete.
+        
+        Should be called during graceful shutdown to ensure background
+        schema loading completes or is cancelled properly.
+        """
+        if self._background_loader_task and not self._background_loader_task.done():
+            logger.info("Waiting for background schema loader to complete...")
+            try:
+                # Wait up to 30 seconds for background loading to complete
+                await asyncio.wait_for(self._background_loader_task, timeout=30.0)
+                logger.info("Background schema loader completed successfully")
+            except asyncio.TimeoutError:
+                logger.warning("Background schema loader did not complete in time, cancelling...")
+                self._background_loader_task.cancel()
+                try:
+                    await self._background_loader_task
+                except asyncio.CancelledError:
+                    logger.info("Background schema loader cancelled")
+            except Exception as e:
+                logger.error(f"Error during background schema loader cleanup: {e}")
+    
+    async def _background_schema_loader(self) -> None:
+        """
+        Background task to load individual type schemas sequentially
+        
+        This runs after server startup to cache schemas for all types.
+        Schemas are loaded one at a time to avoid overwhelming the API.
+        """
+        logger.info("Starting background schema loading task")
+        start_time = time.time()
+        
+        loaded_count = 0
+        failed_count = 0
+        
+        for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+            obj_type = obj_config.get("type_id")
+            if not obj_type:
+                continue
+            
+            try:
+                # Load type definition (will be cached in schema_builder)
+                # Note: get_type_definition() has internal caching, so repeated calls are fast
+                logger.debug(f"Background loading schema for {obj_type}")
+                type_def = await self.schema_builder.get_type_definition(obj_type)
+                
+                if type_def:
+                    loaded_count += 1
+                    if loaded_count % 10 == 0:
+                        logger.info(f"Background loading progress: {loaded_count}/{len(self.settings.OPENPAGES_OBJECT_TYPES)} types loaded")
+                else:
+                    failed_count += 1
+                    logger.warning(f"Failed to load schema for {obj_type}")
+                    
+            except Exception as e:
+                failed_count += 1
+                logger.warning(f"Error loading schema for {obj_type}: {e}")
+        
+        elapsed = time.time() - start_time
+        if loaded_count > 0:
+            logger.info(
+                f"Background schema loading complete: {loaded_count} loaded, {failed_count} failed "
+                f"in {elapsed:.2f}s ({elapsed/loaded_count:.2f}s per type)"
+            )
+        else:
+            logger.info(f"Background schema loading complete: {failed_count} failed in {elapsed:.2f}s")
+    
     async def load_dynamic_schemas(self) -> None:
         """
-        Load dynamic schemas for all configured object types
-        
-        This method fetches type definitions from OpenPages and updates tool schemas
-        with actual field definitions, enum values, and associations.
-        
-        PERFORMANCE: Uses parallel loading (asyncio.gather) to load all schemas concurrently,
-        reducing initialization time from ~4.7s (sequential) to ~1.2s (parallel).
+        Load dynamic schemas for all configured object types.
+
+        Behaviour depends on TOOL_EXPOSURE_MODE:
+
+        * ``type_based`` / ``all`` — eager loading: type definitions are fetched
+          from OpenPages and tool schemas are updated before this method returns.
+          The server does not accept requests until loading is complete.
+
+        * ``ontology_based`` — fast-start path: ``dynamic_schemas_loaded`` is set
+          to ``True`` immediately so the server can begin accepting requests, then
+          :meth:`_background_schema_loader` is spawned as a detached
+          ``asyncio.Task`` (``self._background_loader_task``) to pre-warm the
+          resource schema cache in the background.  Individual resource schemas
+          are still fetched lazily on first access if the background task has not
+          yet reached them.  Call :meth:`cleanup` to cancel or await the task on
+          shutdown.
         """
         if self.dynamic_schemas_loaded:
             logger.debug("Dynamic schemas already loaded, skipping")
             return
         
+        # If include_all_object_types is enabled, fetch all object types from OpenPages
+        # and populate the settings, ignoring the object_types array
+        if self.settings.INCLUDE_ALL_OBJECT_TYPES:
+            logger.info("INCLUDE_ALL_OBJECT_TYPES is enabled, fetching all object types from OpenPages")
+            try:
+                # Try to fetch types with associations using new API feature
+                types_response = await self.client.get_all_object_types(include_associations=True)
+                
+                # Check if we got the optimized response with associations
+                if isinstance(types_response, dict) and 'types' in types_response:
+                    logger.info("Using optimized API with associations included")
+                    # Store the types with associations in schema builder for optimization
+                    self.schema_builder.set_types_with_associations(types_response)
+                    # Extract type names from the response
+                    all_type_ids = sorted([
+                        t['name'] for t in types_response.get('types', [])
+                        if isinstance(t, dict) and 'name' in t
+                    ])
+                else:
+                    # Fallback: got list of type names (old API or feature not supported)
+                    all_type_ids = types_response if isinstance(types_response, list) else []
+                    logger.info("Using standard API without associations (will fetch separately)")
+                
+                logger.info(f"Fetched {len(all_type_ids)} object types from OpenPages")
+                
+                # Clear existing object types and create default configurations for all types
+                self.settings.OPENPAGES_OBJECT_TYPES = []
+                for type_id in all_type_ids:
+                    default_config = {
+                        "type_id": type_id,
+                        "tool_prefix": type_id.lower(),
+                        "display_name": type_id,
+                        "path_prefix": type_id,
+                        "namespace": self.settings.NAMESPACE or "openpages",
+                        "tool_descriptions": {
+                            "upsert": f"Create or update a {type_id} in OpenPages.",
+                            "query": f"Search and retrieve {type_id} objects from OpenPages."
+                        },
+                        "resource_fields": {
+                            "include_all_fields": True,
+                            "fields": []
+                        },
+                        "type_based_query_filters": {
+                            "fields": []
+                        }
+                    }
+                    self.settings.OPENPAGES_OBJECT_TYPES.append(default_config)
+                
+                logger.info(f"Populated settings with {len(self.settings.OPENPAGES_OBJECT_TYPES)} object type configurations")
+                
+                # Pre-populate resource_handlers configured types cache to avoid API call on first resource access
+                if hasattr(self, 'resource_handlers') and self.resource_handlers:
+                    self.resource_handlers._configured_types_cache = set(all_type_ids)
+                    logger.info(f"Pre-populated resource_handlers configured types cache with {len(all_type_ids)} types")
+                    
+                    # Pre-cache catalog/relationship resource to avoid delay on first access
+                    try:
+                        logger.info("Pre-caching catalog/relationships resource")
+                        relationship_uri = "openpages://catalog/relationships"
+                        await self.resource_handlers.handle_read_resource(
+                            {"uri": relationship_uri}
+                        )
+                        logger.info("Successfully pre-cached catalog/relationships resource")
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to pre-cache catalog/relationships: {e}",
+                            exc_info=True
+                        )
+                
+                # Rebuild object_tools dictionary with the new object types
+                logger.info("Rebuilding object_tools with dynamically loaded object types")
+                self.object_tools = {}
+                for obj_config in self.settings.OPENPAGES_OBJECT_TYPES:
+                    obj_type = obj_config.get("type_id")
+                    tool_prefix = obj_config.get("tool_prefix")
+                    if obj_type and tool_prefix:
+                        self.object_tools[tool_prefix] = GenericObjectTools(self.client, obj_config, self.schema_builder)
+                        logger.debug(f"Initialized dynamic tool for {obj_type} with prefix {tool_prefix}")
+                
+                logger.info(f"Rebuilt {len(self.object_tools)} object tools")
+                
+                # Rebuild tool handlers with updated object_tools
+                self.tool_handlers = ToolHandlers(
+                    self.object_tools,
+                    self.settings,
+                    self.query_tool,
+                    self.resource_handlers,
+                    self,
+                    self.auth_service
+                )
+                logger.info("Tool handlers rebuilt with updated object_tools")
+                
+                # Update request processor's tool_handlers reference
+                self.request_processor.tool_handlers = self.tool_handlers
+                logger.info("Request processor updated with new tool_handlers")
+                
+                # Now rebuild the MCP tools schema
+                logger.info("Rebuilding MCP tools schema")
+                self.tools = []
+                self._load_tools_schema()
+                logger.info(f"Tools rebuilt: {len(self.tools)} tools available")
+                
+                # Update request processor's tools list
+                self.request_processor.tools = self.tools
+                logger.info("Request processor updated with new tools list")
+                
+            except Exception as e:
+                logger.error(f"Failed to fetch all object types from OpenPages: {e}. Server will start with limited functionality.")
+                # Continue with empty object types - server will still work for queries
+        
+        # Skip expensive tool schema loading for ontology_based mode
+        # In ontology mode, tools are generic and don't need type-specific schemas
+        # Resources (openpages://schema/{type}) are loaded on-demand and cached
+        if self.settings.TOOL_EXPOSURE_MODE == "ontology_based":
+            logger.info("TOOL_EXPOSURE_MODE is 'ontology_based' - skipping expensive tool schema building")
+            
+            # Fast startup with background schema loading
+            # Server starts immediately, schemas load in background, lazy fallback for immediate requests
+            
+            # Mark schemas as loaded so server can start accepting requests
+            self.dynamic_schemas_loaded = True
+            self.request_processor.set_dynamic_schemas_loaded(True)
+            
+            # Start background schema loading task and store reference for graceful shutdown
+            self._background_loader_task = asyncio.create_task(self._background_schema_loader())
+            
+            logger.info(
+                f"Startup complete. {len(self.settings.OPENPAGES_OBJECT_TYPES)} object types available. "
+                f"Schemas loading in background."
+            )
+            return
+        
+        # For type_based or all modes, do eager loading (legacy behavior)
+        logger.info("Loading schemas eagerly for type_based/all mode")
+        
+        # Pre-fetch configured types once to avoid repeated API calls
+        configured_type_ids = set(
+            obj_config.get("type_id")
+            for obj_config in self.settings.OPENPAGES_OBJECT_TYPES
+            if obj_config.get("type_id")
+        )
+        logger.info(f"Pre-fetched {len(configured_type_ids)} configured type IDs for relationship filtering")
+        
+        # Eager loading: Cache type definitions and relationship metadata for catalog
+        async def cache_type_definition_for_catalog(obj_config: Dict[str, Any]) -> None:
+            obj_type = obj_config.get("type_id")
+            if not obj_type:
+                return
+            
+            try:
+                # Load type definition (includes associations) - this will be cached in schema_builder
+                type_def = await self.schema_builder.get_type_definition(obj_type)
+                if not type_def:
+                    logger.warning(f"Could not load type definition for {obj_type}")
+                    return
+                
+                # Extract detailed hierarchical relationships using the same method as resource schemas
+                # Pass configured_type_ids to avoid repeated API calls
+                from src.app.mcp.resource_handlers import ResourceHandlers
+                resource_handler = ResourceHandlers(self.schema_builder, self.settings)
+                relationships = await resource_handler._extract_hierarchical_relationships(
+                    type_def, obj_type, configured_types=configured_type_ids
+                )
+                
+                obj_config["_cached_relationships"] = relationships
+                logger.debug(f"Cached type definition and {len(relationships)} detailed relationships for {obj_type}")
+            except Exception as e:
+                logger.warning(f"Could not cache type definition for {obj_type}: {e}")
+                obj_config["_cached_relationships"] = []
+        
+        # Cache type definitions in parallel - no artificial limits, let asyncio handle it
+        # The httpx client already has connection pooling and limits
+        tasks = [
+            cache_type_definition_for_catalog(obj_config)
+            for obj_config in self.settings.OPENPAGES_OBJECT_TYPES
+        ]
+        await asyncio.gather(*tasks)
+        
+        # Mark schemas as loaded
+        self.dynamic_schemas_loaded = True
+        self.request_processor.set_dynamic_schemas_loaded(True)
+        logger.info(f"Eager loading complete. {len(self.settings.OPENPAGES_OBJECT_TYPES)} object types cached.")
+        return
+        
+        # For type_based or all modes, do full schema loading (legacy behavior)
         logger.info("Loading dynamic schemas for all configured object types (parallel mode)")
         
         try:
@@ -894,6 +1250,32 @@ Accepts optional context variables.""",
                 if not type_def:
                     logger.warning(f"Could not load type definition for {obj_type}, skipping schema update")
                     return
+                
+                # Extract and store minimal relationship metadata in config for catalog
+                # This allows catalog to show relationships without making API calls
+                try:
+                    associations = type_def.get("associations", [])
+                    if isinstance(associations, dict):
+                        associations = associations.get("associations", [])
+                    
+                    relationships = []
+                    for assoc in associations:
+                        if not assoc.get("enabled", True):
+                            continue
+                        rel_type = assoc.get("relationship", "")
+                        target_type = assoc.get("name", "")
+                        if target_type and rel_type in ["Parent", "Child"]:
+                            relationships.append({
+                                "target_type": target_type,
+                                "direction": rel_type.lower()
+                            })
+                    
+                    # Store in config for catalog to use
+                    obj_config["_cached_relationships"] = relationships
+                    logger.debug(f"Cached {len(relationships)} relationships for {obj_type}")
+                except Exception as e:
+                    logger.debug(f"Could not extract relationships for {obj_type}: {e}")
+                    obj_config["_cached_relationships"] = []
                 
                 # Update upsert tool schema
                 upsert_tool_name = _make_tool_name("upsert")

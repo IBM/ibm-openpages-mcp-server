@@ -84,8 +84,8 @@ def test_relationship_filtering():
                 else:
                     print(f"  Filtered out relationship field: {field_name} -> {target_type} (unconfigured)")
     
-    # Apply filtering logic for hierarchical relationships
-    hierarchical_relationships = []
+    # Apply filtering logic for hierarchical relationships (grouped format)
+    hierarchical_relationships = {"parent": [], "child": []}
     for assoc in associations:
         if not assoc.get("enabled", True):
             continue
@@ -98,12 +98,19 @@ def test_relationship_filtering():
         
         # Filter: only include if associated type is configured
         if associated_type in configured_types:
-            hierarchical_relationships.append({
-                "direction": relationship_type.lower(),
-                "type": associated_type
-            })
+            direction = relationship_type.lower()
+            if direction == "parent":
+                hierarchical_relationships["parent"].append(associated_type)
+            elif direction == "child":
+                hierarchical_relationships["child"].append(associated_type)
         else:
             print(f"  Filtered out hierarchical relationship: {relationship_type} -> {associated_type} (unconfigured)")
+    
+    # Remove empty arrays
+    if not hierarchical_relationships["parent"]:
+        del hierarchical_relationships["parent"]
+    if not hierarchical_relationships["child"]:
+        del hierarchical_relationships["child"]
     
     # Print results
     print("=" * 80)
@@ -122,8 +129,9 @@ def test_relationship_filtering():
     print()
     
     print("Hierarchical Relationships (after filtering):")
-    for rel in hierarchical_relationships:
-        print(f"  [OK] {rel['direction']}: {rel['type']}")
+    for direction, types in hierarchical_relationships.items():
+        for type_name in types:
+            print(f"  [OK] {direction}: {type_name}")
     print()
     
     # Verify expectations
@@ -152,25 +160,29 @@ def test_relationship_filtering():
     else:
         print("  [FAIL] SOXProcess relationship included (should be excluded)")
     
+    # Count total relationships in grouped format
+    total_rels = sum(len(types) for types in hierarchical_relationships.values())
+    
     # Should have 1 hierarchical relationship (SOXIssue)
-    if len(hierarchical_relationships) == 1:
-        print(f"  [PASS] Correct number of hierarchical relationships: {len(hierarchical_relationships)}")
+    if total_rels == 1:
+        print(f"  [PASS] Correct number of hierarchical relationships: {total_rels}")
     else:
-        print(f"  [FAIL] Wrong number of hierarchical relationships: {len(hierarchical_relationships)} (expected 1)")
+        print(f"  [FAIL] Wrong number of hierarchical relationships: {total_rels} (expected 1)")
     
     # Should have SOXIssue hierarchical
-    if any(r['type'] == 'SOXIssue' for r in hierarchical_relationships):
+    all_types = [t for types in hierarchical_relationships.values() for t in types]
+    if 'SOXIssue' in all_types:
         print("  [PASS] SOXIssue hierarchical relationship included (configured)")
     else:
         print("  [FAIL] SOXIssue hierarchical relationship missing")
     
     # Should NOT have SOXRisk or SOXProcess hierarchical
-    if not any(r['type'] == 'SOXRisk' for r in hierarchical_relationships):
+    if 'SOXRisk' not in all_types:
         print("  [PASS] SOXRisk hierarchical relationship excluded (unconfigured)")
     else:
         print("  [FAIL] SOXRisk hierarchical relationship included (should be excluded)")
     
-    if not any(r['type'] == 'SOXProcess' for r in hierarchical_relationships):
+    if 'SOXProcess' not in all_types:
         print("  [PASS] SOXProcess hierarchical relationship excluded (unconfigured)")
     else:
         print("  [FAIL] SOXProcess hierarchical relationship included (should be excluded)")

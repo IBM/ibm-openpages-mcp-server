@@ -101,9 +101,10 @@ async def test_relationship_filtering():
     print()
     
     print("Hierarchical Relationships Found:")
-    hierarchical_rels = schema_content.get("hierarchical_relationships", [])
-    for rel in hierarchical_rels:
-        print(f"  - {rel['direction']}: {rel['type']}")
+    hierarchical_rels = schema_content.get("hierarchical_relationships", {})
+    for direction, types in hierarchical_rels.items():
+        for type_name in types:
+            print(f"  - {direction}: {type_name}")
     print()
     
     # Assertions

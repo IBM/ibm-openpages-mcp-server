@@ -37,7 +37,8 @@ ALLOWED_CONTEXT_VARIABLES: Set[str] = {
     "op_object_id",
     "op_object_name",
     "op_workflow_stage",
-    "op_auth_header"
+    "op_auth_header",
+    "op_auth_ticket"
 }
 
 
@@ -125,10 +126,11 @@ class ContextVariables:
             Dictionary with op_auth_header obfuscated
         """
         sanitized = self._data.copy()
-        if "op_auth_header" in sanitized:
-            # Show None if value is None, otherwise show *******
-            auth_value = sanitized["op_auth_header"]
-            sanitized["op_auth_header"] = None if auth_value is None else "*******"
+        # Mask all sensitive auth artifacts: show None if value is None, else *******
+        for sensitive_key in ("op_auth_header", "op_auth_ticket"):
+            if sensitive_key in sanitized:
+                value = sanitized[sensitive_key]
+                sanitized[sensitive_key] = None if value is None else "*******"
         return sanitized
     
     @property
@@ -195,6 +197,16 @@ class ContextVariables:
     def has_op_auth_header(self) -> bool:
         """Check if op_auth_header key was present in the original arguments."""
         return "op_auth_header" in self._data
+
+    @property
+    def op_auth_ticket(self) -> Optional[str]:
+        """Get the opaque embedded-chat auth ticket (type 3)."""
+        return self._data.get("op_auth_ticket")
+
+    @property
+    def has_op_auth_ticket(self) -> bool:
+        """Check if op_auth_ticket key was present in the original arguments."""
+        return "op_auth_ticket" in self._data
 
 
 def extract_context_from_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str, Any], ContextVariables]:
@@ -282,6 +294,10 @@ def build_context_schema() -> Dict[str, Any]:
         "op_auth_header": {
             "type": "string",
             "description": "Authentication header for API requests"
+        },
+        "op_auth_ticket": {
+            "type": "string",
+            "description": "Opaque single-use embedded-chat authentication ticket, redeemed server-side for a user-scoped token"
         }
     }
 

@@ -288,7 +288,6 @@ class TestConfigurationRobustness:
             assert settings.OUTPUT_FORMAT == "json"
             assert settings.NAMESPACE == ""
             assert settings.TOOL_EXPOSURE_MODE == "ontology_based"
-            assert settings.AUTH_ENABLED == True
             assert settings.DEFAULT_CURRENCY == "USD"
             assert settings.SCHEMA_CACHE_MAX_SIZE == 20
             assert settings.SCHEMA_CACHE_TTL == 3600
@@ -299,6 +298,102 @@ class TestConfigurationRobustness:
             assert settings.MCP_SESSION_MAX_COUNT == 1000
             assert settings.MCP_SESSION_CLEANUP_INTERVAL == 300
             
+        finally:
+            os.unlink(env_file)
+
+
+class TestUserApiKeyAuthUrlResolution:
+    """resolve_user_apikey_auth_url() — AWS instance-specific endpoint vs default."""
+
+    def _write_env(self, extra_lines):
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False)
+        f.write("OPENPAGES_BASE_URL=https://test.example.com\n")
+        f.write("OPENPAGES_AUTHENTICATION_TYPE=bearer\n")
+        f.write("OPENPAGES_APIKEY=service-level-key\n")  # pragma: allowlist secret
+        f.write("OPENPAGES_AUTHENTICATION_URL=https://iam.cloud.ibm.com/identity/token\n")
+        for line in extra_lines:
+            f.write(line + "\n")
+        f.close()
+        return f.name
+
+    def test_default_uses_authentication_url(self):
+        """Without CLOUD_PROVIDER=aws, the existing OPENPAGES_AUTHENTICATION_URL is used."""
+        env_file = self._write_env([])
+        try:
+            settings = Settings(env_file=env_file)
+            assert settings.resolve_user_apikey_auth_url() == "https://iam.cloud.ibm.com/identity/token"
+        finally:
+            os.unlink(env_file)
+
+    def test_aws_builds_instance_specific_endpoint(self):
+        """CLOUD_PROVIDER=aws builds the instance-specific MCSP token endpoint."""
+        env_file = self._write_env([
+            "CLOUD_PROVIDER=aws",
+            "MCSP_IAM_URL=https://account-iam.platform.saas.ibm.com",
+            "OPENPAGES_INSTANCE_ID=inst-123",
+        ])
+        try:
+            settings = Settings(env_file=env_file)
+            assert settings.resolve_user_apikey_auth_url() == (
+                "https://account-iam.platform.saas.ibm.com/api/2.0/services/inst-123/apikeys/token"
+            )
+        finally:
+            os.unlink(env_file)
+
+    def test_aws_strips_trailing_slash_on_base(self):
+        """A trailing slash on MCSP_IAM_URL must not double up in the constructed path."""
+        env_file = self._write_env([
+            "CLOUD_PROVIDER=aws",
+            "MCSP_IAM_URL=https://account-iam.platform.saas.ibm.com/",
+            "OPENPAGES_INSTANCE_ID=inst-123",
+        ])
+        try:
+            settings = Settings(env_file=env_file)
+            assert "//api/2.0" not in settings.resolve_user_apikey_auth_url()
+        finally:
+            os.unlink(env_file)
+
+    def test_aws_missing_both_names_both_vars(self):
+        """When both are unset, the error names both MCSP_IAM_URL and OPENPAGES_INSTANCE_ID."""
+        env_file = self._write_env(["CLOUD_PROVIDER=aws"])
+        try:
+            settings = Settings(env_file=env_file)
+            with pytest.raises(ValueError) as exc:
+                settings.resolve_user_apikey_auth_url()
+            msg = str(exc.value)
+            assert "MCSP_IAM_URL" in msg and "OPENPAGES_INSTANCE_ID" in msg
+            assert "they are unset" in msg
+        finally:
+            os.unlink(env_file)
+
+    def test_aws_missing_only_mcsp_url_names_just_that(self):
+        """Instance id present, MCSP_IAM_URL missing → error names only MCSP_IAM_URL."""
+        env_file = self._write_env(["CLOUD_PROVIDER=aws", "OPENPAGES_INSTANCE_ID=inst-123"])
+        try:
+            settings = Settings(env_file=env_file)
+            with pytest.raises(ValueError) as exc:
+                settings.resolve_user_apikey_auth_url()
+            msg = str(exc.value)
+            assert "MCSP_IAM_URL" in msg
+            assert "OPENPAGES_INSTANCE_ID" not in msg
+            assert "it is unset" in msg
+        finally:
+            os.unlink(env_file)
+
+    def test_aws_missing_only_instance_id_names_just_that(self):
+        """MCSP_IAM_URL present, instance id missing → error names only OPENPAGES_INSTANCE_ID."""
+        env_file = self._write_env([
+            "CLOUD_PROVIDER=aws",
+            "MCSP_IAM_URL=https://account-iam.platform.saas.ibm.com",
+        ])
+        try:
+            settings = Settings(env_file=env_file)
+            with pytest.raises(ValueError) as exc:
+                settings.resolve_user_apikey_auth_url()
+            msg = str(exc.value)
+            assert "OPENPAGES_INSTANCE_ID" in msg
+            assert "MCSP_IAM_URL" not in msg
+            assert "it is unset" in msg
         finally:
             os.unlink(env_file)
 

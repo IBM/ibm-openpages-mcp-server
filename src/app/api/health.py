@@ -142,6 +142,36 @@ class HealthChecker:
                     "status": "warning",
                     "message": f"Could not check OpenPages config: {str(e)}"
                 }
+       
+        # Check 4: RabbitMQ consumer health (if available)
+        try:
+            from src.app.api.cache_stats import get_schema_cache_manager
+            
+            schema_cache_manager = get_schema_cache_manager()
+            if schema_cache_manager and hasattr(schema_cache_manager, 'rabbitmq_client'):
+                rabbitmq_health = schema_cache_manager.rabbitmq_client.get_health_status()
+                
+                if rabbitmq_health["healthy"]:
+                    health_status["checks"]["rabbitmq"] = {
+                        "status": "healthy",
+                        "message": rabbitmq_health["status_message"],
+                        "is_connected": rabbitmq_health["is_connected"],
+                        "is_running": rabbitmq_health["is_running"],
+                        "messages_processed": rabbitmq_health["messages_processed"]
+                    }
+                else:
+                    health_status["checks"]["rabbitmq"] = {
+                        "status": "degraded",
+                        "message": rabbitmq_health["status_message"],
+                        "is_connected": rabbitmq_health["is_connected"],
+                        "is_running": rabbitmq_health["is_running"],
+                        "messages_processed": rabbitmq_health["messages_processed"]
+                    }
+                    if health_status["status"] == "healthy":
+                        health_status["status"] = "degraded"
+        except Exception as e:
+            logger.debug(f"Could not check RabbitMQ health (may not be enabled): {e}")
+            # RabbitMQ health check is optional, don't fail overall health check
         
         # Cache the result
         self.last_check_time = current_time

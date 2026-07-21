@@ -36,14 +36,9 @@ compact_schema = {
             "read_only": False
         }
     ],
-    "hierarchical_relationships": [
-        {
-            "direction": "parent",
-            "type": "SOXControl",
-            "label": "Controls",
-            "join_syntax": "FROM [SOXIssue] JOIN [SOXControl] ON CHILD([SOXIssue])"
-        }
-    ],
+    "hierarchical_relationships": {
+        "parent": ["SOXControl"]
+    },
     "note": "This is a compact schema showing only 4 required/system fields out of 28 total fields."
 }
 

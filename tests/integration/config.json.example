@@ -1,0 +1,17 @@
+{
+  "mcp_server_url": "http://localhost:8000",
+  "api_key": "your-api-key-here",
+  "api_key_header_name": "X-Api-Key",
+  "test_object_type": "issue",
+  "object_type_aliases": {
+    "issue": "soxissue",
+    "control": "soxcontrol"
+  },
+  "timeout": 60,
+  "cleanup_test_objects": true,
+  "rate_limit_delay": 1.0,
+  "_comment": "Configuration for integration tests. Copy to config.json and adjust values as needed.",
+  "_note_1": "api_key: Required for authentication with the MCP server (can also be set via MCP_API_KEY env var)",
+  "_note_2": "api_key_header_name: Name of the header to send the API key (default: X-Api-Key, can also be set via MCP_API_KEY_HEADER env var)",
+  "_note_3": "object_type_aliases maps friendly names to actual tool_prefix values used by the MCP server. Adjust based on your object_types.json configuration."
+}

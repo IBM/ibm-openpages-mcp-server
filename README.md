@@ -40,11 +40,13 @@ A Model Context Protocol (MCP) server that enables AI agents to interact with IB
 
 - **🔌 Dual Mode Operation**: Remote (HTTP) and Local (stdio) transport
 - **🔐 Multiple Authentication Methods**: Basic, IBM Cloud IAM, MCSP, and CP4D
+- **👤 Per-User Request Auth**: Ordered resolver over HTTP bearer, `op_auth_header`, and embedded-chat `op_auth_ticket` for true multi-tenant access
 - **🛠️ Flexible Tool Exposure**: Choose between ontology-based (generic) or type-based (specific) tools
 - **🎯 Dynamic Object Management**: Configurable tools for any OpenPages object type
 - **📊 Advanced Query Tool**: SQL-like query execution with full OpenPages syntax support
 - **📚 Ontology Resources**: Dynamic ontology discovery for AI agents
 - **🚀 High Performance**: Compact ontology mode reduces response size by 70-90%
+- **🔄 Real-time Schema Sync**: RabbitMQ-based automatic schema updates (no server restart needed)
 - **🐳 Docker Support**: Containerized deployment with optional NGINX proxy
 - **📈 Observability**: Built-in metrics, tracing, and structured logging
 - **🔄 MCP Compliant**: Full protocol support (tools, resources, prompts)
@@ -341,6 +343,10 @@ OPENPAGES_PASSWORD=your_password
 OPENPAGES_APIKEY=your_api_key
 OPENPAGES_AUTHENTICATION_URL=https://iam.cloud.ibm.com/identity/token
 
+# Request-time Authentication
+OPENPAGES_AUTH_MODE=user            # 'user' (enforce per-user auth) or 'server' (use server creds)
+SUPPORTED_APIKEY_AUTH_HEADER_NAMES=X-Api-Key   # Header(s) carrying the connection API key (comma-separated)
+
 # Server Settings
 SERVER_MODE=remote  # or local
 HOST=0.0.0.0
@@ -360,6 +366,13 @@ TRACING_ENABLED=False
 
 See [`.env.example`](.env.example) for all available configuration options.
 
+**Request-time authentication variables**:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENPAGES_AUTH_MODE` | `user` | `user` enforces the per-user auth framework (multi-tenant SaaS) — tool calls never fall back to server credentials. `server` runs the MCP server on its own credentials (on-prem / Cloud Pak / local / dev). |
+| `SUPPORTED_APIKEY_AUTH_HEADER_NAMES` | `X-Api-Key` | Comma-separated list of header names that may carry the connection API key; the first present header wins. |
+
 ### Authentication Methods
 
 The server supports multiple authentication methods for connecting to OpenPages. **Choose the method based on your OpenPages deployment model:**
@@ -373,6 +386,17 @@ The server supports multiple authentication methods for connecting to OpenPages.
 | **CP4D** | `bearer` | CP4D | Username + Password + Auth URL |
 
 **Important:** For **IBM Cloud hosted** or **on-premises** OpenPages instances, use **Basic Authentication** (username/password), not Bearer/API key.
+
+#### Per-Request Authentication
+
+When `OPENPAGES_AUTH_MODE=user`, each tool call is authenticated independently through an ordered, fail-fast resolver (highest-priority artifact present wins; if it fails, the request is rejected — never downgraded):
+
+1. HTTP `Authorization` bearer header
+2. `op_auth_header` context variable (passthrough JWT)
+3. `op_auth_ticket` context variable (opaque ticket redeemed + exchanged server-side)
+4. API key in a configured header (`SUPPORTED_APIKEY_AUTH_HEADER_NAMES`)
+
+Server credentials are used only as a fallback when `OPENPAGES_AUTH_MODE=server` and no user artifact is present.
 
 For detailed authentication configuration, see [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md).
 
@@ -657,6 +681,14 @@ All tools support optional context variables for multi-user scenarios and per-re
   - Overrides server-configured authentication for that specific request
   - Format: `"Basic base64(username:password)"` or `"Bearer token"`
   - Example: `{"object_type": "SOXIssue", "op_auth_header": "Bearer eyJ..."}`
+
+- **`op_auth_ticket`**: Opaque single-use embedded-chat authentication ticket
+  - Issued by OpenPages (SaaS / Cloud Pak) and redeemed + exchanged server-side for a user-scoped token
+  - Lets embedded-chat agents authenticate as the end user without passing a raw token
+  - Format: opaque string with an `opct_` prefix (the value is never logged)
+  - Example: `{"object_type": "SOXIssue", "op_auth_ticket": "opct_..."}`
+
+Resolution precedence is `op_auth_header` then `op_auth_ticket` (see [Per-Request Authentication](#per-request-authentication)).
 
 #### User Context
 
@@ -946,7 +978,7 @@ For detailed deployment patterns, see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 ## Project Structure
 
 ```
-grc-mcp-server/
+ibm-openpages-mcp-server/
 ├── src/app/
 │   ├── api/              # Health and metrics endpoints
 │   ├── auth/             # Authentication providers

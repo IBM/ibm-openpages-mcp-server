@@ -52,14 +52,53 @@ class SchemaBuilder:
         self._cache_hits = 0
         self._cache_misses = 0
         self._cache_evictions = 0
+        # Cache for types with associations from bulk API call
+        self._types_with_associations: Optional[Dict[str, Any]] = None
         logger.info(f"Schema builder initialized with LRU cache (max_size={max_cache_size}, ttl={cache_ttl}s)")
     
-    async def get_type_definition(self, type_name: str) -> Optional[Dict[str, Any]]:
+    def set_types_with_associations(self, types_data: Dict[str, Any]) -> None:
+        """
+        Store types data with associations from bulk API call for optimization
+        
+        Args:
+            types_data: Response from get_all_object_types with include_associations=True
+        """
+        self._types_with_associations = types_data
+        types_count = len(types_data.get('types', []))
+        logger.info(f"Cached {types_count} types with associations for optimized loading")
+    
+    def _filter_enabled_associations(self, associations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Filter associations to only include enabled ones
+        
+        Args:
+            associations: List of association objects
+            
+        Returns:
+            List of enabled associations only
+        """
+        if not associations:
+            return []
+        
+        enabled = [
+            assoc for assoc in associations
+            if isinstance(assoc, dict) and assoc.get('is_enabled', False)
+        ]
+        
+        if len(associations) != len(enabled):
+            logger.debug(
+                f"Filtered associations: {len(enabled)} enabled out of {len(associations)} total"
+            )
+        
+        return enabled
+    
+    async def get_type_definition(self, type_name: str, auth_override: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Get and cache type definition from OpenPages, including associations
         
         Args:
             type_name: Name of the type to retrieve (e.g., "ObjectTypeA", "ObjectTypeB")
+            auth_override: Optional bearer token to use for this request instead of default auth
             
         Returns:
             Dict containing the type definition with associations or None if there was an error
@@ -98,23 +137,43 @@ class SchemaBuilder:
             
             try:
                 logger.info(f"Fetching type definition for {type_name}")
-                type_def = await self.client.get_type_definition(type_name)
+                type_def = await self.client.get_type_definition(type_name, auth_override=auth_override)
 
                 if not type_def:
                     logger.warning(f"Empty type definition returned for {type_name}. The type may not exist in OpenPages or there may be permission issues.")
                     return None
 
-                # Fetch associations separately
-                logger.info(f"Fetching type associations for {type_name}")
-                try:
-                    associations = await self.client.get_type_associations(type_name)
-                    # Add associations to type definition
-                    if associations:
-                        type_def["associations"] = associations
-                        logger.debug(f"Added {len(associations)} associations to type definition for {type_name}")
-                except Exception as assoc_error:
-                    logger.warning(f"Failed to fetch associations for {type_name}: {assoc_error}. Continuing without associations.")
-                    # Don't fail the entire operation if associations fail
+                # Check if we have associations from bulk API call (optimization)
+                associations_from_bulk = None
+                if self._types_with_associations:
+                    types_array = self._types_with_associations.get('types', [])
+                    for type_obj in types_array:
+                        if type_obj.get('name') == type_name and 'associations' in type_obj:
+                            # Filter to only enabled associations
+                            raw_associations = type_obj['associations']
+                            associations_from_bulk = self._filter_enabled_associations(raw_associations)
+                            logger.debug(
+                                f"Using {len(associations_from_bulk)} enabled associations "
+                                f"from bulk API call for {type_name}"
+                            )
+                            break
+                
+                # Use associations from bulk call if available, otherwise fetch separately
+                if associations_from_bulk is not None:
+                    type_def["associations"] = associations_from_bulk
+                else:
+                    # Fetch associations separately (backward compatibility)
+                    # Note: get_type_associations already filters to enabled associations
+                    logger.info(f"Fetching type associations for {type_name}")
+                    try:
+                        associations = await self.client.get_type_associations(type_name, auth_override=auth_override)
+                        # Add associations to type definition
+                        if associations:
+                            type_def["associations"] = associations
+                            logger.debug(f"Added {len(associations)} enabled associations to {type_name}")
+                    except Exception as assoc_error:
+                        logger.warning(f"Failed to fetch associations for {type_name}: {assoc_error}. Continuing without associations.")
+                        # Don't fail the entire operation if associations fail
 
                 # Cache the result with LRU eviction
                 self._add_to_cache(type_name, type_def)
