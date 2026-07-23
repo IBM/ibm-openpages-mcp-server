@@ -7,7 +7,7 @@ in the query_objects method.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from src.app.tools.generic_object_tools import GenericObjectTools, _validate_date_param
+from src.app.tools.generic_object_tools import GenericObjectTools, validate_date_param
 from src.app.core.openpages_client import OpenPagesClient
 
 
@@ -300,41 +300,41 @@ async def test_query_sql_injection_prevention(generic_tools, mock_client):
 
 
 # ---------------------------------------------------------------------------
-# _validate_date_param unit tests
+# validate_date_param unit tests
 # ---------------------------------------------------------------------------
 
 def test_validate_date_param_valid_date():
     """Valid YYYY-MM-DD date passes unchanged."""
-    assert _validate_date_param("2024-01-31", "creation_date_from") == "2024-01-31"
+    assert validate_date_param("2024-01-31", "creation_date_from") == "2024-01-31"
 
 
 def test_validate_date_param_valid_datetime():
     """Valid ISO datetime passes unchanged."""
-    assert _validate_date_param("2024-01-31T12:30:00", "creation_date_from") == "2024-01-31T12:30:00"
+    assert validate_date_param("2024-01-31T12:30:00", "creation_date_from") == "2024-01-31T12:30:00"
 
 
 def test_validate_date_param_injection_tautology():
     """Tautology injection (OR '1'='1) is rejected."""
     with pytest.raises(ValueError, match="creation_date_from"):
-        _validate_date_param("2020-01-01' OR '1'='1", "creation_date_from")
+        validate_date_param("2020-01-01' OR '1'='1", "creation_date_from")
 
 
 def test_validate_date_param_injection_union():
     """UNION injection is rejected."""
     with pytest.raises(ValueError, match="creation_date_to"):
-        _validate_date_param("2099-12-31' UNION SELECT [Name] FROM [User] WHERE 'a'='a", "creation_date_to")
+        validate_date_param("2099-12-31' UNION SELECT [Name] FROM [User] WHERE 'a'='a", "creation_date_to")
 
 
 def test_validate_date_param_garbage():
     """Completely invalid input is rejected."""
     with pytest.raises(ValueError):
-        _validate_date_param("not-a-date", "last_modification_date_from")
+        validate_date_param("not-a-date", "last_modification_date_from")
 
 
 def test_validate_date_param_empty_string():
     """Empty string is rejected."""
     with pytest.raises(ValueError):
-        _validate_date_param("", "creation_date_from")
+        validate_date_param("", "creation_date_from")
 
 
 # ---------------------------------------------------------------------------
@@ -414,18 +414,27 @@ async def test_sort_order_allowlist_valid(generic_tools, mock_client):
 
 @pytest.mark.asyncio
 async def test_sort_field_bracket_injection_sanitized(generic_tools, mock_client):
-    """Bracket characters in sort_by.field are stripped before query."""
+    """Bracket characters in sort_by.field are stripped before query.
+
+    Input "Name] ASC; --" — the injected ']' would close the OQL bracket early
+    if it were left in.  After sanitization the ']' is removed, leaving
+    "Name ASC; --", which is safely wrapped as [Name ASC; --] so the trailing
+    SQL comment stays inside the field identifier and cannot escape to the
+    ORDER BY clause.
+    """
     arguments = {
         "limit": 5,
         "sort_by": [{"field": "Name] ASC; --", "order": "ASC"}],
     }
     await generic_tools.query_objects(arguments)
     query = mock_client.query.call_args[0][0]
-    # The injected ] and trailing content must not appear unbracketed
+    # The injected ']' must not appear unbracketed (i.e. cannot escape the wrapper)
     assert "] ASC; --" not in query
-    # Field should be safely wrapped
+    # The field must be safely enclosed in brackets so the trailing content
+    # cannot be interpreted as a separate ORDER BY token
     assert "[Name ASC; --] ASC" in query
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

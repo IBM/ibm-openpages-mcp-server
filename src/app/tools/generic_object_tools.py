@@ -20,7 +20,7 @@ from src.app.observability.logger import get_logger, log_method_call
 logger = get_logger(__name__)
 
 
-def _validate_date_param(value: str, param_name: str) -> str:
+def validate_date_param(value: str, param_name: str) -> str:
     """Validate a date parameter before interpolating it into an OQL query.
 
     Accepts any value that Python's datetime.fromisoformat() can parse
@@ -33,7 +33,8 @@ def _validate_date_param(value: str, param_name: str) -> str:
         ValueError: If the value does not parse as a valid ISO date/datetime.
     """
     try:
-        datetime.fromisoformat(value)
+        # Python < 3.11 does not accept a trailing "Z" in fromisoformat; normalise first.
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         raise ValueError(
             f"Invalid date value for '{param_name}': {value!r}. "
@@ -1212,24 +1213,20 @@ class GenericObjectTools(BaseTool):
             query += f" AND [Created By] = '{created_by_escaped}'"
         
         if creation_date_from:
-            safe_creation_date_from = _validate_date_param(creation_date_from, "creation_date_from")
-            query += f" AND [Creation Date] >= '{safe_creation_date_from}'"
-        
+            query += f" AND [Creation Date] >= '{validate_date_param(creation_date_from, 'creation_date_from')}'"
+
         if creation_date_to:
-            safe_creation_date_to = _validate_date_param(creation_date_to, "creation_date_to")
-            query += f" AND [Creation Date] <= '{safe_creation_date_to}'"
-        
+            query += f" AND [Creation Date] <= '{validate_date_param(creation_date_to, 'creation_date_to')}'"
+
         if last_modified_by_filter:
             last_modified_by_escaped = last_modified_by_filter.replace("'", "''")
             query += f" AND [Last Modified By] = '{last_modified_by_escaped}'"
-        
+
         if last_modification_date_from:
-            safe_last_modification_date_from = _validate_date_param(last_modification_date_from, "last_modification_date_from")
-            query += f" AND [Last Modification Date] >= '{safe_last_modification_date_from}'"
-        
+            query += f" AND [Last Modification Date] >= '{validate_date_param(last_modification_date_from, 'last_modification_date_from')}'"
+
         if last_modification_date_to:
-            safe_last_modification_date_to = _validate_date_param(last_modification_date_to, "last_modification_date_to")
-            query += f" AND [Last Modification Date] <= '{safe_last_modification_date_to}'"
+            query += f" AND [Last Modification Date] <= '{validate_date_param(last_modification_date_to, 'last_modification_date_to')}'"
         
         if location_filter:
             location_escaped = location_filter.replace('*', '%').replace("'", "''")
@@ -1340,13 +1337,19 @@ class GenericObjectTools(BaseTool):
                 )
 
             # Sanitize field: strip any bracket characters to prevent injection
-            # into the [field] wrapper added below.
-            field = re.sub(r"[\[\]]", "", str(field))
+            # into the [field] wrapper added below.  All subsequent logic MUST
+            # use this sanitized `field` variable — never the raw sort_item['field'].
+            raw_field = str(field)
+            field = re.sub(r"[\[\]]", "", raw_field)
 
-            # Handle field names with group information in brackets
-            if '[' in sort_item['field'] and sort_item['field'].endswith(']'):
-                field_name = sort_item['field'].split('[')[0].strip()
-                group_name = sort_item['field'][sort_item['field'].find('[')+1:sort_item['field'].find(']')]
+            # Handle field names with group information in brackets.
+            # Re-detect brackets on the *raw* input to decide the format, but
+            # build the query using only the already-sanitized `field` value.
+            if '[' in raw_field and raw_field.endswith(']'):
+                field_name = raw_field.split('[')[0].strip()
+                # Strip any brackets from the extracted group name as well.
+                group_name = re.sub(r"[\[\]]", "", raw_field[raw_field.find('[')+1:raw_field.find(']')])
+                field_name = re.sub(r"[\[\]]", "", field_name)
                 full_field_name = f"{group_name}:{field_name}"
 
                 # Check if this field exists in field_mapping
