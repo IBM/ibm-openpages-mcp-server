@@ -559,11 +559,6 @@ Generic tools that work with any object type by accepting `object_type` as a par
   - Supports create, update, and upsert operations
   - Example: `{"object_type": "SOXIssue", "operation": "create", "name": "New Issue", ...}`
 
-- **`openpages_query_objects`**: Query any object type
-  - Accepts `object_type` parameter
-  - Supports filtering, sorting, and pagination
-  - Example: `{"object_type": "SOXControl", "filters": {"Status": "Active"}, ...}`
-
 - **`openpages_delete_object`**: Delete any object
   - Accepts `object_type` parameter
   - Requires `resource_id` or `path`
