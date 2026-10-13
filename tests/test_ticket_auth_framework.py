@@ -12,11 +12,14 @@ import httpx
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from src.app.auth import cache as cache_mod
 from src.app.auth import providers as providers_mod
 from src.app.auth import token_exchange as tx_mod
 from src.app.auth.cache import TokenCache
 from src.app.auth.providers import (
+    WLP_TOKEN_TYPE,
     AuthorizationHeaderProvider,
+    LocalModeBearer,
     PassthroughTokenProvider,
     ServerCredentialProvider,
     TicketTokenProvider,
@@ -248,6 +251,154 @@ class TestTicketTokenProvider:
         # second resolve hits local cache — no second redeem
         await provider.resolve()
         client.redeem_ticket.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_local_mode_uses_artifact_directly_and_tags_bearer(self, monkeypatch):
+        # SaaS local JWT (mode=local): OpenPages signed this token itself, so it is used
+        # directly with NO IDP exchange — and the bearer is tagged so OP REST calls carry
+        # the X-OP-Token-Type marker that routes them to the opLocalJwt consumer.
+        exch = AsyncMock(return_value=("should-not-be-used", 3600))
+        monkeypatch.setattr(providers_mod, "exchange_refresh_artifact", exch)
+        raw_jwt = _jwt_bearer().split(" ", 1)[1]
+        client = MagicMock()
+        client.redeem_ticket = AsyncMock(
+            return_value={"mode": "local", "refreshArtifact": raw_jwt}
+        )
+        local = TokenCache()
+        provider = TicketTokenProvider("opct_local", client, _make_settings(), local)
+
+        bearer = await provider.resolve()
+        assert bearer == f"Bearer {raw_jwt}"           # artifact used directly
+        assert isinstance(bearer, LocalModeBearer)     # ...and tagged
+        assert bearer.op_token_type == WLP_TOKEN_TYPE
+        exch.assert_not_awaited()                      # NO IDP exchange
+        assert len(local) == 1
+        # the tag must survive the cache round-trip, or the marker header vanishes
+        cached = await provider.resolve()
+        assert isinstance(cached, LocalModeBearer)
+        client.redeem_ticket.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_local_tag_survives_a_serialising_cache(self, monkeypatch):
+        # The tag must be rebuilt from the entry's own token_type field, not from the cached
+        # object's Python type. An in-process cache hands back the identical object so the
+        # subclass survives by luck; a Redis-backed one would return a bare str and the
+        # routing header would vanish with no error. Simulate that by flattening the entry.
+        monkeypatch.setattr(providers_mod, "exchange_refresh_artifact", AsyncMock())
+        raw_jwt = _jwt_bearer().split(" ", 1)[1]
+        client = MagicMock()
+        client.redeem_ticket = AsyncMock(
+            return_value={"mode": "local", "refreshArtifact": raw_jwt}
+        )
+        local = TokenCache()
+        provider = TicketTokenProvider("opct_ser", client, _make_settings(), local)
+        await provider.resolve()
+
+        entry = local._cache[provider._cache_key]
+        entry.token = str(entry.token)               # what a serialising store gives back
+        assert not isinstance(entry.token, LocalModeBearer)
+        assert entry.token_type == WLP_TOKEN_TYPE    # ...but the kind is still recorded
+
+        cached = await provider.resolve()
+        assert isinstance(cached, LocalModeBearer)
+        assert cached == f"Bearer {raw_jwt}"
+        client.redeem_ticket.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_idp_bearer_is_never_tagged_from_cache(self, monkeypatch):
+        # The inverse guard: re-tagging every cached bearer would send X-OP-Token-Type: wlp
+        # on IdP tokens and route them to the wrong Liberty consumer.
+        monkeypatch.setattr(
+            providers_mod, "exchange_refresh_artifact", AsyncMock(return_value=("Bearer idp", 3600))
+        )
+        client = MagicMock()
+        client.redeem_ticket = AsyncMock(
+            return_value={"mode": "isv", "refreshArtifact": "art"}
+        )
+        local = TokenCache()
+        provider = TicketTokenProvider("opct_idp", client, _make_settings(), local)
+
+        assert not isinstance(await provider.resolve(), LocalModeBearer)
+        assert local._cache[provider._cache_key].token_type is None
+        assert not isinstance(await provider.resolve(), LocalModeBearer)   # from cache
+
+    @pytest.mark.asyncio
+    async def test_local_mode_rejects_expired_token(self, monkeypatch):
+        # An expired local token cannot be recovered by re-redeeming the same ticket, so it
+        # must fail loudly rather than be presented to OP REST for an opaque 401.
+        monkeypatch.setattr(providers_mod, "exchange_refresh_artifact", AsyncMock())
+        expired = _jwt_bearer(exp_offset=-10).split(" ", 1)[1]
+        client = MagicMock()
+        client.redeem_ticket = AsyncMock(
+            return_value={"mode": "local", "refreshArtifact": expired}
+        )
+        provider = TicketTokenProvider("opct_exp", client, _make_settings(), TokenCache())
+
+        # PassthroughAuthError, not RuntimeError: the tool handler recognises auth failures
+        # by type, so the caller is told to re-issue a ticket rather than shown a server error.
+        with pytest.raises(PassthroughAuthError, match="expired"):
+            await provider.resolve()
+
+    @pytest.mark.asyncio
+    async def test_local_token_cache_lapses_before_the_token_and_re_redeems(self, monkeypatch):
+        # The staleness guarantee, end to end. The cache TTL is derived from the token's own
+        # exp minus the skew, so the entry always dies BEFORE the token it holds. Once it
+        # lapses the next call re-redeems and gets a *freshly minted* JWT — the ticket is
+        # multi-use, so this needs no new ticket from the front-end. This is what keeps
+        # mode=local immune to the ~1h staleness the issue is about.
+        monkeypatch.setattr(providers_mod, "exchange_refresh_artifact", AsyncMock())
+
+        first = _jwt_bearer(exp_offset=900).split(" ", 1)[1]   # 15-minute token
+        second = _jwt_bearer(exp_offset=900).split(" ", 1)[1]  # the re-minted one
+        assert first != second
+        client = MagicMock()
+        client.redeem_ticket = AsyncMock(side_effect=[
+            {"mode": "local", "refreshArtifact": first},
+            {"mode": "local", "refreshArtifact": second},
+        ])
+
+        # Drive the cache's clock, not the wall clock the JWT exp is read against.
+        now = [0.0]
+        fake_time = MagicMock()
+        fake_time.monotonic = lambda: now[0]
+        monkeypatch.setattr(cache_mod, "time", fake_time)
+
+        settings = _make_settings()          # skew=60, default cache ttl=3600
+        provider = TicketTokenProvider("opct_ttl", client, settings, TokenCache())
+
+        assert await provider.resolve() == f"Bearer {first}"
+        client.redeem_ticket.assert_awaited_once()
+
+        # Comfortably inside the ~840s TTL (900 exp - 60 skew): still served from cache.
+        now[0] = 800
+        assert await provider.resolve() == f"Bearer {first}"
+        client.redeem_ticket.assert_awaited_once()
+
+        # Past the TTL but still inside the token's own 900s life — the entry lapses first,
+        # by the skew. 900 is also far short of the 3600 default, which proves the TTL came
+        # from the token's exp rather than AUTH_TOKEN_CACHE_TTL.
+        now[0] = 900
+        bearer = await provider.resolve()
+        assert bearer == f"Bearer {second}"
+        assert isinstance(bearer, LocalModeBearer)   # re-mint stays tagged
+        assert client.redeem_ticket.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_unknown_mode_still_exchanges(self, monkeypatch):
+        # Guard against the trap that motivated the explicit local branch: any mode the
+        # server does not recognise must keep falling through to the IDP exchange.
+        exch = AsyncMock(return_value=("exchanged", 3600))
+        monkeypatch.setattr(providers_mod, "exchange_refresh_artifact", exch)
+        client = MagicMock()
+        client.redeem_ticket = AsyncMock(
+            return_value={"mode": "isv", "refreshArtifact": "artifact"}
+        )
+        provider = TicketTokenProvider("opct_isv", client, _make_settings(), TokenCache())
+
+        bearer = await provider.resolve()
+        assert bearer == "Bearer exchanged"
+        assert not isinstance(bearer, LocalModeBearer)
+        exch.assert_awaited_once()
 
 
 # ── IDP URL resolution + grant-style derivation ───────────────────────────────

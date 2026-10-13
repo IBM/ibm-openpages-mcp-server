@@ -22,6 +22,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 from src.app.auth.cache import TokenCache
+from src.app.auth.errors import PassthroughAuthError
 from src.app.auth.token_exchange import detect_auth_type, exchange_api_key, exchange_refresh_artifact
 from src.app.auth.token_utils import decode_jwt_token
 
@@ -30,6 +31,26 @@ logger = logging.getLogger(__name__)
 # IDP grant types for the refresh-artifact exchange (auth type 3).
 _IAM_GRANT_TYPE = "urn:ibm:params:oauth:grant-type:delegated-refresh-token"
 _ISV_GRANT_TYPE = "refresh_token"
+
+# Header naming the KIND of bearer being presented, so OpenPages REST can route the
+# request to the matching Liberty consumer. "wlp" = a token Liberty itself signed
+# (the opLocalJwt consumer); absent = an IdP-issued token, handled by the deployment's
+# existing IdP consumer. It only *routes* — the token is still fully validated either
+# way, so a spoofed header with a bad token is a 401.
+OP_TOKEN_TYPE_HEADER = "X-OP-Token-Type"
+WLP_TOKEN_TYPE = "wlp"
+
+
+class LocalModeBearer(str):
+    """An ``Authorization`` value whose OP REST calls must also declare the token type.
+
+    The type rides on the bearer itself rather than being threaded as a separate
+    argument, so it can never desync from the token it belongs to and no client method
+    signature has to change. ``OpenPagesClient._get_request_headers`` reads it back with
+    ``getattr(auth_override, "op_token_type", None)``.
+    """
+
+    op_token_type = WLP_TOKEN_TYPE
 
 
 class AuthProvider(ABC):
@@ -76,6 +97,10 @@ class AuthorizationHeaderProvider(PassthroughTokenProvider):
 
     Behaviourally identical to the passthrough provider (no exchange, no retry);
     the distinct class exists to label the source for logging and tests.
+
+    Reached for **Bearer** values only — ``AuthService.resolve_for_request`` filters Basic out
+    first. On-prem the chat connects with the OpenPages administrator credentials, and passing
+    those through here would run every user's tool calls as that administrator.
     """
 
     async def resolve(self) -> str:
@@ -162,10 +187,17 @@ class TicketTokenProvider(AuthProvider):
     # ── public AuthProvider API ───────────────────────────────────────────────
 
     async def resolve(self) -> str:
-        cached = self._local_cache.get(self._cache_key)
-        if cached:
+        entry = self._local_cache.get_entry(self._cache_key)
+        if entry and entry.token:
             logger.info("Ticket auth [%s]: local cache HIT — using cached user token", self._tid)
-            return cached
+            # Rebuild the tag from the entry's own field rather than trusting the cached
+            # object to still be a LocalModeBearer. The in-process cache does hand back the
+            # exact object, but a serialising store would not, and the marker header would
+            # then vanish with no error. Only wlp-typed entries are re-tagged — tagging an
+            # IdP bearer would route it to the wrong Liberty consumer.
+            if entry.token_type == WLP_TOKEN_TYPE:
+                return LocalModeBearer(entry.token)
+            return entry.token
         logger.info("Ticket auth [%s]: local cache MISS — redeeming + exchanging", self._tid)
         return await self._redeem_and_exchange()
 
@@ -187,13 +219,42 @@ class TicketTokenProvider(AuthProvider):
         redeem = await self._client.redeem_ticket(self._ticket)
         # ``mode`` from the redeem response only tells us what the artifact IS:
         #   "access_token" → it is already the user's access token (use directly);
+        #   "local"        → it is a Liberty-signed OpenPages user JWT (use directly, and
+        #                    tag the bearer so OP REST calls carry the local-mode marker);
         #   anything else   → it is a refresh artifact that must be exchanged at the IDP.
         # The exchange grant flow is NOT taken from here — it is derived from the IDP
         # URL type inside _exchange().
         mode = (redeem.get("mode") or "").lower()
         refresh_artifact = redeem["refreshArtifact"]
 
-        if mode == "access_token":
+        if mode == "local":
+            # OpenPages minted this JWT itself from the user's live Liberty session and signs
+            # it with an OP-held key; OP REST validates it locally against its own truststore.
+            # There is no IDP in this path at all, which is the whole point — it is immune to
+            # the ~1h SSO access-token staleness that breaks the access_token/isv modes.
+            bearer = LocalModeBearer(f"Bearer {refresh_artifact}")
+            expires_in = await self._access_token_lifetime(refresh_artifact)
+            if expires_in <= self._skew:
+                # Same reasoning as the access_token branch: re-redeeming the same ticket
+                # yields the same dead token, so fail fast and let the front-end re-issue.
+                logger.warning(
+                    "Ticket auth [%s]: redeemed local user token already expired "
+                    "(remaining=%ss) — rejecting", self._tid, expires_in,
+                )
+                # PassthroughAuthError, not a bare RuntimeError: this is an auth failure like
+                # every other one in the chain, and the tool handler only recognises it as such
+                # by type — a RuntimeError would be reported to the caller as an internal error
+                # instead of "authentication failed, re-issue a ticket".
+                raise PassthroughAuthError(
+                    f"Ticket auth [{self._tid}]: redeemed local user token is expired "
+                    f"(remaining={expires_in}s) — a fresh ticket is required."
+                )
+            logger.debug(
+                "Ticket auth [%s]: redeem OK (mode=local) — using OP-signed token directly "
+                "(no IDP exchange), marker header will be sent",
+                self._tid,
+            )
+        elif mode == "access_token":
             # IBM Cloud IAM passthrough: the artifact IS the user's access token — use it directly
             # as the bearer, no IDP exchange (OP REST accepts the raw IAM token).
             bearer = f"Bearer {refresh_artifact}"
@@ -204,6 +265,10 @@ class TicketTokenProvider(AuthProvider):
                 # recover here: re-redeeming the same ticket yields the same dead token. Fail fast
                 # with a clear message so the front-end re-issues a ticket from a live session,
                 # instead of presenting a stale bearer that OP REST rejects with an opaque 401.
+                logger.warning(
+                    "Ticket auth [%s]: redeemed user access token already expired "
+                    "(remaining=%ss) — rejecting", self._tid, expires_in,
+                )
                 raise RuntimeError(
                     f"Ticket auth [{self._tid}]: redeemed user access token is expired "
                     f"(remaining={expires_in}s) — a fresh ticket is required "
@@ -216,7 +281,10 @@ class TicketTokenProvider(AuthProvider):
 
         ttl = max(int(expires_in) - self._skew, 0)
         if ttl > 0:
-            self._local_cache.set(self._cache_key, bearer, ttl=ttl)
+            self._local_cache.set(
+                self._cache_key, bearer, ttl=ttl,
+                token_type=getattr(bearer, "op_token_type", None),
+            )
         logger.info(
             "Ticket auth [%s]: user token ready (expires_in=%ss), cached locally (ttl=%ss)",
             self._tid, expires_in, ttl,

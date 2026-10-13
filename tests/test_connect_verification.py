@@ -14,6 +14,7 @@ Covers:
   * initialize end-to-end via FastAPI TestClient
 """
 
+import base64
 import os
 
 # The settings singleton is instantiated at import time and requires mandatory
@@ -196,6 +197,128 @@ class TestVerifyOpenpagesAccessHelper:
         with pytest.raises(HTTPException) as exc:
             await http_router._verify_openpages_access(server, "Bearer abc", None)
         assert exc.value.status_code == 503
+
+
+# --------------------------------------------------------------------------- #
+# http_router._verify_openpages_access — Basic as a CHANNEL credential
+#
+# Basic names the calling service, not a user, so AuthService refuses to resolve it
+# (see auth.service.is_basic_auth_scheme). The probe must therefore NOT send it through the
+# resolver — doing so would 401 the very credential the channel gate just accepted, and
+# the on-prem chat could never open a session. It is probed against OpenPages verbatim.
+# --------------------------------------------------------------------------- #
+_BASIC = "Basic " + base64.b64encode(b"OpenPagesAdministrator:pw").decode()  # pragma: allowlist secret
+
+
+class TestBasicChannelCredentialAtConnect:
+    @pytest.mark.asyncio
+    async def test_basic_bypasses_user_resolver(self, probe_on):
+        """The resolver is never consulted for Basic — it would reject it by design."""
+        server = _fake_server()
+        await http_router._verify_openpages_access(server, _BASIC, None)
+        server.auth_service.resolve_for_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_basic_is_probed_verbatim(self, probe_on):
+        """OpenPages receives the Basic header unchanged, so OP validates it natively."""
+        server = _fake_server()
+        await http_router._verify_openpages_access(server, _BASIC, None)
+        server.client.verify_access.assert_awaited_once_with(auth_override=_BASIC)
+
+    @pytest.mark.asyncio
+    async def test_basic_connect_succeeds_with_real_auth_service(self, probe_on):
+        """The regression this closes, end to end.
+
+        Uses a REAL AuthService rather than a mocked one: the mock would happily resolve
+        Basic and hide the bug, whereas the real resolver refuses it. Before the carve-out
+        this call raised HTTPException(401) and no session was ever minted.
+        """
+        server = MagicMock()
+        server.auth_service = AuthService(settings=_make_settings(OPENPAGES_AUTH_MODE="user"))
+        server.client.verify_access = AsyncMock(return_value=True)
+
+        await http_router._verify_openpages_access(server, _BASIC, None)  # must not raise
+
+        server.client.verify_access.assert_awaited_once_with(auth_override=_BASIC)
+
+    @pytest.mark.asyncio
+    async def test_resolver_would_have_rejected_basic(self, probe_on):
+        """Guards the premise: a real AuthService raises PassthroughAuthError on Basic,
+        which is exactly why the carve-out above exists."""
+        service = AuthService(settings=_make_settings(OPENPAGES_AUTH_MODE="user"))
+        with pytest.raises(PassthroughAuthError):
+            await service.resolve_for_request(authorization=_BASIC)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [401, 403])
+    async def test_bad_basic_credential_maps_401(self, probe_on, status):
+        """Presence is not enough — OpenPages rejecting the credential fails the connect."""
+        server = _fake_server(verify_side_effect=_http_status_error(status))
+        with pytest.raises(HTTPException) as exc:
+            await http_router._verify_openpages_access(server, _BASIC, None)
+        assert exc.value.status_code == 401
+        assert exc.value.headers.get("WWW-Authenticate") == "Bearer"
+
+    @pytest.mark.asyncio
+    async def test_basic_op_5xx_maps_502(self, probe_on):
+        server = _fake_server(verify_side_effect=_http_status_error(500))
+        with pytest.raises(HTTPException) as exc:
+            await http_router._verify_openpages_access(server, _BASIC, None)
+        assert exc.value.status_code == 502
+
+    @pytest.mark.asyncio
+    async def test_basic_network_error_maps_503(self, probe_on):
+        server = _fake_server(verify_side_effect=httpx.ConnectError("unreachable"))
+        with pytest.raises(HTTPException) as exc:
+            await http_router._verify_openpages_access(server, _BASIC, None)
+        assert exc.value.status_code == 503
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "header",
+        ["basic dXNlcjpwdw==", "BASIC dXNlcjpwdw==", "  Basic dXNlcjpwdw==  "],
+    )
+    async def test_scheme_match_is_case_and_space_insensitive(self, probe_on, header):
+        server = _fake_server()
+        await http_router._verify_openpages_access(server, header, None)
+        server.auth_service.resolve_for_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_api_key_outranks_basic(self, probe_on):
+        """With both present the API key is a real user artifact: the resolver runs, and
+        its exchanged bearer (not the Basic header) is what gets probed."""
+        server = _fake_server(auth_override="Bearer exchanged")
+        await http_router._verify_openpages_access(server, _BASIC, "apikey123")
+        server.auth_service.resolve_for_request.assert_awaited_once_with(
+            authorization=_BASIC, api_key="apikey123"  # pragma: allowlist secret
+        )
+        server.client.verify_access.assert_awaited_once_with(auth_override="Bearer exchanged")
+
+    @pytest.mark.asyncio
+    async def test_bearer_still_uses_resolver(self, probe_on):
+        """The carve-out is scoped to Basic — Bearer passthrough is unchanged."""
+        server = _fake_server(auth_override="Bearer resolved")
+        await http_router._verify_openpages_access(server, "Bearer abc", None)
+        server.auth_service.resolve_for_request.assert_awaited_once_with(
+            authorization="Bearer abc", api_key=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_basic_noop_in_server_credential_mode(self, monkeypatch):
+        """Server-credential deployments skip the probe entirely, Basic included."""
+        monkeypatch.setattr(http_router._app_settings, "OPENPAGES_AUTH_MODE", "server", raising=False)
+        server = _fake_server()
+        await http_router._verify_openpages_access(server, _BASIC, None)
+        server.auth_service.resolve_for_request.assert_not_called()
+        server.client.verify_access.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_basic_credential_is_never_logged(self, probe_on, caplog):
+        server = _fake_server()
+        with caplog.at_level("DEBUG"):
+            await http_router._verify_openpages_access(server, _BASIC, None)
+        assert "OpenPagesAdministrator" not in caplog.text
+        assert _BASIC.split()[1] not in caplog.text
 
 
 # --------------------------------------------------------------------------- #

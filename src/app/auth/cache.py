@@ -22,6 +22,12 @@ class CacheEntry:
     """A cached token with expiration time."""
     token: str
     expires_at: float
+    #: Kind of bearer this is, when it is not an ordinary IdP token (see
+    #: ``auth.providers.LocalModeBearer``). Held as an explicit field rather than as an
+    #: attribute on a ``str`` subclass so it survives any backing store: a serialising
+    #: cache (Redis) would hand a subclass back as a bare ``str`` and drop the attribute
+    #: silently, taking the OP REST routing header with it.
+    token_type: Optional[str] = None
 
 
 class TokenCache:
@@ -54,6 +60,22 @@ class TokenCache:
         Returns:
             Token string if found and not expired, None otherwise
         """
+        entry = self.get_entry(key)
+        return entry.token if entry else None
+
+    def get_entry(self, key: str) -> Optional[CacheEntry]:
+        """
+        Get the full cache entry if not expired.
+
+        Callers that need the token's kind as well as its value use this; ``get`` is the
+        shorthand for the common case.
+
+        Args:
+            key: Cache key
+
+        Returns:
+            CacheEntry if found and not expired, None otherwise
+        """
         entry = self._cache.get(key)
         if entry is None:
             return None
@@ -64,9 +86,10 @@ class TokenCache:
             logger.debug("Cache entry expired, evicted")
             return None
 
-        return entry.token
+        return entry
 
-    def set(self, key: str, token: str, ttl: Optional[int] = None) -> None:
+    def set(self, key: str, token: str, ttl: Optional[int] = None,
+            token_type: Optional[str] = None) -> None:
         """
         Cache a token with TTL.
 
@@ -74,6 +97,7 @@ class TokenCache:
             key: Cache key
             token: Token string to cache
             ttl: Time-to-live in seconds (uses default_ttl if not specified)
+            token_type: Kind of bearer, for tokens that are not ordinary IdP tokens
         """
         # Evict oldest if at max size
         if len(self._cache) >= self.max_size and key not in self._cache:
@@ -82,7 +106,8 @@ class TokenCache:
         effective_ttl = ttl if ttl is not None else self.default_ttl
         self._cache[key] = CacheEntry(
             token=token,
-            expires_at=time.monotonic() + effective_ttl
+            expires_at=time.monotonic() + effective_ttl,
+            token_type=token_type,
         )
         logger.debug("Token cached successfully")
 

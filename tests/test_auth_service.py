@@ -9,11 +9,17 @@ import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from src.app.auth.service import AuthService, AuthResult
+from src.app.auth.service import (
+    AuthService,
+    AuthResult,
+    PassthroughAuthError,
+    is_basic_auth_scheme,
+)
 from src.app.auth.providers import (
     ApiKeyTokenProvider,
     PassthroughTokenProvider,
     ServerCredentialProvider,
+    TicketTokenProvider,
 )
 
 
@@ -129,6 +135,73 @@ class TestAuthService:
         # Server credentials -> empty token -> auth_override None; resolved via ServerCredentialProvider.
         assert result.auth_override is None
         assert isinstance(result.provider, ServerCredentialProvider)
+
+    # ── Basic Authorization is a channel credential, never a user credential ──
+    #
+    # The on-prem chat has no custom API-key header, so it secures its connection with the
+    # OpenPages administrator credentials — which must open the door without deciding who
+    # walked through it.
+
+    @pytest.mark.asyncio
+    async def test_basic_authorization_is_not_resolved_as_user(self):
+        """A Basic Authorization header must never become the user credential.
+
+        Without this, every on-prem chat tool call runs as the administrator whose
+        credentials secure the connection — while returning 200 and looking healthy.
+        """
+        settings = self._make_settings(server_creds=False)
+        service = AuthService(settings)
+
+        basic = "Basic " + base64.b64encode(b"OpenPagesAdministrator:pw").decode()  # pragma: allowlist secret
+
+        with pytest.raises(PassthroughAuthError):
+            await service.resolve_for_request(authorization=basic)
+
+    @pytest.mark.asyncio
+    async def test_ticket_wins_over_basic_authorization(self):
+        """With both a Basic header and a ticket, the ticket decides the identity."""
+        settings = self._make_settings(server_creds=False)
+        client = MagicMock()
+        service = AuthService(settings, client=client)
+
+        basic = "Basic " + base64.b64encode(b"OpenPagesAdministrator:pw").decode()  # pragma: allowlist secret
+        ticket = "opct_" + "a" * 27
+
+        with patch.object(
+            TicketTokenProvider, "resolve", new=AsyncMock(return_value="Bearer user-token")
+        ):
+            result = await service.resolve_for_request(
+                authorization=basic,
+                op_auth_ticket=ticket,
+                has_op_auth_ticket=True,
+            )
+
+        assert result.auth_override == "Bearer user-token"
+        assert isinstance(result.provider, TicketTokenProvider)
+
+    @pytest.mark.asyncio
+    async def test_bearer_authorization_still_resolves_as_user(self):
+        """The Basic carve-out must not disturb normal Bearer passthrough."""
+        settings = self._make_settings(server_creds=False)
+        service = AuthService(settings)
+
+        token = _make_jwt_bearer()
+        result = await service.resolve_for_request(authorization=token)
+
+        assert result.auth_override == token
+
+    @pytest.mark.parametrize(
+        "value",
+        ["basic dXNlcjpwdw==", "BASIC dXNlcjpwdw==", "  Basic dXNlcjpwdw==  "],
+    )
+    def test_is_basic_scheme_is_case_and_space_insensitive(self, value):
+        """Scheme matching is case-insensitive per RFC 7235; a spoofed casing must not slip through."""
+        assert is_basic_auth_scheme(value) is True
+
+    @pytest.mark.parametrize("value", ["", None, "Bearer abc", "Basicxyz", "Negotiate abc"])
+    def test_is_basic_scheme_rejects_non_basic(self, value):
+        """Only the Basic scheme is carved out — everything else stays a user credential."""
+        assert is_basic_auth_scheme(value) is False
 
     @pytest.mark.asyncio
     async def test_api_key_exchange_uses_resolved_auth_url(self):

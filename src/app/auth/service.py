@@ -4,10 +4,14 @@ Auth Service Module
 Central coordinator that resolves authentication for each tool request.
 
 Implements an ordered, pluggable resolver over four auth types, in fixed priority:
-    1. HTTP ``Authorization`` bearer  (AuthorizationHeaderProvider)
+    1. HTTP ``Authorization`` **Bearer** (AuthorizationHeaderProvider)
     2. ``op_auth_header`` context var (PassthroughTokenProvider)
     3. ``op_auth_ticket`` context var (TicketTokenProvider, redeem + IAM/ISV exchange)
     4. API key in a configurable header (ApiKeyTokenProvider, same-IDP exchange)
+
+Type 1 accepts the Bearer scheme only. An ``Authorization: Basic`` header is a *channel*
+credential (it satisfies the connection gate) and is skipped by the resolver, because it
+identifies the calling service rather than a user — see ``is_basic_auth_scheme``.
 
 The ticket outranks the API key: in the Orchestrate flow the API key secures the
 *connection* (channel gate) while per-call tool execution binds to the user's
@@ -17,8 +21,8 @@ Fail-fast: the highest-priority artifact *present* is authoritative; if it fails
 validation/exchange/redeem the request is rejected — never downgraded to a
 lower-priority credential.
 
-Server-credential deployments (``OPENPAGES_AUTH_MODE=server`` — dev / local stdio /
-on-prem, typically basic auth) bypass this user-auth framework entirely: the resolver
+Server-credential deployments (``OPENPAGES_AUTH_MODE=server`` — dev / local stdio,
+typically basic auth) bypass this user-auth framework entirely: the resolver
 short-circuits to the server's own credentials and never inspects incoming artifacts
 (``OPENPAGES_AUTHENTICATION_TYPE`` only selects the *kind* of server credential —
 basic vs bearer — and does not participate in resolution). In user-auth mode the four
@@ -30,6 +34,8 @@ import logging
 from typing import Optional
 
 from src.app.auth.cache import TokenCache
+# Re-exported: callers (and tests) import PassthroughAuthError from this module.
+from src.app.auth.errors import PassthroughAuthError
 from src.app.auth.providers import (
     ApiKeyTokenProvider,
     AuthProvider,
@@ -52,10 +58,17 @@ _MAX_TICKET_LENGTH = 256  # a real ticket is ~32 chars (opct_ + base64url of 20 
 _MAX_API_KEY_LENGTH = 8192  # IDP-dependent and can be long; bound rejects megabyte payloads
 
 
-class PassthroughAuthError(Exception):
-    """Raised when a user auth artifact is required/present but unusable, and no
-    lower-priority credential may be substituted (fail-fast)."""
-    pass
+def is_basic_auth_scheme(header_value: str) -> bool:
+    """Whether an ``Authorization`` header value uses the HTTP Basic scheme.
+
+    Basic authenticates the *channel* — which caller may connect — never a user, so it must
+    not resolve as a type-1 passthrough token. See priority 1 in
+    :meth:`AuthService.resolve_for_request`.
+    """
+    if not header_value:
+        return False
+    parts = header_value.strip().split(None, 1)
+    return bool(parts) and parts[0].lower() == "basic"
 
 
 class AuthResult:
@@ -158,7 +171,7 @@ class AuthService:
 
         # ── Server-credential deployments: bypass the user-auth framework ────
         # When the deployment runs entirely on its own credentials (OPENPAGES_AUTH_MODE=server,
-        # e.g. a basic-auth on-prem / local / dev install) the per-user resolver (types 1-4)
+        # e.g. a basic-auth local / dev install) the per-user resolver (types 1-4)
         # does not apply at all. OPENPAGES_AUTHENTICATION_TYPE only selects the *kind* of
         # server credential (basic vs bearer); it must never feed the user-auth resolver. Any
         # incoming Authorization / api-key / ticket is at most a channel-gate credential (and
@@ -175,7 +188,12 @@ class AuthService:
             return AuthResult(token or None, provider, username)
 
         # ── Priority 1: HTTP Authorization bearer ────────────────────────────
-        if authorization:
+        # Basic is skipped deliberately, and that is what makes on-prem user auth work: the
+        # on-prem chat secures its connection with the OpenPages administrator credentials, which
+        # name the service account, not the signed-in user. Basic therefore falls through to the
+        # op_auth_ticket below, the only artifact naming the real user; with no ticket the request
+        # is rejected at the end of this method rather than downgraded — never fall back to admin.
+        if authorization and not is_basic_auth_scheme(authorization):
             await self._token_validator.validate(authorization)
             logger.info("Auth resolved via HTTP Authorization header (type 1)")
             username = await self._extract_and_log_username(authorization, "Authorization header")
@@ -262,5 +280,5 @@ class AuthService:
 
     def _server_cred_fallback_allowed(self) -> bool:
         """Server creds may stand in for a user only in server-credential deployments
-        (dev / local stdio / on-prem); production-remote SaaS rejects artifact-less calls."""
+        (dev / local stdio); user-auth deployments reject artifact-less calls."""
         return self.settings.uses_server_credentials()

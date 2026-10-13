@@ -19,10 +19,12 @@ import os
 import json
 import pathlib
 from pathlib import Path
-from pydantic import SecretStr, model_validator
+from pydantic import PrivateAttr, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Dict, Any, List
 import logging
+from dotenv import dotenv_values
+from src.app.config import crypto
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,7 @@ class Settings(BaseSettings):
         OUTPUT_FORMAT: Default output format ('text' or 'json')
         OBJECT_TYPES_CONFIG_PATH: Path to object types configuration file
     """
+    _dotenv_values: Dict[str, Any] = PrivateAttr(default_factory=dict)
     
     # Application settings
     APP_NAME: str = "GRC MCP Server"
@@ -78,7 +81,6 @@ class Settings(BaseSettings):
     SERVER_MODE: str = "remote"  # 'remote' or 'local'
     
     # OpenPages settings (mandatory - will be validated)
-    _base_url: str = ""
     # Ensure the base URL has the correct protocol
     OPENPAGES_BASE_URL: str = ""
     OPENPAGES_AUTHENTICATION_TYPE: str = "basic"
@@ -112,8 +114,13 @@ class Settings(BaseSettings):
     #     server creds; server creds are used only for the redeemTicket call. This is
     #     the safe default for SaaS and ticket-issuing Cloud Pak deployments.
     #   * "server" — the MCP server runs on its own credentials: no connection gate,
-    #     tool calls fall back to server creds. Opt in explicitly for on-prem /
-    #     Cloud Pak agent / local / dev.
+    #     tool calls fall back to server creds. Opt in explicitly for Cloud Pak agent /
+    #     local / dev.
+    #
+    # ON-PREM EMBEDDED CHAT MUST USE "user". OpenPages issues a chat ticket on every deployment
+    # now, but "server" short-circuits the resolver before the ticket is read, running every tool
+    # call as the MCP service account. On-prem the chat passes the connection gate with an
+    # Authorization: Basic header — a CHANNEL credential only (see auth.service.is_basic_auth_scheme).
     OPENPAGES_AUTH_MODE: str = "user"
 
     # ── Embedded-chat ticket auth (type 3) + shared 4-type framework ─────────
@@ -343,7 +350,10 @@ class Settings(BaseSettings):
           * "server" — no connection gate; tool calls fall back to server credentials.
 
         Default is "user" (safe by default); server-credential mode must opt in with
-        OPENPAGES_AUTH_MODE=server (on-prem / Cloud Pak agent / local / dev).
+        OPENPAGES_AUTH_MODE=server (Cloud Pak agent / local / dev).
+
+        On-prem embedded chat must stay on "user": it receives a chat ticket like every other
+        deployment, and "server" would ignore it and run all tool calls as the service account.
         """
         return self.OPENPAGES_AUTH_MODE.strip().lower() != "user"
 
@@ -352,7 +362,7 @@ class Settings(BaseSettings):
 
         Active only in user-auth mode (where per-user credentials flow) and when
         MCP_VERIFY_ACCESS_ON_CONNECT is enabled. Server-credential deployments
-        (dev / local / on-prem) run everything on the server's own creds and skip it.
+        (dev / local) run everything on the server's own creds and skip it.
         """
         return self.MCP_VERIFY_ACCESS_ON_CONNECT and not self.uses_server_credentials()
 
@@ -389,8 +399,14 @@ class Settings(BaseSettings):
         
         # Update model config with the resolved env file path
         self.model_config["env_file"] = str(env_file_path)
-            
+
         super().__init__(**data)
+
+        # Keep dotenv values local rather than mutating os.environ. This makes the keystore
+        # password configuration available on Windows while isolating Settings instances.
+        self._dotenv_values = {
+            key: value for key, value in dotenv_values(str(env_file_path)).items() if value is not None
+        }
         
         # Read API key from file if path is provided and API key is not already set
         if self.OPENPAGES_APIKEY_FILE and not self.OPENPAGES_APIKEY:
@@ -440,8 +456,58 @@ class Settings(BaseSettings):
         # Load object types from JSON file (non-blocking)
         self._load_object_types()
         
+        # Placed AFTER every loader above so one pass covers env, .env and the *_FILE /
+        # SECRETS_PATH mechanisms alike, and BEFORE _validate_settings() so validation sees real
+        # credentials rather than ciphertext. Idempotent: a decrypted value loses the marker.
+        self._decrypt_encoded_settings()
+
         # Validate mandatory settings
         self._validate_settings()
+
+    def _decrypt_encoded_settings(self) -> None:
+        """Resolve every ``{enc}...`` setting in place using the configured keystore.
+
+        Any string setting may carry the ``{enc}`` marker; see ``src/app/config/crypto.py`` and
+        the ``manage_secrets.py`` CLI.
+
+        Installs that do not use encryption are untouched: with no ``{enc}`` value present
+        this returns immediately.
+
+        Once a value *does* carry the marker, every way of failing to decrypt it is fatal at
+        startup — no password configured, the keystore file absent, or the ciphertext not
+        opening. The absent-keystore case is the easy one to hit: ``docker-compose.yml``
+        always sets ``OP_MCP_KEYSTORE_PATH``, so forgetting to mount ``./secrets`` leaves the
+        path configured but the file missing. Continuing would leave ciphertext sitting in
+        ``OPENPAGES_PASSWORD`` and surface as a confusing 401 hours later, far from the cause.
+        """
+        encrypted: List[tuple[str, str]] = []
+        for name in type(self).model_fields:
+            value = getattr(self, name, None)
+            if crypto.is_encrypted(value):
+                # ``is_encrypted`` is a TypeGuard, so ``value`` is a str from here on.
+                encrypted.append((name, value))
+        if not encrypted:
+            return
+
+        crypto_environment = {**self._dotenv_values, **os.environ}
+        password = crypto.keystore_password(crypto_environment)
+        path = crypto.keystore_path(crypto_environment)
+        if password is None or not path.exists():
+            # Name the settings, never their values.
+            names = ", ".join(sorted(name for name, _ in encrypted))
+            raise crypto.SecretsError(
+                f"{len(encrypted)} setting(s) are {{enc}}-encrypted but no keystore is "
+                f"available to decrypt them: {names}. Looked for the keystore at {path} "
+                f"(override with ${crypto.KEYSTORE_PATH_ENV}); set its password via "
+                f"${crypto.KEYSTORE_PASSWORD_FILE_ENV} (preferred, mode 0600) or "
+                f"${crypto.KEYSTORE_PASSWORD_ENV}."
+            )
+
+        private_key = crypto.load_keystore(path, password)
+        for name, value in encrypted:
+            # Never log the setting's value — only its name.
+            setattr(self, name, crypto.decrypt_value(value, name, private_key))
+        logger.info("Decrypted %d configuration setting(s) from the keystore", len(encrypted))
     
     def _read_secret_file(self, filename: str) -> Optional[str]:
         """

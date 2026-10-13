@@ -370,7 +370,7 @@ See [`.env.example`](.env.example) for all available configuration options.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENPAGES_AUTH_MODE` | `user` | `user` enforces the per-user auth framework (multi-tenant SaaS) — tool calls never fall back to server credentials. `server` runs the MCP server on its own credentials (on-prem / Cloud Pak / local / dev). |
+| `OPENPAGES_AUTH_MODE` | `user` | `user` enforces the per-user auth framework (multi-tenant SaaS) — tool calls never fall back to server credentials. `server` runs the MCP server on its own credentials (Cloud Pak / local / dev). On-prem embedded chat must use `user` — see [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md#on-prem-embedded-chat-user-authentication). |
 | `SUPPORTED_APIKEY_AUTH_HEADER_NAMES` | `X-Api-Key` | Comma-separated list of header names that may carry the connection API key; the first present header wins. |
 
 ### Authentication Methods
@@ -391,7 +391,7 @@ The server supports multiple authentication methods for connecting to OpenPages.
 
 When `OPENPAGES_AUTH_MODE=user`, each tool call is authenticated independently through an ordered, fail-fast resolver (highest-priority artifact present wins; if it fails, the request is rejected — never downgraded):
 
-1. HTTP `Authorization` bearer header
+1. HTTP `Authorization` bearer header (Bearer only — `Basic` is a connection credential, never a user)
 2. `op_auth_header` context variable (passthrough JWT)
 3. `op_auth_ticket` context variable (opaque ticket redeemed + exchanged server-side)
 4. API key in a configured header (`SUPPORTED_APIKEY_AUTH_HEADER_NAMES`)

@@ -61,6 +61,62 @@ HOST=0.0.0.0
 PORT=8000
 ```
 
+### 2b. Encrypt credentials at rest (on-prem)
+
+On-prem installations should not leave the OpenPages password in plaintext in `.env`.
+Any setting can instead hold an `{enc}<base64>` value — the same convention as Liberty's
+`{aes}` in `bootstrap.properties`. The server decrypts it at startup.
+
+**One-time setup.** Pick where the keystore password lives first. A file readable only by
+the service account is preferred over an environment variable, which anything that can
+inspect the process or container definition can read:
+
+```bash
+umask 077
+echo 'choose-a-strong-passphrase' > /etc/opmcp/keystore.pw
+export OP_MCP_KEYSTORE_PASSWORD_FILE=/etc/opmcp/keystore.pw
+
+venv/bin/python3 manage_secrets.py init
+```
+
+**Encrypt a value.** The plaintext is prompted for, never passed as an argument, so it
+stays out of your shell history:
+
+```bash
+venv/bin/python3 manage_secrets.py encrypt --setting OPENPAGES_PASSWORD
+```
+
+Paste the printed line into `.env`, replacing the plaintext entry:
+
+```env
+OPENPAGES_PASSWORD={enc}<base64>
+```
+
+To encrypt the plaintext already in `.env` and rewrite that line in place, use
+`--update-env` instead; `--stdin` reads the value from a pipe.
+
+**Check and rotate.** `status` reports which settings are encrypted without decrypting
+anything. `rotate` generates a new key, re-encrypts every `{enc}` value in `.env` under it,
+and backs up both the old keystore and the old `.env` first:
+
+```bash
+venv/bin/python3 manage_secrets.py status
+venv/bin/python3 manage_secrets.py rotate
+```
+
+**Back up the keystore** (`secrets/op-mcp-keystore.p12` by default). Without it every
+`{enc}` value is unrecoverable. Never commit it — `.gitignore` excludes `secrets/` and
+`*.p12`.
+
+Encryption is opt-in per value: plaintext settings keep working unchanged, so an existing
+install is unaffected until you choose to encrypt something.
+
+Once a value *is* encrypted, the server will not start without the keystore that opens it.
+That is deliberate. The common way to hit it is an unmounted `./secrets` volume — the
+compose file always sets `OP_MCP_KEYSTORE_PATH`, so the path stays configured while the file
+goes missing. Startup fails naming the settings it could not decrypt, which is far easier to
+act on than ciphertext reaching OpenPages and coming back as an unexplained 401.
+
 ### 3. Verify Configuration Files
 
 Ensure these files exist:

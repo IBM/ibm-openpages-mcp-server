@@ -10,6 +10,8 @@ httpx>=0.24.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 python-dotenv>=1.0.0
+# {enc} settings decryption (src/app/config/crypto.py)
+cryptography>=42.0.0
 
 # Date/Time Utilities
 python-dateutil>=2.8.2

@@ -22,6 +22,7 @@ import pytest
 import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
 from src.app.core.openpages_client import OpenPagesClient
+from src.app.auth.providers import LocalModeBearer
 from src.app.auth.service import AuthService, PassthroughAuthError
 from src.app.auth.token_validator import TokenValidationError
 
@@ -371,6 +372,31 @@ class TestGetRequestHeadersSnapshot:
         assert headers is not bearer_client.headers
         assert headers["Authorization"] == "Bearer user-token"
         assert bearer_client.headers["Authorization"] == "Bearer old-token"
+
+
+class TestLocalAuthModeMarker:
+    """A LocalModeBearer must add the X-OP-Token-Type marker; nothing else may."""
+
+    @pytest.mark.asyncio
+    async def test_local_mode_bearer_adds_marker(self, bearer_client):
+        headers = await bearer_client._get_request_headers(
+            auth_override=LocalModeBearer("Bearer op-signed-jwt")
+        )
+        assert headers["Authorization"] == "Bearer op-signed-jwt"
+        assert headers["X-OP-Token-Type"] == "wlp"
+        # never leaks onto the client's shared header dict
+        assert "X-OP-Token-Type" not in bearer_client.headers
+
+    @pytest.mark.asyncio
+    async def test_plain_bearer_has_no_marker(self, bearer_client):
+        headers = await bearer_client._get_request_headers(auth_override="Bearer user-token")
+        assert "X-OP-Token-Type" not in headers
+
+    @pytest.mark.asyncio
+    async def test_server_creds_have_no_marker(self, bearer_client):
+        """redeem_ticket runs with auth_override=None and must stay on the normal auth path."""
+        headers = await bearer_client._get_request_headers(auth_override=None)
+        assert "X-OP-Token-Type" not in headers
 
 
 # ---------------------------------------------------------------------------

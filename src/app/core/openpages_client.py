@@ -11,6 +11,7 @@ import time
 import json
 from typing import Any, Dict, List, Optional, Union
 import httpx  # type: ignore
+from src.app.auth.providers import OP_TOKEN_TYPE_HEADER
 from src.app.config.settings import Settings, settings
 from src.app.observability.logger import StructuredLogger, get_logger, log_method_call
 from src.app.observability.tracing import (
@@ -360,6 +361,9 @@ class OpenPagesClient:
         Args:
             auth_override: If provided, replaces the Authorization header for this request.
                           If None, uses the server's configured credentials.
+                          A ``LocalModeBearer`` additionally carries an ``op_token_type``
+                          attribute, which is emitted as the ``X-OP-Token-Type`` header so
+                          OpenPages routes the call to the consumer for that token kind.
 
         Returns:
             Headers dict for the request
@@ -367,6 +371,13 @@ class OpenPagesClient:
         if auth_override:
             headers = self.headers.copy()
             headers['Authorization'] = auth_override
+            # Bearer-carried token kind (see auth.providers.LocalModeBearer). Plain str
+            # bearers are IdP-issued, have no such attribute, and are unaffected. Note
+            # redeem_ticket passes auth_override=None, so the redeem call never sets this
+            # header — it must keep going through the deployment's server-credential path.
+            token_type = getattr(auth_override, 'op_token_type', None)
+            if token_type:
+                headers[OP_TOKEN_TYPE_HEADER] = token_type
             return headers
         else:
             await self.initialize_auth()
@@ -768,7 +779,10 @@ class OpenPagesClient:
             ticket: The opaque ticket presented by the embedded chat.
 
         Returns:
-            Minimal redeem response ``{"mode": "access_token"|"isv"|"iam", "refreshArtifact": "..."}``.
+            Minimal redeem response
+            ``{"mode": "local"|"access_token"|"isv"|"iam", "refreshArtifact": "..."}``.
+            ``local`` is an OpenPages-minted, Liberty-signed user JWT (on-prem); the others
+            are IDP-issued.
 
         Raises:
             RuntimeError: If the redeem call fails (expired/unknown ticket, network).

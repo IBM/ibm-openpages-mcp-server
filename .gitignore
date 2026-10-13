@@ -7,11 +7,22 @@
 ehthumbs.db
 Thumbs.db
 
-# Environment files
+# Real configuration and secrets. The .env.example* templates ARE tracked (negated below);
+# the live .env never is — it holds the OpenPages credentials.
 .env
 .env.old
 .env.backup
 src/app/local_mcp/.env
+!.env.example
+!.env.example.*
+
+# Encryption-at-rest key material (manage_secrets.py / src/app/config/crypto.py).
+# Committing a keystore hands over every {enc} secret it protects.
+secrets/
+*.p12
+*.jks
+*.pfx
+*.bak-*
 
 # Logs
 logs/

@@ -20,6 +20,8 @@ python-dateutil>=2.8.2
 
 # JWT token handling
 PyJWT>=2.8.0
+# Encryption at rest for configuration secrets (src/app/config/crypto.py, manage_secrets.py)
+cryptography>=42.0.0
 
 # RabbitMQ client for schema synchronization (async with built-in resilience)
 aio-pika>=9.3.0

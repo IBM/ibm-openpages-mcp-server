@@ -6,7 +6,12 @@ Provides two authentication flows:
 - Fallback (Server credentials): Server-configured credentials
 """
 
-from src.app.auth.service import AuthService, AuthResult, PassthroughAuthError
+from src.app.auth.errors import PassthroughAuthError
+from src.app.auth.service import (
+    AuthService,
+    AuthResult,
+    is_basic_auth_scheme,
+)
 from src.app.auth.providers import (
     AuthProvider,
     PassthroughTokenProvider,
@@ -18,6 +23,7 @@ __all__ = [
     "AuthService",
     "AuthResult",
     "PassthroughAuthError",
+    "is_basic_auth_scheme",
     "AuthProvider",
     "PassthroughTokenProvider",
     "ServerCredentialProvider",

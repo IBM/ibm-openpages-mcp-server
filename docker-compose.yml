@@ -27,6 +27,13 @@ services:
       - OPENPAGES_APIKEY=${OPENPAGES_APIKEY:-}
       - OPENPAGES_AUTHENTICATION_URL=${OPENPAGES_AUTHENTICATION_URL:-}
       - OPENPAGES_INSTANCE_ID=${OPENPAGES_INSTANCE_ID:-}
+
+      # Encryption at rest (on-prem). OPENPAGES_PASSWORD above may hold an {enc}<base64>
+      # value instead of plaintext; see manage_secrets.py. The keystore that decrypts it is
+      # mounted read-only below. Leave these unset to keep using plaintext.
+      - OP_MCP_KEYSTORE_PATH=${OP_MCP_KEYSTORE_PATH:-/app/secrets/op-mcp-keystore.p12}
+      - OP_MCP_KEYSTORE_PASSWORD_FILE=${OP_MCP_KEYSTORE_PASSWORD_FILE:-}
+      - OP_MCP_KEYSTORE_PASSWORD=${OP_MCP_KEYSTORE_PASSWORD:-}
       
       # SSL Settings
       - SSL_VERIFY=${SSL_VERIFY:-True}
@@ -64,6 +71,10 @@ services:
       # Docker will auto-create the directory, but Podman requires it to exist.
       - ./src/app/config/object_types.json:/app/src/app/config/object_types.json:ro
       - ./logs:/app/logs
+      # Keystore for {enc}-encrypted settings. Read-only: the server only ever decrypts,
+      # and manage_secrets.py is run on the host, not in the container. Harmless when the
+      # directory is empty and no {enc} values are configured.
+      - ./secrets:/app/secrets:ro
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]

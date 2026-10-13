@@ -5,13 +5,19 @@ A lightweight gate on every HTTP request to the MCP endpoint (including
 ``initialize``/``tools/list``/``ping``) so no fully-anonymous caller can establish
 a session. The rule is deliberately simple:
 
-  * **Server-credential deployments** (dev / local stdio / on-prem — see
+  * **Server-credential deployments** (dev / local stdio — see
     ``settings.uses_server_credentials()``) run entirely on the server's own
     credentials, so the gate is **skipped** — no header is required.
-  * **Everywhere else** (production-remote SaaS) a request is allowed iff a
-    credential is present in a request **header**: the ``Authorization`` header
-    (type 1) or any configured API-key header (type 4, ``get_apikey_header_names()``).
-    Otherwise the connection is rejected with 401.
+  * **Everywhere else** (production-remote SaaS, and on-prem once it runs
+    ``OPENPAGES_AUTH_MODE=user``) a request is allowed iff a credential is present in a
+    request **header**: the ``Authorization`` header (any scheme) or any configured
+    API-key header (``get_apikey_header_names()``). Otherwise the connection is
+    rejected with 401.
+
+``Authorization: Basic`` counts here: the on-prem chat has no custom API-key header, so it
+authenticates the connection with the OpenPages administrator credentials. That is a
+**channel** credential only — ``AuthService`` never resolves Basic as a user, so it opens the
+door without deciding who walked through it; the ``op_auth_ticket`` does that.
 
 This is the **channel** layer (is the caller allowed to connect?), distinct from
 the per-call **user** resolver in ``AuthService`` (which OP user?). The gate looks
@@ -49,7 +55,7 @@ async def require_channel_auth(request: Request) -> None:
         HTTPException(401): If the gate is enforced and no accepted credential is present.
     """
     if settings.uses_server_credentials():
-        # dev / local / on-prem: server credentials run everything, no gate.
+        # dev / local: server credentials run everything, no gate.
         return
 
     if _has_user_header(request):

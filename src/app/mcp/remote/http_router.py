@@ -34,7 +34,7 @@ from pydantic import BaseModel
 
 from src.app.auth.channel_auth import require_channel_auth
 from src.app.auth.context_vars import auth_authorization_var, auth_apikey_var
-from src.app.auth.service import PassthroughAuthError
+from src.app.auth.service import PassthroughAuthError, is_basic_auth_scheme
 from src.app.config.settings import settings as _app_settings
 
 # Configure logging
@@ -194,6 +194,10 @@ async def _verify_openpages_access(
     GET /api/v2/types. Establishes nothing on its own; on any failure it raises an
     HTTPException so the caller aborts before a session is created (fail-closed).
 
+    ``Authorization: Basic`` is the exception: it is a **channel** credential naming the
+    calling service, never a user, so it bypasses the user resolver and is probed against
+    OpenPages verbatim. See the inline note below for why.
+
     No-op outside user-auth mode (server-credential deployments run on their own
     creds and the channel gate is already skipped there).
 
@@ -226,28 +230,45 @@ async def _verify_openpages_access(
     if not authorization and not api_key:
         return
 
-    try:
-        result = await mcp_server.auth_service.resolve_for_request(
-            authorization=authorization,  # type 1 — passthrough, no exchange
-            api_key=api_key,              # type 4 — real exchange, caches bearer for later tool calls
-        )
-    except PassthroughAuthError:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication failed",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except Exception:
-        # Token-exchange / IDP failures — never log credential values.
-        logger.warning("Connect-time credential resolution failed")
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication failed",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    # ── Basic: channel credential, probed directly (no user resolution) ──────
+    # AuthService deliberately refuses to resolve Basic as a user (see
+    # ``is_basic_auth_scheme``), so sending it through the resolver would raise
+    # PassthroughAuthError and 401 the very credential the channel gate just accepted —
+    # the on-prem chat could never establish a session. Probe OpenPages with the header
+    # as-is instead: OP validates it natively, which proves the channel credential is
+    # genuine rather than merely present (the gate only checks presence). Who the caller
+    # *is* stays undecided here; ``op_auth_ticket`` settles that per tool call.
+    #
+    # An API key outranks Basic: it is a real user artifact (type 4) whose exchange also
+    # warms the token cache for subsequent tool calls, so when both are present the
+    # resolver still runs.
+    if authorization and is_basic_auth_scheme(authorization) and not api_key:
+        logger.info("Connect-time probe using Basic channel credential (no user resolution)")
+        auth_override = authorization
+    else:
+        try:
+            result = await mcp_server.auth_service.resolve_for_request(
+                authorization=authorization,  # type 1 — passthrough, no exchange
+                api_key=api_key,              # type 4 — real exchange, caches bearer for later tool calls
+            )
+        except PassthroughAuthError:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication failed",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        except Exception:
+            # Token-exchange / IDP failures — never log credential values.
+            logger.warning("Connect-time credential resolution failed")
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication failed",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        auth_override = result.auth_override
 
     try:
-        await mcp_server.client.verify_access(auth_override=result.auth_override)
+        await mcp_server.client.verify_access(auth_override=auth_override)
     except httpx.HTTPStatusError as e:
         if e.response.status_code in (401, 403):
             raise HTTPException(

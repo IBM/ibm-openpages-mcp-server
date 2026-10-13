@@ -168,6 +168,35 @@ request_headers = await self._get_request_headers(auth_override)
 - Maintains security by validating passthrough tokens
 - Falls back gracefully to server credentials when no override is provided
 
+### On-Prem Embedded Chat (User Authentication)
+
+On-prem, the OpenPages embedded chat runs each tool call as the **signed-in OpenPages user**, not as the MCP service account.
+
+**How it works:**
+
+1. The chat connects with `Authorization: Basic <OpenPages admin>`. Basic is a **connection credential only**: it passes the connection gate and the connect-time probe, but `AuthService` never resolves it as a user.
+2. Each tool call carries an `op_auth_ticket`. The server redeems it at OpenPages with its own admin credentials.
+3. On-prem the redeem response has `mode=local`: the artifact is a user JWT that OpenPages signed itself. The server uses it directly as `Bearer <jwt>`, with no IdP exchange.
+4. Every OpenPages REST call made with that token also sends `X-OP-Token-Type: wlp`, so OpenPages validates it against its own key. Calls with IdP tokens or server credentials never send this header.
+5. A Basic connection without a ticket has its tool calls rejected. They never fall back to the admin.
+
+**Example:** Maria signs in to on-prem OpenPages and asks the chat "list my open issues". The server redeems Maria's ticket, calls OpenPages with Maria's JWT plus `X-OP-Token-Type: wlp`, and only the issues Maria's ACLs allow come back.
+
+**Configuration:**
+
+```env
+OPENPAGES_AUTH_MODE=user
+OPENPAGES_AUTHENTICATION_TYPE=basic
+OPENPAGES_USERNAME=<OpenPages admin>
+OPENPAGES_PASSWORD=<admin password>
+```
+
+- The account must be an OpenPages **admin**, because redeeming a ticket needs admin rights. It is used only to redeem tickets and for the connect probe, never for tool calls.
+- Leave `MCP_VERIFY_ACCESS_ON_CONNECT` at its default (`true`).
+- `OPENPAGES_AUTH_MODE=server` skips the ticket and runs every tool call as the admin. Do not use it for the embedded chat.
+- Store the password encrypted: see [Encrypt credentials at rest](SETUP.md#2b-encrypt-credentials-at-rest-on-prem).
+- OpenPages must be configured to issue chat tickets in `local` mode. Without it the chat sends no ticket and every tool call is rejected.
+
 ### Token Validation
 
 Passthrough tokens (from `op_auth_header`) are validated before use:
@@ -285,6 +314,7 @@ SSL_VERIFY=False
 | **Per-Request Auth Override** | ✅ Fully implemented | Via `op_auth_header` context variable |
 | **Token Validation** | ✅ Fully implemented | JWT expiry checking with caching |
 | **Multi-User Support** | ✅ Enabled | Via passthrough tokens |
+| **On-Prem Chat User Auth** | ✅ Fully implemented | `local` ticket mode + `X-OP-Token-Type: wlp` |
 | **Thread Safety** | ✅ Implemented | Async locks for token operations |
 
 ## Code References
@@ -298,3 +328,6 @@ SSL_VERIFY=False
 | Token validation | [`auth/token_validator.py`](../src/app/auth/token_validator.py) | `validate()` |
 | Context extraction | [`mcp/context.py`](../src/app/mcp/context.py) | `extract_context_from_arguments()` |
 | Tool auth handling | [`mcp/tool_handlers.py`](../src/app/mcp/tool_handlers.py) | `_resolve_auth_override()` |
+| Local-mode ticket | [`auth/providers.py`](../src/app/auth/providers.py) | `TicketTokenProvider._redeem_and_exchange()`, `LocalModeBearer` |
+| Token-type header | [`openpages_client.py`](../src/app/core/openpages_client.py) | `_get_request_headers()` |
+| Basic connect probe | [`mcp/remote/http_router.py`](../src/app/mcp/remote/http_router.py) | `_verify_openpages_access()` |
